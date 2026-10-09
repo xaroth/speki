@@ -14,14 +14,6 @@ linters:
     - unparam
     - usestdlibvars
   settings:
-    misspell:
-      locale: US
-      ignore-rules:
-        - normalise
-        - normalisation
-        - organisation
-        - organisations
-        - authorise
     revive:
       rules:
         - name: exported
