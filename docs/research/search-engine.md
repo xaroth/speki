@@ -141,3 +141,27 @@ SQLite allows at most 10 attached databases by default. `query` therefore takes 
 
 Each vault has its own BM25 statistics, so the same match scores differently in a small vault than in a
 large one. At our sizes we merge raw scores and accept the imprecision.
+
+## Measured on speki's own index
+
+Measured 2026-10-10 with the index as built (mattn/go-sqlite3, the schema in
+[design/index.md](../design/index.md)), on generated vaults: documents of about 5 KB with frontmatter,
+headings and links, words drawn from a 20,000-word vocabulary with a Zipf distribution. `index/measure_test.go`
+reproduces them (`SPEKI_MEASURE=1`). Limited to 4 cores:
+
+| What | Result | Target |
+|---|---|---|
+| Build 50,000 documents | 54 s | under 2 minutes |
+| Index size for 50,000 documents | 809 MB | |
+| Apply one changed document to that index | 19 ms | |
+| Search one vault of 10,000, p50 / p95 | 5 ms / 12 ms | |
+| Search one vault of 50,000, p50 / p95 | 26 ms / 56 ms | |
+| Search 10 vaults of 10,000, p50 / p95 | 16 ms / 27 ms | p95 under 100 ms |
+
+Two things got it there. The first version joined every matching document before ranking, which read
+each document's body from disk: 135 ms p95 across 10 vaults. Ranking inside the full-text table and
+joining only the best candidates cut that by five. And building the full-text tables with one `rebuild` at
+the end, instead of row by row through triggers, nearly halved build time.
+
+The generated text is harsher than real text: common words show up in most documents, so most queries
+match thousands of them. Real vaults should do better.
