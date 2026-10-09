@@ -63,7 +63,12 @@ duration and document count, failures.
 
 ## Metrics
 
-Prometheus, on the separate `metrics_listen` port. Names:
+Prometheus, on the internal `metrics_listen` server. `service` starts it as its own `http.Server` with its
+own mux, separate from the public server on `listen`, so a routing mistake on the public side can't expose
+it. `service.New` rejects a configuration where `metrics_listen` equals `listen`, and the end-to-end tests
+check that `/metrics` and `/status` return 404 on the public server.
+
+Names:
 
 | Metric | Type | Labels |
 |---|---|---|
@@ -103,6 +108,8 @@ The SQLite driver needs cgo, so builds need a C compiler.
 
 - `Taskfile.yml` with `build`, `test`, `lint`, `run` tasks. Build tags `sqlite_fts5,sqlite_omit_load_extension`.
 - CI: Go 1.27, `go vet`, `staticcheck`, `go test -race` with the same tags, `govulncheck`.
+- The image `EXPOSE`s only the public port (8080). The metrics port is reachable on the container network
+  but not published by default.
 - The image is built in two stages: `golang:1.27-bookworm` to build, `gcr.io/distroless/base-debian12` to
   run, as a non-root user, with the data directory as a volume.
 

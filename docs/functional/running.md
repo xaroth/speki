@@ -140,8 +140,17 @@ rebuild everything, start with an empty data directory.
 | `/oauth/...` | `listen` | Sign-in, consent, token and registration endpoints |
 | `/healthz` | `listen` | 200 while the process runs |
 | `/readyz` | `listen` | 200 once the first indexing round has finished |
-| `/metrics` | `metrics_listen` | Prometheus metrics. Keep this port private |
+| `/metrics` | `metrics_listen` | Prometheus metrics |
 | `/status` | `metrics_listen` | Every vault's state, commit, last sync and last error, as JSON |
+
+Speki runs two separate HTTP servers. The public one (`listen`, default `:8080`) serves only what MCP
+clients and browsers need. The internal one (`metrics_listen`, default `:9090`) serves only metrics and the
+status page. Neither answers for the other's paths, and speki refuses to start when both are set to the
+same address.
+
+In a container, publish only the `listen` port. Prometheus scrapes `metrics_listen` from inside the cluster
+or container network, so `/metrics` and `/status` are never reachable from outside, whatever the proxy in
+front of speki is configured to forward.
 
 Speki serves plain HTTP. Put it behind something that terminates TLS. `public_url` must be the URL clients
 use, because tokens are bound to it.
