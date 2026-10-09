@@ -1,0 +1,32 @@
+version: '3'
+
+silent: true
+
+vars:
+  BIN_DIR: bin
+  # sqlite_fts5 and sqlite_omit_load_extension are needed once the index lands; harmless before.
+  TAGS: sqlite_fts5,sqlite_omit_load_extension
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
+tasks:
+  build:
+    summary: Build the speki binary
+    cmds:
+      - CGO_ENABLED=1 go build -tags '{{.TAGS}}' -ldflags "-X main.version={{.VERSION}}" -o {{.BIN_DIR}}/speki ./cmd/speki
+
+  test:
+    summary: Run all tests with the race detector
+    cmds:
+      - CGO_ENABLED=1 go test -race -tags '{{.TAGS}}' ./...
+
+  lint:
+    summary: Run golangci-lint
+    cmds:
+      - golangci-lint run --build-tags '{{.TAGS}}' ./...
+
+  run:
+    summary: Build and run speki with ./config.yaml
+    deps: [build]
+    cmds:
+      - ./{{.BIN_DIR}}/speki {{.CLI_ARGS}}
