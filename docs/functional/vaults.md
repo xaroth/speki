@@ -51,9 +51,10 @@ Every `.md` file on the default branch, except:
 - files tracked by git LFS
 - files over 1 MiB
 
-A vault can hold up to 50,000 documents and 500 MB of markdown. A vault over either limit isn't indexed,
-and the reason is logged. Other files (images, PDFs, code) can sit in the repository but speki doesn't
-look at them.
+Speki is built and tested for vaults of up to 50,000 documents and 500 MB of markdown. Larger vaults
+still work: speki indexes and serves them, but logs a warning, marks them on the status page, and they
+take longer to index and search. Splitting a vault that keeps growing past that size is usually better
+for everyone. Other files (images, PDFs, code) can sit in the repository but speki doesn't look at them.
 
 ## Branch rules
 

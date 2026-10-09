@@ -216,7 +216,9 @@ dependency for a fake happens through `Config`, not through globals or build tag
 4. Remove leftovers of interrupted index builds. Open every vault that already has a usable copy and
    index on disk, so it can be served as is.
 5. Run discovery once. Mark ready. A vault that isn't on disk yet is cloned and indexed in the background
-   (4 at a time, each with a 10-minute limit). It shows up in tools once it's done.
+   (4 at a time). It shows up in tools once it's done. A clone or build that makes no progress for
+   5 minutes is cancelled and retried later, so a hung connection can't hold a slot forever. Large vaults
+   that are still making progress are left to finish.
 6. Start the discovery loop, the poll loop, and the change subscription.
 
 So an instance with a persistent data directory serves from disk within seconds, even if GitHub is down.

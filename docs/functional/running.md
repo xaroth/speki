@@ -124,8 +124,10 @@ data on disk, a restarted instance serves its vaults within seconds, even when G
 only catches up on what changed. On an empty disk, speki becomes ready quickly but each vault appears only
 after it's cloned and indexed, about a minute for a vault of 50,000 documents, four vaults at a time.
 
-A vault that fails to index (too big, bad `speki.yaml`, GitHub unreachable) is logged, shown on the status
-page, and retried at the next discovery round. The other vaults aren't affected.
+A vault that fails to index (bad `speki.yaml`, GitHub unreachable) is logged, shown on the status page,
+and retried at the next discovery round. The other vaults aren't affected. A vault larger than speki is
+built for (over 50,000 documents or 500 MB of markdown) is indexed anyway, with a warning in the logs and
+on the status page. Plan disk, memory and startup time for it.
 
 To force a vault to be rebuilt, stop speki, delete `<data_dir>/<repository id>/`, and start it again. To
 rebuild everything, start with an empty data directory.

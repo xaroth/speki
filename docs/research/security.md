@@ -162,8 +162,11 @@ document whether push protection also covers the GraphQL commit mutation speki p
 
 ## 9. Hostile input to the indexer
 
-- Per-vault caps: 50,000 documents and 500 MB of markdown. A vault over a cap isn't indexed, and the
-  reason is logged and shown on the status page.
+- Vault size has no hard cap, so someone with push access can make a vault very large. That costs the
+  instance time, disk and memory, but it can't block other vaults: vaults are indexed in the background,
+  a few at a time, each separately, and an instance serves what it has while they build. Vaults over the
+  size speki is built for (50,000 documents or 500 MB of markdown) are logged with a warning and flagged
+  on the status page, so an operator notices. Single files over 1 MiB are still skipped.
 - Frontmatter size is checked before parsing. YAML anchors and aliases make the frontmatter count as
   broken.
 - Vaults are cloned shallow, without LFS and without submodules. Credentials go in a header, never in the

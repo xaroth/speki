@@ -79,6 +79,7 @@ Names:
 | `speki_github_rate_remaining` | gauge | `kind` |
 | `speki_vault_up` | gauge | `vault`. 1 when the vault is served and its last sync succeeded |
 | `speki_vault_documents` | gauge | `vault` |
+| `speki_vault_bytes` | gauge | `vault`. Markdown bytes indexed |
 | `speki_vault_fresh_seconds` | gauge | `vault`. Time since speki last confirmed the index matches GitHub's head |
 | `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, failed) |
 | `speki_signins_total` | counter | `result` |
@@ -90,7 +91,8 @@ Vault labels are fine at 20 vaults. User logins are never labels.
 ## Status page
 
 `GET /status` on the metrics port returns a JSON list of vaults with their name, state (serving,
-building, failed), index commit, document count, last successful sync, and last error. It's the first
+building, failed), index commit, document count and size, a warning when it's larger than speki is built
+for, last successful sync, and last error. It's the first
 place to look when someone says "my vault isn't showing up". Like `/metrics`, it's for operators only and
 shouldn't be exposed publicly.
 
