@@ -45,14 +45,13 @@ Speki keeps two kinds of state, and both can be thrown away:
 
 ## Packages
 
-One module, `github.com/eve-online-tools/speki`, flat. Each package is named after what it does. No
-`internal/`, no `util`, no layers named `service` or `repository`.
+One module, `github.com/eve-online-tools/speki`. The command lives in `cmd/speki`, and every other package
+sits at the top level, named after what it does. No `internal/`, no `util`, no layers named `repository`.
 
 | Package | Owns | Imports from speki |
 |---|---|---|
-| `main` (root) | Flags, signal handling, exit codes | `app`, `config` |
-| `app` | Building every component from `config.Config`, the HTTP servers, startup and shutdown order | everything |
-| `config` | The `Config` struct, loading YAML plus environment, validation | |
+| `cmd/speki` | The process: flags, reading the config file and environment, the logger, signals, exit codes | `service`, `telemetry` |
+| `service` | Speki as one runnable thing: `service.Config`, validation and defaults, building every component, the HTTP servers, startup and shutdown order | everything below |
 | `telemetry` | slog handler with redaction, request IDs, OpenTelemetry tracer, Prometheus registry | |
 | `seal` | Keyring, sealing and opening typed blobs with AES-256-GCM | |
 | `store` | `Memory` and `Redis` implementations of the small interfaces other packages declare | |
@@ -106,7 +105,7 @@ its cache entries and its files. People and agents use the `owner/repo` name.
 a `*access.Grant` and checks it before touching a vault. `library` and `index` take repository IDs and trust
 their caller. Two review rules keep this honest:
 
-- Only `knowledge` and `app` import `library`.
+- Only `knowledge` and `service` import `library`.
 - Every exported `knowledge` function that touches a vault takes a `*access.Grant`.
 
 The user's GitHub token is reachable only through `Grant.User()`, so the one place where speki acts as the
@@ -163,12 +162,56 @@ status code, and clients only start a new sign-in on a 401.
 Lock order is always the vault's write lock first, then its sync lock. Nothing takes them the other way
 around.
 
+## The command and the service
+
+`cmd/speki` is the only code that touches the process: `os.Args`, `os.Environ`, the config file, signals
+and the exit code. It turns them into a `service.Config` and a logger, and hands those over.
+
+```go
+// cmd/speki/main.go
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := run(ctx, os.Args[1:], os.Environ(), os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "speki:", err)
+		os.Exit(1)
+	}
+}
+
+// run parses flags, loads the configuration (config.go), builds the logger and runs the service.
+func run(ctx context.Context, args, environ []string, stderr io.Writer) error
+```
+
+`cmd/speki/config.go` holds the loading: the `--config` flag, decoding the YAML, applying `SPEKI_*`
+environment variables, and reading `..._file` secrets. See [operations.md](operations.md#configuration).
+`run` takes its inputs as arguments, so it's tested without touching the real environment.
+
+`service` is speki without the process around it:
+
+```go
+// Package service
+
+// New checks cfg, fills in defaults and builds every component. Nothing runs yet.
+func New(cfg Config, logger *slog.Logger) (*Service, error)
+
+// Run starts the HTTP servers and background loops, and blocks until ctx ends and shutdown is done.
+func (s *Service) Run(ctx context.Context) error
+```
+
+Because `New` takes a plain struct and a logger, tests build a complete speki in-process: a `Config`
+pointing at a fake GitHub and a temporary data directory, then `Run` with a context they cancel. Swapping a
+dependency for a fake happens through `Config`, not through globals or build tags.
+
 ## Startup and shutdown
 
-`app.Run`:
+`service.New` does steps 1 and 2, `Run` the rest:
 
-1. Load and validate configuration. Exit with a message naming the bad key on failure.
-2. Set up telemetry, the keyring, the store (memory or Redis), and the GitHub client.
+1. Check the configuration and fill in defaults. `New` returns an error naming every bad key at once, and
+   `cmd/speki` prints it and exits.
+2. Set up the metrics registry and tracer, the keyring, the store (memory or Redis), the GitHub client, and
+   every other component. Nothing connects to anything yet.
 3. Start the HTTP servers. `/healthz` answers right away. `/readyz` and `/mcp` answer 503 until step 5.
 4. Remove leftovers of interrupted index builds. Open every vault that already has a usable copy and
    index on disk, so it can be served as is.
@@ -179,9 +222,10 @@ around.
 So an instance with a persistent data directory serves from disk within seconds, even if GitHub is down.
 An instance on an empty disk is ready quickly but has no vaults until the first ones finish indexing.
 
-On `SIGTERM`: mark not ready, stop accepting new requests, let running requests finish (up to 25 seconds),
-stop the loops, close indexes and the store. Every goroutine is started from `app` or `library` with a
-context it watches, and its starter waits for it to end.
+When `Run`'s context ends: mark not ready, stop accepting new requests, let running requests finish (up to 25 seconds),
+stop the loops, close indexes and the store, and return from `Run`. Every goroutine is started from
+`service` or `library` with a context it watches, and its starter waits for it to end. `cmd/speki` turns
+`SIGTERM` into a cancelled context. `service` never looks at signals itself.
 
 ## Errors
 
@@ -196,12 +240,13 @@ traces all carry it.
 
 ## Testing
 
-- `document`, `seal`, `config` and `index` are plain code with table-driven tests and fixtures under
-  `testdata/`. The examples in the functional docs (stemming, typo correction, path rules) are test cases.
+- `document`, `seal` and `index` are plain code with table-driven tests and fixtures under `testdata/`.
+- `cmd/speki` tests `run` and the config loading with given arguments, environment and files. The examples in the functional docs (stemming, typo correction, path rules) are test cases.
 - `gitsync` tests run against local bare repositories made in a temporary directory.
 - `access`, `oauth`, `knowledge`, `library` and `vault` get hand-written fakes of the small interfaces they
   declare.
 - `gh` is tested against an `httptest` server that replays recorded GitHub responses.
-- One end-to-end test runs `app` with a fake GitHub (an `httptest` server for the API plus local bare
-  repositories for git) and drives it with the go-sdk MCP client: sign in, search, edit, read back.
+- The end-to-end tests live in `service`. They start a `Service` with a fake GitHub (an `httptest` server
+  for the API plus local bare repositories for git) and drive it with the go-sdk MCP client: sign in,
+  search, edit, read back, shut down cleanly.
 - An opt-in test (`-tags=github`) runs against a real test organisation. It's not part of CI.

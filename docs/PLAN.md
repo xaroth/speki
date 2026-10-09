@@ -26,9 +26,11 @@ Milestones 1 and 2 can run in parallel, as can 3 and 4. Everything else builds o
 
 Build:
 
-- `go.mod` (`github.com/eve-online-tools/speki`, Go 1.27), `main.go`, `app` with `/healthz` and graceful
-  shutdown.
-- `config`: loading, environment overrides, `_file` secrets, validation, the `Secret` type.
+- `go.mod` (`github.com/eve-online-tools/speki`, Go 1.27).
+- `cmd/speki`: `main.go` with signal handling and `run`, `config.go` with the file, environment and
+  `_file` secret loading. Tests for both.
+- `service`: `Config` with defaults, validation and the `Secret` type; `New` and `Run` with `/healthz`
+  and graceful shutdown. A first test that starts and stops a `Service`.
 - `telemetry`: the slog handler with redaction and request IDs. Metrics registry and tracing come later,
   with the code they measure.
 - `Taskfile.yml`, CI (vet, staticcheck, `go test -race`, govulncheck, all with the cgo build tags), and the
@@ -133,7 +135,8 @@ Build:
 - `mcpserver`: the instructions, `guide.md`, and the tools `guide`, `list`, `search`, `read`, `history`,
   with descriptions, annotations, text renderings and error mapping.
 - Metrics for tool calls and vaults. `/status`.
-- The end-to-end test: fake GitHub, local repositories, the go-sdk client, signing in and searching.
+- The end-to-end test in `service`: fake GitHub, local repositories, the go-sdk client, signing in and
+  searching.
 
 Release: deploy one instance for the team, with a persistent data directory, and a few real vaults. Use it
 from Claude for a week before writing is turned on. Watch whether agents reach for speki without being

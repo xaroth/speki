@@ -7,11 +7,15 @@ written down here.
 ## Packages
 
 - One module, flat. Packages sit at the top level and are named after what they do (`vault`, `index`),
-  never after a layer (`service`, `repository`) or a grab bag (`util`, `common`). No `internal/`.
+  never after a layer (`repository`, `handlers`) or a grab bag (`util`, `common`). No `internal/`.
+- The command is `cmd/speki`. It's the only code that reads flags, the environment, files named on the
+  command line, or signals. Everything it learns goes into `service.Config`.
+- `service` is the composition root: it builds and runs everything, and nothing imports it except
+  `cmd/speki`.
 - A package's exported API is its contract with the rest of speki. Keep it small, and unexport helpers.
 - A package that needs something from another declares an interface for exactly what it uses, in the
   file that uses it. Return concrete types.
-- No package-level state outside `main`. Loggers, clients and clocks are passed in.
+- No package-level state outside `cmd/speki`. Loggers, clients and clocks are passed in.
 
 ## Errors
 

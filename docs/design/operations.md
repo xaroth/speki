@@ -2,33 +2,49 @@
 
 ## Configuration
 
-Package: `config`.
+The configuration has two halves.
+
+`service.Config` is the typed configuration speki runs with. It knows nothing about files or environment
+variables:
 
 ```go
+// Package service
 type Config struct {
-	PublicURL     string        `yaml:"public_url"`
-	Listen        string        `yaml:"listen"`
-	MetricsListen string        `yaml:"metrics_listen"`
-	GitHub        GitHub        `yaml:"github"`
-	Access        Access        `yaml:"access"`
-	Auth          Auth          `yaml:"auth"`
-	Sync          Sync          `yaml:"sync"`
-	Redis         Redis         `yaml:"redis"`
-	Telemetry     Telemetry     `yaml:"telemetry"`
+	PublicURL     string    `yaml:"public_url"`
+	Listen        string    `yaml:"listen"`
+	MetricsListen string    `yaml:"metrics_listen"`
+	GitHub        GitHub    `yaml:"github"`
+	Access        Access    `yaml:"access"`
+	Auth          Auth      `yaml:"auth"`
+	Sync          Sync      `yaml:"sync"`
+	Redis         Redis     `yaml:"redis"`
+	Telemetry     Telemetry `yaml:"telemetry"`
 }
-
-func Load(path string, environ []string) (*Config, error)
 ```
 
-`Load` decodes the YAML with unknown keys rejected (a typo in a key should fail, not be silently ignored),
-then walks the struct by reflection and applies environment variables named after the `yaml` tags:
-`SPEKI_GITHUB_CLIENT_SECRET` for `github.client_secret`. Fields named `..._file` are read from disk after
-that. Then defaults are filled in and `Validate` runs, collecting every problem into one error.
+Zero values mean "use the default", and `service.New` fills them in before checking the result. It
+collects every problem (a missing app ID, a `public_url` that isn't `https`, a duration of zero) into one
+error, so an operator fixes them all in one go. Secrets have a `Secret` type whose `String` and `LogValue`
+methods return `[redacted]`, so printing a config is safe.
 
-`environ` is passed in (from `os.Environ()` in `main`) so tests don't touch the process environment.
+`cmd/speki/config.go` produces that struct:
 
-Durations use Go syntax (`60s`, `5m`). Secrets have a `Secret` type whose `String` and `LogValue` methods
-return `[redacted]`, so printing a config is safe.
+```go
+// package main
+func loadConfig(path string, environ []string) (service.Config, error)
+```
+
+1. Decode the YAML file named by `--config` (default `config.yaml`), with unknown keys rejected: a typo in
+   a key should fail, not be silently ignored. A missing file is fine when everything comes from the
+   environment.
+2. Walk the struct by reflection and apply environment variables named after the `yaml` tags:
+   `SPEKI_GITHUB_CLIENT_SECRET` for `github.client_secret`.
+3. Read the `..._file` fields from disk into their secrets.
+
+Durations use Go syntax (`60s`, `5m`). `environ` comes from `os.Environ()` in `main`, so tests pass their
+own and don't touch the process environment.
+
+The command has two flags: `--config <path>` and `--version`.
 
 ## Logging
 
