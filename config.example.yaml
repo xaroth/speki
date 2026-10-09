@@ -1,0 +1,10 @@
+# Copy to config.yaml and adjust. Every key can also be set with an environment variable:
+# SPEKI_ plus the key's path in upper case, e.g. SPEKI_TELEMETRY_LOG_LEVEL.
+
+# Public server: MCP, sign-in, health checks.
+listen: ":8080"
+# Internal server: metrics and status. Must differ from listen; don't expose it publicly.
+metrics_listen: ":9090"
+
+telemetry:
+  log_level: info
