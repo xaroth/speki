@@ -69,3 +69,13 @@ if err != nil {
 - Fixtures in `testdata/`. Compare with `go-cmp`.
 - No `time.Sleep` to wait for something. Use `testing/synctest`, channels, or a fake clock.
 - `t.Context()` for contexts.
+
+## Commits
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+`<type>(<optional scope>): <summary>`, with the summary in lower case, imperative, and no trailing period.
+
+- Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`.
+- The scope, when it helps, is the package: `fix(index): skip files that aren't UTF-8`.
+- A breaking change gets a `!` after the type or scope and a `BREAKING CHANGE:` footer explaining it.
+- The body says why, when the summary doesn't.
