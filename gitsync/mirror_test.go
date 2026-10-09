@@ -100,7 +100,7 @@ func TestOpenClonesEligibleFiles(t *testing.T) {
 		"deep/er/still/fine/file.md": str("ok"),
 	})
 
-	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), src.dir, "master", nil)
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestFetchAndDiff(t *testing.T) {
 		"shrink.md":  str(strings.Repeat("x", MaxFileSize+1)),
 		"README.txt": str("ignored"),
 	})
-	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), src.dir, "master", nil)
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestFetchAndDiff(t *testing.T) {
 		".hidden/x.md": str("ignored"),
 	})
 
-	head, err := m.Fetch(t.Context())
+	head, err := m.Fetch(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestFetchAndDiff(t *testing.T) {
 		t.Errorf("changes, path -> deleted (-want +got):\n%s", diff)
 	}
 
-	again, err := m.Fetch(t.Context())
+	again, err := m.Fetch(t.Context(), nil)
 	if err != nil || again != second {
 		t.Errorf("fetch with nothing new = %s, %v", again, err)
 	}
@@ -198,13 +198,13 @@ func TestOpenReusesAndRepairs(t *testing.T) {
 	head := src.commit(map[string]*string{"a.md": str("a")})
 	dir := filepath.Join(t.TempDir(), "copy")
 
-	_, err := Open(t.Context(), dir, src.dir, "master", nil)
+	_, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
 	src.commit(map[string]*string{"b.md": str("b")})
 
-	m, err := Open(t.Context(), dir, src.dir, "master", nil)
+	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestOpenReusesAndRepairs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err = Open(t.Context(), dir, src.dir, "master", nil)
+	m, err = Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("Open broken copy: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestDiffEligibilityTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), src.dir, "master", nil)
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestDiffEligibilityTransitions(t *testing.T) {
 		"run.md":        str("exec, changed"),
 		"with space.md": str("spaced, changed"),
 	})
-	_, err = m.Fetch(t.Context())
+	_, err = m.Fetch(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestOpenReplacesNonRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m, err := Open(t.Context(), dir, src.dir, "master", nil)
+	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestOpenReplacesNonRepository(t *testing.T) {
 
 func TestOpenFailsCleanly(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "copy")
-	_, err := Open(t.Context(), dir, filepath.Join(t.TempDir(), "nothing"), "master", nil)
+	_, err := Open(t.Context(), dir, Source{URL: filepath.Join(t.TempDir(), "nothing"), Branch: "master"})
 	if err == nil {
 		t.Fatal("Open of a missing remote succeeded")
 	}

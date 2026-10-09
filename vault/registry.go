@@ -36,9 +36,9 @@ func (c Changes) Empty() bool {
 
 // Problem is a speki.yaml that couldn't be used.
 type Problem struct {
-	RepoID int64
-	Name   string
-	Err    string
+	RepoID int64  `json:"repo_id"`
+	Name   string `json:"name"`
+	Err    string `json:"error"`
 }
 
 // githubAPI is what discovery needs from GitHub.
@@ -107,9 +107,9 @@ func (r *Registry) Problems() []Problem {
 	return slices.SortedFunc(maps.Values(r.problems), func(a, b Problem) int { return cmp.Compare(a.Name, b.Name) })
 }
 
-// Run discovers vaults now and then every interval until ctx ends, passing each non-empty set of changes
-// to onChange. Failed rounds are logged and retried at the next interval.
-func (r *Registry) Run(ctx context.Context, interval time.Duration, onChange func(Changes)) {
+// Run discovers vaults now and then every interval until ctx ends, passing every round's outcome to
+// onRound. A failed round still carries the changes from the requests that succeeded.
+func (r *Registry) Run(ctx context.Context, interval time.Duration, onRound func(Changes, error)) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
@@ -117,12 +117,10 @@ func (r *Registry) Run(ctx context.Context, interval time.Duration, onChange fun
 	defer ticker.Stop()
 	for {
 		changes, err := r.Discover(ctx)
-		if err != nil && ctx.Err() == nil {
-			r.logger.Warn("vault discovery failed", "err", err)
+		if ctx.Err() != nil {
+			return
 		}
-		if !changes.Empty() {
-			onChange(changes)
-		}
+		onRound(changes, err)
 		select {
 		case <-ctx.Done():
 			return

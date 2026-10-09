@@ -1,5 +1,10 @@
 version: "2"
 
+run:
+  build-tags:
+    - sqlite_fts5
+    - sqlite_omit_load_extension
+
 linters:
   enable:
     - bodyclose

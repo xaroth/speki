@@ -4,11 +4,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,7 +19,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/gitsync"
+	"github.com/eve-online-tools/speki/library"
 	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/eve-online-tools/speki/vault"
 )
 
 // shutdownTimeout is how long running requests get to finish once the service stops.
@@ -27,13 +33,19 @@ const shutdownTimeout = 25 * time.Second
 type Service struct {
 	cfg      Config
 	logger   *slog.Logger
-	registry *prometheus.Registry
+	metrics  *prometheus.Registry
+	github   *gh.Client
+	library  *library.Library
 	ready    atomic.Bool
+	vaultsMu sync.Mutex
+	vaults   *vault.Registry // nil until the allowed accounts are known
 
 	// started is closed once both listeners are bound; publicAddr and internalAddr are set by then.
 	started      chan struct{}
 	publicAddr   net.Addr
 	internalAddr net.Addr
+	// discovered is closed after the first discovery round, successful or not.
+	discovered chan struct{}
 }
 
 // New checks cfg, fills in defaults and builds every component. Nothing runs yet.
@@ -44,21 +56,41 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		return nil, fmt.Errorf("configuration: %w", err)
 	}
 
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(
+	metrics := prometheus.NewRegistry()
+	metrics.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 
+	github, err := gh.New(gh.Config{
+		AppID:      cfg.GitHub.AppID,
+		PrivateKey: []byte(cfg.GitHub.PrivateKey.Reveal()),
+		APIURL:     cfg.GitHub.APIURL,
+	}, metrics)
+	if err != nil {
+		return nil, fmt.Errorf("configuration: %w", err)
+	}
+
+	lib := library.New(github, library.Options{
+		DataDir: cfg.Sync.DataDir,
+		GitURL:  cfg.GitHub.GitURL,
+		Tokens:  func(id int64) gitsync.TokenSource { return github.InstallationTokens(id) },
+	}, logger)
+	metrics.MustRegister(lib.Collector())
+
 	return &Service{
-		cfg:      cfg,
-		logger:   logger,
-		registry: registry,
-		started:  make(chan struct{}),
+		cfg:        cfg,
+		logger:     logger,
+		metrics:    metrics,
+		github:     github,
+		library:    lib,
+		started:    make(chan struct{}),
+		discovered: make(chan struct{}),
 	}, nil
 }
 
-// Run starts the public and internal HTTP servers and blocks until ctx ends and shutdown is done.
+// Run serves vaults already on disk straight away, keeps the vaults in step with GitHub, and serves HTTP.
+// It blocks until ctx ends and shutdown is done.
 func (s *Service) Run(ctx context.Context) error {
 	var lc net.ListenConfig
 	public, err := lc.Listen(ctx, "tcp", s.cfg.Listen)
@@ -79,31 +111,93 @@ func (s *Service) Run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return serve(publicSrv, public) })
 	g.Go(func() error { return serve(internalSrv, internal) })
+	close(s.started)
+	s.logger.Info("speki started", "listen", s.publicAddr.String(), "metrics_listen", s.internalAddr.String())
+
+	err = s.library.Restore(gctx)
+	if err != nil {
+		s.logger.Error("restoring vaults from disk failed", "err", err)
+	}
+
+	// Background work stops before the servers do, so in-flight requests still see open vaults.
+	work, stopWork := context.WithCancel(gctx)
+	var background sync.WaitGroup
+	background.Go(func() { s.discover(work) })
+	background.Go(func() { s.library.Run(work, s.cfg.Sync.PollInterval) })
+
 	g.Go(func() error {
 		<-gctx.Done()
 		s.ready.Store(false)
+		stopWork()
+		background.Wait()
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer cancel()
-		return errors.Join(publicSrv.Shutdown(shutdownCtx), internalSrv.Shutdown(shutdownCtx))
+		err := errors.Join(publicSrv.Shutdown(shutdownCtx), internalSrv.Shutdown(shutdownCtx))
+		s.library.Close()
+		return err
 	})
-
-	// The listeners are bound, so connections queue up even if Serve hasn't been reached yet. Being
-	// ready before that is fine.
-	s.ready.Store(true)
-	close(s.started)
-	s.logger.Info("speki started", "listen", s.publicAddr.String(), "metrics_listen", s.internalAddr.String())
 
 	err = g.Wait()
 	s.logger.Info("speki stopped")
 	return err
 }
 
-func serve(srv *http.Server, ln net.Listener) error {
-	err := srv.Serve(ln)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+// discover finds the allowed accounts, then keeps the vault registry and the library up to date. The
+// service is ready after the first round, successful or not: vaults on disk are served either way.
+func (s *Service) discover(ctx context.Context) {
+	firstRound := sync.OnceFunc(func() {
+		s.ready.Store(true)
+		close(s.discovered)
+	})
+	defer firstRound() // also when stopped before the first round
+
+	allowed, ok := s.allowedAccounts(ctx, firstRound)
+	if !ok {
+		return
 	}
-	return err
+	registry := vault.NewRegistry(s.github, allowed, s.logger)
+	s.vaultsMu.Lock()
+	s.vaults = registry
+	s.vaultsMu.Unlock()
+
+	registry.Run(ctx, s.cfg.Sync.DiscoveryInterval, func(changes vault.Changes, err error) {
+		if err != nil {
+			s.logger.Warn("vault discovery incomplete", "err", err)
+		}
+		if !changes.Empty() {
+			s.logger.Info("vaults changed",
+				"added", len(changes.Added), "changed", len(changes.Changed), "removed", len(changes.Removed))
+			s.library.Update(ctx, changes)
+		}
+		if err == nil {
+			// A complete answer: drop vaults restored from disk that GitHub no longer has.
+			s.library.Reconcile(ctx, registry.Vaults())
+		}
+		firstRound()
+	})
+}
+
+// allowedAccounts returns the configured accounts, or asks GitHub for the app's owner, retrying until it
+// answers. While it can't, the service is marked ready anyway (vaults on disk can be served).
+func (s *Service) allowedAccounts(ctx context.Context, giveUp func()) ([]int64, bool) {
+	if len(s.cfg.GitHub.AllowedAccounts) > 0 {
+		return s.cfg.GitHub.AllowedAccounts, true
+	}
+	wait := time.Second
+	for {
+		owner, err := s.github.AppOwner(ctx)
+		if err == nil {
+			return []int64{owner}, true
+		}
+		s.logger.Warn("can't find the app's owner; retrying", "err", err, "in", wait)
+		giveUp()
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, 5*time.Minute)
+	}
 }
 
 // publicHandler serves what MCP clients and browsers need.
@@ -122,12 +216,42 @@ func (s *Service) publicHandler() http.Handler {
 	return telemetry.RequestID(mux)
 }
 
-// internalHandler serves metrics. It runs on its own listener and is never reachable through the
-// public one.
+// internalHandler serves metrics and the status page. It runs on its own listener and is never
+// reachable through the public one.
 func (s *Service) internalHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{}))
+	mux.Handle("GET /metrics", promhttp.HandlerFor(s.metrics, promhttp.HandlerOpts{}))
+	mux.HandleFunc("GET /status", s.status)
 	return mux
+}
+
+// statusPage is what /status returns.
+type statusPage struct {
+	Ready    bool             `json:"ready"`
+	Vaults   []library.Status `json:"vaults"`
+	Problems []vault.Problem  `json:"problems"`
+}
+
+func (s *Service) status(w http.ResponseWriter, _ *http.Request) {
+	page := statusPage{Ready: s.ready.Load(), Vaults: s.library.Status(), Problems: []vault.Problem{}}
+	if page.Vaults == nil {
+		page.Vaults = []library.Status{}
+	}
+	s.vaultsMu.Lock()
+	if s.vaults != nil {
+		page.Problems = append(page.Problems, s.vaults.Problems()...)
+	}
+	s.vaultsMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(page)
+}
+
+func serve(srv *http.Server, ln net.Listener) error {
+	err := srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }
 
 func newServer(h http.Handler) *http.Server {

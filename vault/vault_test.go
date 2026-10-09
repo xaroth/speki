@@ -334,7 +334,12 @@ func TestRun(t *testing.T) {
 		rounds := make(chan Changes, 10)
 		done := make(chan struct{})
 		go func() {
-			r.Run(ctx, 5*time.Minute, func(c Changes) { rounds <- c })
+			r.Run(ctx, 5*time.Minute, func(c Changes, err error) {
+				if err != nil {
+					t.Errorf("round failed: %v", err)
+				}
+				rounds <- c
+			})
 			close(done)
 		}()
 
