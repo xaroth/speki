@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-git/go-git/v5"
@@ -34,6 +35,7 @@ type TokenSource interface {
 // Mirror is a shallow, bare copy of one branch of one repository. Reads may run concurrently with each
 // other, but not with Fetch: the caller serialises them.
 type Mirror struct {
+	dir    string
 	branch plumbing.ReferenceName
 	auth   TokenSource
 	repo   *git.Repository
@@ -52,12 +54,21 @@ type Change struct {
 	Blob string
 }
 
-// Open opens the copy in dir, or clones branch of remote into it when dir is empty or the copy there is
-// broken. remote is a URL git understands; the credentials come from auth.
-func Open(ctx context.Context, dir, remote, branch string, auth TokenSource) (*Mirror, error) {
+// Source says where a copy comes from.
+type Source struct {
+	URL    string // a URL git understands
+	Branch string
+	Auth   TokenSource // may be nil
+	// Progress receives git's progress messages while cloning. May be nil.
+	Progress io.Writer
+}
+
+// Open opens the copy in dir, or clones src into it when dir is empty or the copy there is broken.
+func Open(ctx context.Context, dir string, src Source) (*Mirror, error) {
 	m := &Mirror{
-		branch: plumbing.NewBranchReferenceName(branch),
-		auth:   auth,
+		dir:    dir,
+		branch: plumbing.NewBranchReferenceName(src.Branch),
+		auth:   src.Auth,
 	}
 
 	repo, err := git.PlainOpen(dir)
@@ -80,7 +91,8 @@ func Open(ctx context.Context, dir, remote, branch string, auth TokenSource) (*M
 		return nil, err
 	}
 	repo, err = git.PlainCloneContext(ctx, dir, true, &git.CloneOptions{
-		URL:           remote,
+		URL:           src.URL,
+		Progress:      src.Progress,
 		Auth:          httpAuth,
 		ReferenceName: m.branch,
 		SingleBranch:  true,
@@ -128,8 +140,9 @@ func (m *Mirror) Head() (string, error) {
 	return ref.Hash().String(), nil
 }
 
-// Fetch updates the branch from the remote, depth 1, and returns the commit it's at now.
-func (m *Mirror) Fetch(ctx context.Context) (string, error) {
+// Fetch updates the branch from the remote, depth 1, and returns the commit it's at now. progress, which
+// may be nil, receives git's progress messages.
+func (m *Mirror) Fetch(ctx context.Context, progress io.Writer) (string, error) {
 	httpAuth, err := m.basicAuth(ctx)
 	if err != nil {
 		return "", err
@@ -142,6 +155,7 @@ func (m *Mirror) Fetch(ctx context.Context) (string, error) {
 		Auth:       httpAuth,
 		Tags:       git.NoTags,
 		Force:      true,
+		Progress:   progress,
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return "", fmt.Errorf("fetch: %w", err)
@@ -283,4 +297,13 @@ func commitTree(repo *git.Repository, h plumbing.Hash) (*object.Tree, error) {
 		return nil, fmt.Errorf("tree of %s: %w", h, err)
 	}
 	return t, nil
+}
+
+// Packs returns how many pack files the copy has. Every fetch adds one; too many slow reads down.
+func (m *Mirror) Packs() int {
+	packs, err := filepath.Glob(filepath.Join(m.dir, "objects", "pack", "*.pack"))
+	if err != nil {
+		return 0
+	}
+	return len(packs)
 }

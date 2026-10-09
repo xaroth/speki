@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func discardLogger() *slog.Logger {
@@ -16,7 +18,8 @@ func discardLogger() *slog.Logger {
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	s, err := New(Config{Listen: "127.0.0.1:0", MetricsListen: "127.0.0.1:1"}, discardLogger())
+	cfg := testConfig(t, newFakeGitHub(t, map[string]string{"a.md": "# A\n"}))
+	s, err := New(cfg, discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -24,6 +27,7 @@ func newTestService(t *testing.T) *Service {
 }
 
 func TestNewRejectsBadConfig(t *testing.T) {
+	app := GitHub{AppID: 1, PrivateKey: testKey(t)}
 	tests := []struct {
 		name string
 		cfg  Config
@@ -31,23 +35,28 @@ func TestNewRejectsBadConfig(t *testing.T) {
 	}{
 		{
 			name: "same address",
-			cfg:  Config{Listen: ":8080", MetricsListen: ":8080"},
+			cfg:  Config{Listen: ":8080", MetricsListen: ":8080", GitHub: app},
 			want: []string{"metrics_listen"},
 		},
 		{
 			name: "same address by default",
-			cfg:  Config{Listen: ":9090"},
+			cfg:  Config{Listen: ":9090", GitHub: app},
 			want: []string{"metrics_listen"},
 		},
 		{
 			name: "bad log level",
-			cfg:  Config{Telemetry: Telemetry{LogLevel: "loud"}},
+			cfg:  Config{Telemetry: Telemetry{LogLevel: "loud"}, GitHub: app},
 			want: []string{"log_level"},
 		},
 		{
 			name: "every problem at once",
 			cfg:  Config{Listen: ":1", MetricsListen: ":1", Telemetry: Telemetry{LogLevel: "loud"}},
-			want: []string{"metrics_listen", "log_level"},
+			want: []string{"metrics_listen", "log_level", "app_id", "private_key"},
+		},
+		{
+			name: "bad private key",
+			cfg:  Config{GitHub: GitHub{AppID: 1, PrivateKey: "not a key"}},
+			want: []string{"github app key"},
 		},
 	}
 	for _, tt := range tests {
@@ -66,12 +75,15 @@ func TestNewRejectsBadConfig(t *testing.T) {
 }
 
 func TestNewDefaults(t *testing.T) {
-	s, err := New(Config{}, discardLogger())
+	s, err := New(Config{GitHub: GitHub{AppID: 1, PrivateKey: testKey(t)}}, discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if s.cfg.Listen != ":8080" || s.cfg.MetricsListen != ":9090" || s.cfg.Telemetry.LogLevel != "info" {
-		t.Errorf("defaults not applied: %+v", s.cfg)
+	c := s.cfg
+	if c.Listen != ":8080" || c.MetricsListen != ":9090" || c.Telemetry.LogLevel != "info" ||
+		c.GitHub.GitURL != "https://github.com" || c.Sync.DataDir != "data" ||
+		c.Sync.PollInterval != time.Minute || c.Sync.DiscoveryInterval != 5*time.Minute {
+		t.Errorf("defaults not applied: %+v", c)
 	}
 }
 
@@ -89,7 +101,9 @@ func TestEndpointsAreSeparated(t *testing.T) {
 	}{
 		{public, "/healthz", http.StatusOK},
 		{public, "/metrics", http.StatusNotFound},
+		{public, "/status", http.StatusNotFound},
 		{internal, "/metrics", http.StatusOK},
+		{internal, "/status", http.StatusOK},
 		{internal, "/healthz", http.StatusNotFound},
 	}
 	for _, tt := range tests {
@@ -127,8 +141,13 @@ func TestReadyz(t *testing.T) {
 	}
 }
 
-func TestRunServesUntilContextEnds(t *testing.T) {
-	s, err := New(Config{Listen: "127.0.0.1:0", MetricsListen: "127.0.0.1:0"}, discardLogger())
+func TestRunDiscoversAndServesVaults(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]string{
+		"speki.yaml":   "title: KB\ndescription: Test vault.\n",
+		"fleet.md":     "# Fleet\n\nzeppelin notes\n",
+		"ops/roles.md": "# Roles\n",
+	})
+	s, err := New(testConfig(t, fake), discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -137,23 +156,28 @@ func TestRunServesUntilContextEnds(t *testing.T) {
 	go func() { done <- s.Run(ctx) }()
 
 	select {
-	case <-s.started:
+	case <-s.discovered:
 	case err := <-done:
 		t.Fatalf("Run returned early: %v", err)
 	}
+	s.library.WaitIdle()
 
-	for _, url := range []string{
-		"http://" + s.publicAddr.String() + "/readyz",
-		"http://" + s.internalAddr.String() + "/metrics",
-	} {
-		resp, err := http.Get(url)
-		if err != nil {
-			t.Fatalf("GET %s: %v", url, err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("GET %s = %d, want 200", url, resp.StatusCode)
-		}
+	resp, err := http.Get("http://" + s.publicAddr.String() + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("readyz = %d", resp.StatusCode)
+	}
+
+	page := getStatus(t, s)
+	if !page.Ready || len(page.Vaults) != 1 {
+		t.Fatalf("status = %+v", page)
+	}
+	v := page.Vaults[0]
+	if v.Name != fakeRepo || v.State != "serving" || v.Documents != 2 {
+		t.Errorf("vault status = %+v", v)
 	}
 
 	cancel()
@@ -164,6 +188,38 @@ func TestRunServesUntilContextEnds(t *testing.T) {
 	if s.ready.Load() {
 		t.Error("still ready after shutdown")
 	}
+
+	// A restart serves the vault from disk, even when GitHub doesn't answer.
+	fake.api.Close()
+	s2, err := New(s.cfg, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx2, cancel2 := context.WithCancel(t.Context())
+	defer cancel2()
+	go func() { done <- s2.Run(ctx2) }()
+	<-s2.discovered
+	page = getStatus(t, s2)
+	if len(page.Vaults) != 1 || page.Vaults[0].State != "serving" {
+		t.Errorf("after restart without GitHub: %+v", page)
+	}
+	cancel2()
+	<-done
+}
+
+func getStatus(t *testing.T, s *Service) statusPage {
+	t.Helper()
+	resp, err := http.Get("http://" + s.internalAddr.String() + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var page statusPage
+	err = json.NewDecoder(resp.Body).Decode(&page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page
 }
 
 func TestRunFailsOnBusyAddress(t *testing.T) {
@@ -171,7 +227,9 @@ func TestRunFailsOnBusyAddress(t *testing.T) {
 	defer busy.Close()
 	addr := strings.TrimPrefix(busy.URL, "http://")
 
-	s, err := New(Config{Listen: addr, MetricsListen: "127.0.0.1:0"}, discardLogger())
+	cfg := testConfig(t, newFakeGitHub(t, map[string]string{"a.md": "# A\n"}))
+	cfg.Listen = addr
+	s, err := New(cfg, discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

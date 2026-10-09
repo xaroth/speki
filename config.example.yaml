@@ -1,10 +1,23 @@
 # Copy to config.yaml and adjust. Every key can also be set with an environment variable:
-# SPEKI_ plus the key's path in upper case, e.g. SPEKI_TELEMETRY_LOG_LEVEL.
+# SPEKI_ plus the key's path in upper case, e.g. SPEKI_TELEMETRY_LOG_LEVEL. Lists are comma separated.
+# A secret can be read from a file: private_key_file here, SPEKI_GITHUB_PRIVATE_KEY_FILE in the environment.
 
 # Public server: MCP, sign-in, health checks.
 listen: ":8080"
 # Internal server: metrics and status. Must differ from listen; don't expose it publicly.
 metrics_listen: ":9090"
+
+github:
+  app_id: 123456
+  private_key_file: /run/secrets/github-app.pem
+  # Numeric IDs of the accounts whose installations count. Defaults to the app's owner.
+  # allowed_accounts: [87654321]
+
+sync:
+  # Shallow git copies and search indexes. Can be wiped, but keeping it makes restarts fast.
+  data_dir: /var/lib/speki
+  poll_interval: 60s
+  discovery_interval: 5m
 
 telemetry:
   log_level: info

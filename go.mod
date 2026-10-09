@@ -7,6 +7,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v88 v88.0.0
+	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/prometheus/client_golang v1.25.0
 	github.com/yuin/goldmark v1.8.6
 	go.yaml.in/yaml/v3 v3.0.5
