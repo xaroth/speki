@@ -6,7 +6,7 @@ design answers to, ordered by how much damage a threat does and how likely it is
 ## 1. Leaking one vault to users of another
 
 Speki indexes every vault with the installation token, which can read all of them. Every read path
-(`search`, `query`, `read`, `list`, `history`, `mcp_info`, and error messages) is one forgotten check away
+(`search`, `query`, `read`, `list`, `history`, `guide`, and error messages) is one forgotten check away
 from showing a user content they can't see on GitHub.
 
 Concrete ways this happens:

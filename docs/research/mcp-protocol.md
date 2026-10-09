@@ -63,7 +63,7 @@ other sources.
 
 The [server instructions guidance](https://blog.modelcontextprotocol.io/posts/2025-11-03-using-server-instructions/)
 says to use instructions for how tools fit together and leave per-tool detail to tool descriptions. We
-follow that, and put the longer explanation in the `mcp_info` tool.
+follow that, and put the longer explanation in the `guide` tool.
 
 Tool annotations matter for how clients prompt the user. Read tools get `readOnlyHint: true`, which lets
 clients run them without asking. `delete` and `move` get `destructiveHint: true`. Every tool gets a

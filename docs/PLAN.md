@@ -129,8 +129,8 @@ organisation is turned away with a clear page.
 Build:
 
 - `knowledge`: list, search (fan-out and merge), read (from the mirror, with line ranges, outline and the
-  byte cap), history, mcp_info content. Every function takes a `Grant`.
-- `mcpserver`: the instructions, `info.md`, and the tools `mcp_info`, `list`, `search`, `read`, `history`,
+  byte cap), history, guide content. Every function takes a `Grant`.
+- `mcpserver`: the instructions, `guide.md`, and the tools `guide`, `list`, `search`, `read`, `history`,
   with descriptions, annotations, text renderings and error mapping.
 - Metrics for tool calls and vaults. `/status`.
 - The end-to-end test: fake GitHub, local repositories, the go-sdk client, signing in and searching.
@@ -161,7 +161,7 @@ and every error code in [tools.md](functional/tools.md) has a test that produces
 
 ## 7. Query
 
-Build: the sandbox in `index`, `table_layout`, `query`, the one-query-per-user rule, error scrubbing.
+Build: the sandbox in `index`, `schema`, `query`, the one-query-per-user rule, error scrubbing.
 
 Tests: a suite of escape attempts that must all fail (every denied action, `sqlite_master`, another
 vault's file, `load_extension`, recursive CTEs, cross joins, huge strings, multiple statements, comments

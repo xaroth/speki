@@ -41,7 +41,7 @@ A failed tool call returns an error text that starts with a code, then says what
 A user who isn't allowed in at all (not in a required organisation, or no vaults) doesn't get as far as a
 tool. Their client gets an HTTP 403 with the reason.
 
-## mcp_info
+## guide
 
 What speki is and how to use it well. Agents call this once when they start working with speki.
 
@@ -117,7 +117,7 @@ Search is forgiving. "configuring" finds "configured", "kubernets" finds "kubern
 `corrected` lists words speki couldn't find and what it searched for instead. `relaxed` is true when no
 document matched all words and the results match only some of them.
 
-## table_layout
+## schema
 
 Describes the views `query` can use: columns with types and meaning, example queries, and the limits. No
 input. The content is the "Query" section of [search-and-query.md](search-and-query.md).

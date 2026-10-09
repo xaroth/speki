@@ -47,10 +47,10 @@ away at sign-in and on every request, even if they can read a vault.
 
 | Tool | What it does |
 |---|---|
-| `mcp_info` | Explains speki, lists the user's vaults with their descriptions and writing guidelines |
+| `guide` | Explains speki, lists the user's vaults with their descriptions and writing guidelines |
 | `list` | Lists vaults, or the folders and documents under a path in a vault |
 | `search` | Ranked full-text search across the user's vaults |
-| `table_layout` | Describes the tables available to `query` |
+| `schema` | Describes the views available to `query` |
 | `query` | Runs a read-only SQL query over the user's vaults |
 | `read` | Reads a document, or a range of its lines |
 | `write` | Creates a document or replaces it entirely |

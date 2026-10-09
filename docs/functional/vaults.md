@@ -32,9 +32,9 @@ guidelines: |
 
 | Field | Required | Used for |
 |---|---|---|
-| `title` | yes | Shown in `list` and `mcp_info` |
+| `title` | yes | Shown in `list` and `guide` |
 | `description` | yes | Tells agents what belongs in this vault, so they search and write in the right place. Keep it under 300 characters |
-| `guidelines` | no | Writing rules for agents. Returned by `mcp_info` and when listing the vault. Keep it under 2,000 characters |
+| `guidelines` | no | Writing rules for agents. Returned by `guide` and when listing the vault. Keep it under 2,000 characters |
 
 Speki ignores unknown keys, so a newer `speki.yaml` doesn't break an older speki.
 
