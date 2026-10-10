@@ -152,7 +152,11 @@ func (v *Vault) Blob(sha string) ([]byte, error) {
 	}
 	content, err := v.mirror.Blob(sha)
 	if errors.Is(err, gitsync.ErrBroken) {
-		v.broken.Store(true)
+		// Only a copy at the index's commit must have every blob the index names. Just after a fresh
+		// clone, before the rebuild, older blobs are missing for good reason.
+		if head, herr := v.mirror.Head(); herr == nil && v.index != nil && head == v.index.Commit() {
+			v.broken.Store(true)
+		}
 	}
 	return content, err
 }
@@ -384,7 +388,6 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		result = "rebuilt"
 		err = l.freshClone(ctx, v)
 		if err == nil {
-			v.broken.Store(false)
 			head, err = v.mirror.Head()
 		}
 		if err == nil {
@@ -502,6 +505,7 @@ func (l *Library) freshClone(ctx context.Context, v *Vault) error {
 		return err // v.mirror still reads from the old copy's open files; the next sync reopens
 	}
 	v.mirror = m
+	v.broken.Store(false)
 	_ = os.RemoveAll(old)
 	return nil
 }

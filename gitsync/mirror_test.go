@@ -1,7 +1,11 @@
 package gitsync
 
 import (
+	"compress/zlib"
 	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -502,6 +506,68 @@ func TestDiffOnABrokenCopy(t *testing.T) {
 	if !errors.Is(err, ErrBroken) {
 		t.Errorf("Blob of a missing object: %v, want ErrBroken", err)
 	}
+}
+
+// A diff needs neither the old content of a deleted file nor the folders speki doesn't read, and skips a
+// change of the executable bit alone.
+func TestDiffNeedsOnlyWhatItReads(t *testing.T) {
+	src := newSource(t)
+	first := src.commit(map[string]*string{"gone.md": str("# Gone\n"), ".obsidian/x.md": str("x"), "run.md": str("# Run\n")})
+	if err := os.Chmod(filepath.Join(src.dir, "run.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wt, _ := src.repo.Worktree()
+	if _, err := wt.Add("run.md"); err != nil {
+		t.Fatal(err)
+	}
+	second := src.commit(map[string]*string{"gone.md": nil, ".obsidian/x.md": str("y")})
+	dir := filepath.Join(t.TempDir(), "copy")
+	copyDir(t, src.dir, dir)
+	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := entryOf(t, src.repo, second, "run.md").Mode; mode != filemode.Executable {
+		t.Fatalf("run.md has mode %v in the second commit", mode)
+	}
+	git := filepath.Join(dir, ".git")
+	removeObject(t, git, entryOf(t, src.repo, first, "gone.md").Hash.String())
+	removeObject(t, git, treeOf(t, src.repo, first, ".obsidian"))
+	removeObject(t, git, treeOf(t, src.repo, second, ".obsidian"))
+	changes, err := m.Diff(first, second)
+	if err != nil || len(changes) != 1 || changes[0] != (Change{Path: "gone.md"}) {
+		t.Errorf("Diff = %v, %v; want only the deletion of gone.md", changes, err)
+	}
+}
+
+// Errors from damaged object stores count as a broken copy.
+func TestBrokenErrors(t *testing.T) {
+	for _, err := range []error{plumbing.ErrObjectNotFound, io.ErrUnexpectedEOF, zlib.ErrChecksum, fs.ErrNotExist} {
+		if !errors.Is(broken(fmt.Errorf("x: %w", err)), ErrBroken) {
+			t.Errorf("%v isn't broken", err)
+		}
+	}
+	if errors.Is(broken(errors.New("network down")), ErrBroken) {
+		t.Error("a plain error is broken")
+	}
+}
+
+// entryOf returns the tree entry at path in commit.
+func entryOf(t *testing.T, repo *git.Repository, commit, path string) *object.TreeEntry {
+	t.Helper()
+	c, err := repo.CommitObject(plumbing.NewHash(commit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := c.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := root.FindEntry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
 }
 
 // A control character in a folder name skips the files in it, in a diff too.

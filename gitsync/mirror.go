@@ -4,12 +4,15 @@ package gitsync
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -138,7 +141,9 @@ var ErrBroken = errors.New("the git copy is broken")
 
 // broken marks errors about missing or corrupt objects with ErrBroken.
 func broken(err error) error {
-	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, plumbing.ErrInvalidType) || errors.Is(err, dotgit.ErrPackfileNotFound) {
+	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, plumbing.ErrInvalidType) ||
+		errors.Is(err, dotgit.ErrPackfileNotFound) || errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, zlib.ErrHeader) || errors.Is(err, zlib.ErrChecksum) {
 		return fmt.Errorf("%w: %w", ErrBroken, err)
 	}
 	return err
@@ -171,7 +176,8 @@ func walk(repo *git.Repository, tree *object.Tree, prefix string, fn func(name s
 
 // diffTrees calls fn for every file that differs between two trees, with a zero entry for the side it's
 // missing from. Subtrees with the same hash are skipped. Like walk, it looks subtrees up itself: go-git's
-// DiffTree treats a missing subtree as empty, and refuses folder names with control characters.
+// DiffTree treats a missing subtree as empty, and refuses folder names with control characters. Names
+// starting with a dot, which speki never reads, are skipped. Each folder's names are taken in sorted order.
 func diffTrees(repo *git.Repository, from, to *object.Tree, prefix string, fn func(name string, before, after object.TreeEntry) error) error {
 	var names []string
 	entries := map[string][2]object.TreeEntry{}
@@ -180,6 +186,9 @@ func diffTrees(repo *git.Repository, from, to *object.Tree, prefix string, fn fu
 			continue
 		}
 		for _, e := range t.Entries {
+			if strings.HasPrefix(e.Name, ".") {
+				continue
+			}
 			pair, seen := entries[e.Name]
 			if !seen {
 				names = append(names, e.Name)
@@ -188,6 +197,7 @@ func diffTrees(repo *git.Repository, from, to *object.Tree, prefix string, fn fu
 			entries[e.Name] = pair
 		}
 	}
+	slices.Sort(names)
 	for _, n := range names {
 		pair := entries[n]
 		before, after := pair[0], pair[1]
@@ -334,10 +344,18 @@ func (m *Mirror) Diff(from, to string) ([]Change, error) {
 			return err
 		}
 		if ok {
+			if before.Hash == after.Hash && isFile(before.Mode) {
+				return nil // only the executable bit changed
+			}
 			changes = append(changes, Change{Path: name, Blob: after.Hash.String()})
 			return nil
 		}
 		ok, err = m.eligible(name, before)
+		if errors.Is(err, ErrBroken) {
+			// The old content is gone, but a deletion doesn't need it: removing a path the index
+			// doesn't have is harmless.
+			ok, err = true, nil
+		}
 		if err != nil {
 			return err
 		}
@@ -382,7 +400,7 @@ func (m *Mirror) Blob(sha string) ([]byte, error) {
 // eligible reports whether a tree entry is a file speki reads. A zero entry (the missing side of a diff)
 // isn't.
 func (m *Mirror) eligible(name string, e object.TreeEntry) (bool, error) {
-	if e.Mode != filemode.Regular && e.Mode != filemode.Executable {
+	if !isFile(e.Mode) {
 		return false, nil
 	}
 	if !strings.HasSuffix(name, ".md") || hasDotSegment(name) || strings.ContainsFunc(name, unicode.IsControl) {
@@ -405,6 +423,10 @@ func (m *Mirror) eligible(name string, e object.TreeEntry) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+func isFile(m filemode.FileMode) bool {
+	return m == filemode.Regular || m == filemode.Executable
 }
 
 func hasDotSegment(name string) bool {
