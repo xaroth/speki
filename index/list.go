@@ -44,7 +44,8 @@ type Entry struct {
 // IsFolder reports whether the entry is a folder.
 func (e Entry) IsFolder() bool { return strings.HasSuffix(e.Path, "/") }
 
-// Document returns one document's metadata.
+// Document returns one document's metadata. Its title and description are cut for answers, like
+// everywhere else the index hands them out; the full text is in the file.
 func (x *Index) Document(ctx context.Context, path string) (Document, error) {
 	g, err := x.acquire()
 	if err != nil {
@@ -67,7 +68,8 @@ func (x *Index) Document(ctx context.Context, path string) (Document, error) {
 	if err != nil {
 		return Document{}, fmt.Errorf("document %s: %w", path, err)
 	}
-	d.Description, d.Created, d.Updated = desc.String, created.String, updated.String
+	d.Title, d.Description = clip(d.Title, maxTitle), clip(desc.String, maxDescription)
+	d.Created, d.Updated = created.String, updated.String
 	for _, f := range []struct {
 		src string
 		dst any
@@ -145,7 +147,7 @@ func nextDocument(ctx context.Context, db *sql.DB, prefix, start string, exclusi
 	if err != nil {
 		return Entry{}, false, err
 	}
-	e.Description, e.Updated = desc.String, updated.String
+	e.Title, e.Description, e.Updated = clip(e.Title, maxTitle), clip(desc.String, maxDescription), updated.String
 	return e, true, nil
 }
 

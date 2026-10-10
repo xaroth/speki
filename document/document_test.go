@@ -148,6 +148,8 @@ func TestParseFrontmatterEdges(t *testing.T) {
 		{"nested tag", "---\ntags: [a, [b], [c]]\n---\n", "x", "", 1},
 		{"byte order mark without frontmatter", "\ufeff# Title\n", "Title", "# Title\n", 0},
 		{"non-text property name", "---\n? [a]\n: 1\n---\n", "x", "", 1},
+		{"long title", "---\ntitle: " + strings.Repeat("t", MaxTitle+1) + "\n---\n", strings.Repeat("t", MaxTitle+1), "", 1},
+		{"long description", "---\ndescription: " + strings.Repeat("d", MaxDescription+1) + "\n---\n", "x", "", 1},
 		{"nested non-text key", "---\nx: {1: a}\n---\n", "x", "", 1},
 		{"opening line with a trailing space", "--- \ntitle: A\n---\nText\n", "x", "--- \ntitle: A\n---\nText\n", 0},
 		{"opening line of four dashes", "----\ntitle: A\n---\nText\n", "x", "----\ntitle: A\n---\nText\n", 0},

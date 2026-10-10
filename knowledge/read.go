@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -15,9 +16,11 @@ import (
 
 // What one read returns at most.
 const (
-	maxReadLines = 1000
-	maxReadBytes = 64 << 10
-	maxOutline   = 200 // headings
+	maxReadLines  = 1000
+	maxReadBytes  = 64 << 10 // content and outline together
+	maxOutline    = 200      // headings
+	maxOutlineLen = 16 << 10 // bytes of the outline, counting each heading's text and a little for the rest
+	maxHeading    = 200      // bytes of one heading's text
 )
 
 // ReadRequest asks for a document, or part of it.
@@ -70,16 +73,26 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	}
 
 	p := Page{Vault: v.Name, Document: doc, FromLine: from, TotalLines: len(lines), Warnings: slices.Clone(doc.Warnings)}
+	// The outline comes with a partial read, and counts against its 64 KiB, so it's worked out first.
+	budget := maxReadBytes
+	partial := from > 1 || want < len(lines) || len(raw) > maxReadBytes
+	if partial {
+		parsed, err := document.Parse(path, raw)
+		if err == nil {
+			p.Outline = outline(parsed.Headings, &p.Warnings)
+			budget -= outlineSize(p.Outline)
+		}
+	}
 	var sb strings.Builder
 	for _, line := range lines[from-1:] {
 		if p.LineCount == want {
 			break
 		}
-		if sb.Len()+len(line) > maxReadBytes {
+		if sb.Len()+len(line) > budget {
 			if p.LineCount == 0 { // one line over the cap on its own: show its start
-				sb.WriteString(cutUTF8(line, maxReadBytes))
+				sb.WriteString(cutUTF8(line, budget))
 				p.LineCount = 1
-				p.Warnings = append(p.Warnings, fmt.Sprintf("line %d is longer than 64 KiB; only its start is shown", from))
+				p.Warnings = append(p.Warnings, fmt.Sprintf("line %d is longer than fits in one read; only its start is shown", from))
 			}
 			break
 		}
@@ -87,18 +100,48 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 		p.LineCount++
 	}
 	p.Content = sb.String()
-
-	if p.FromLine > 1 || p.LineCount < p.TotalLines {
-		parsed, err := document.Parse(path, raw)
-		if err == nil {
-			p.Outline = parsed.Headings
-			if len(p.Outline) > maxOutline {
-				p.Outline = p.Outline[:maxOutline]
-				p.Warnings = append(p.Warnings, fmt.Sprintf("the outline shows the first %d headings only", maxOutline))
-			}
-		}
-	}
 	return p, nil
+}
+
+// outline returns the headings a partial read shows: at most maxOutline, each cut to maxHeading bytes,
+// and maxOutlineLen in all. It adds a warning when it leaves headings out.
+func outline(headings []document.Heading, warnings *[]string) []document.Heading {
+	var out []document.Heading
+	size := 0
+	for _, h := range headings {
+		h.Text = clip(h.Text, maxHeading)
+		if len(out) == maxOutline || size+headingSize(h) > maxOutlineLen {
+			*warnings = append(*warnings, fmt.Sprintf("the outline shows the first %d of %d headings only", len(out), len(headings)))
+			break
+		}
+		out = append(out, h)
+		size += headingSize(h)
+	}
+	return out
+}
+
+// headingSize is roughly what a heading takes in an answer: its text as JSON, its level and line, and
+// the JSON around them.
+func headingSize(h document.Heading) int {
+	raw, _ := json.Marshal(h.Text) // a string always marshals
+	return len(raw) + 32
+}
+
+func outlineSize(headings []document.Heading) int {
+	n := 0
+	for _, h := range headings {
+		n += headingSize(h)
+	}
+	return n
+}
+
+// clip returns s if it's at most n bytes, or its start with "…" added, n bytes in all (but never less
+// than the "…").
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return cutUTF8(s, max(n-len("…"), 0)) + "…"
 }
 
 // load returns a document's metadata and content. A sync between the two lookups can leave the index

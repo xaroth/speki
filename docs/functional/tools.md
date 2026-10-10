@@ -165,8 +165,13 @@ sets `truncated`. Hitting the time limit is a `timeout` error.
 from the top of the file.
 
 When the document is longer than what was returned, `outline` lists its headings with line numbers (the
-first 200), so the agent can read the part it needs. Otherwise the key is left out. A single line longer
-than 64 KiB is cut, with a warning.
+first 200, each cut to 200 bytes, about 16 KiB in all as JSON), so the agent can read the part it needs. The
+outline counts against the 64 KiB. Otherwise the key is left out. A single line longer than what fits is
+cut, with a warning.
+
+Titles in every answer are cut to 200 bytes, and descriptions and snippets to 500, ending in "…". These
+limits count the text's own bytes; JSON escaping can make an answer somewhat larger. In
+`history`, author names are cut to 100 bytes and commit subjects to 300.
 
 `warnings` lists frontmatter problems in documents changed outside speki, and is left out when there are
 none.

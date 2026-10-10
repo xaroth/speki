@@ -17,9 +17,13 @@ const clientTrailer = "Speki-Client:"
 // GitHub's answer is lost.
 const requestTrailer = "Speki-Request:"
 
-// maxClient is the longest client name history shows, in bytes. Speki writes shorter ones; commits
-// made elsewhere may carry anything.
-const maxClient = 64
+// How much of a commit history shows, in bytes. Speki writes short client names; commits made elsewhere
+// may carry anything.
+const (
+	maxClient  = 64
+	maxAuthor  = 100
+	maxSubject = 300
+)
 
 // HistoryRequest asks for the latest commits of a vault or one document.
 type HistoryRequest struct {
@@ -66,9 +70,9 @@ func (b *Base) History(ctx context.Context, g *access.Grant, req HistoryRequest)
 		subject, _, _ := strings.Cut(c.Message, "\n")
 		out = append(out, Commit{
 			SHA:     c.SHA,
-			Author:  c.Author,
+			Author:  clip(c.Author, maxAuthor),
 			Date:    c.Date,
-			Message: strings.TrimSpace(subject),
+			Message: clip(strings.TrimSpace(subject), maxSubject),
 			Client:  client(c.Message),
 		})
 	}
