@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/eve-online-tools/speki/vault"
 )
 
 // Status returns every vault's status, sorted by name.
@@ -60,4 +62,16 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(c.fresh, prometheus.GaugeValue, now.Sub(s.Fresh).Seconds(), s.Name)
 		}
 	}
+}
+
+// Vaults returns the vaults being served, sorted by name.
+func (l *Library) Vaults() []vault.Vault {
+	var out []vault.Vault
+	for _, v := range l.all() {
+		if v.Status().State == StateServing {
+			out = append(out, v.Info())
+		}
+	}
+	slices.SortFunc(out, func(a, b vault.Vault) int { return cmp.Compare(a.Name, b.Name) })
+	return out
 }

@@ -122,14 +122,24 @@ func testKey(t *testing.T) Secret {
 func testConfig(t *testing.T, fake *fakeGitHub) Config {
 	t.Helper()
 	return Config{
+		PublicURL:     "https://speki.example.com",
 		Listen:        "127.0.0.1:0",
 		MetricsListen: "127.0.0.1:0",
 		GitHub: GitHub{
-			AppID:      1,
-			PrivateKey: testKey(t),
-			APIURL:     fake.api.URL,
-			GitURL:     strings.TrimSuffix(fake.gitURL, "/"),
+			AppID:        1,
+			PrivateKey:   testKey(t),
+			ClientID:     "Iv1.test",
+			ClientSecret: "secret",
+			APIURL:       fake.api.URL,
+			GitURL:       strings.TrimSuffix(fake.gitURL, "/"),
 		},
+		Auth: Auth{Keys: testKeys()},
 		Sync: Sync{DataDir: t.TempDir()},
 	}
+}
+
+func testKeys() Secret {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return Secret("keys:\n  - id: test\n    secret: " + base64.StdEncoding.EncodeToString(b) + "\n    primary: true\n")
 }

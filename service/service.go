@@ -19,9 +19,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/gitsync"
 	"github.com/eve-online-tools/speki/library"
+	"github.com/eve-online-tools/speki/mcpserver"
+	"github.com/eve-online-tools/speki/oauth"
+	"github.com/eve-online-tools/speki/seal"
+	"github.com/eve-online-tools/speki/store"
 	"github.com/eve-online-tools/speki/telemetry"
 	"github.com/eve-online-tools/speki/vault"
 )
@@ -36,6 +41,8 @@ type Service struct {
 	metrics  *prometheus.Registry
 	github   *gh.Client
 	library  *library.Library
+	auth     *oauth.Server
+	mcp      *mcpserver.Server
 	ready    atomic.Bool
 	vaultsMu sync.Mutex
 	vaults   *vault.Registry // nil until the allowed accounts are known
@@ -78,12 +85,30 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	}, logger)
 	metrics.MustRegister(lib.Collector())
 
+	keys, err := seal.ParseKeyring([]byte(cfg.Auth.Keys.Reveal()))
+	if err != nil {
+		return nil, fmt.Errorf("configuration: auth.keys: %w", err)
+	}
+	resolver := access.NewResolver(github, lib.Vaults, cfg.Access.RequiredOrgs)
+	auth := oauth.New(oauth.Config{
+		Issuer:              cfg.PublicURL,
+		ClientMetadataHosts: cfg.Auth.ClientMetadataHosts,
+		GitHub: gh.OAuthConfig{
+			ClientID:     cfg.GitHub.ClientID,
+			ClientSecret: cfg.GitHub.ClientSecret.Reveal(),
+			URL:          cfg.GitHub.OAuthURL,
+		},
+		CheckUser: resolver.CheckMember,
+	}, keys, github, store.NewMemory(), logger)
+
 	return &Service{
 		cfg:        cfg,
 		logger:     logger,
 		metrics:    metrics,
 		github:     github,
 		library:    lib,
+		auth:       auth,
+		mcp:        mcpserver.New(auth, resolver, cfg.Version, logger),
 		started:    make(chan struct{}),
 		discovered: make(chan struct{}),
 	}, nil
@@ -200,9 +225,13 @@ func (s *Service) allowedAccounts(ctx context.Context, giveUp func()) ([]int64, 
 	}
 }
 
-// publicHandler serves what MCP clients and browsers need.
+// publicHandler serves what MCP clients and browsers need: MCP, sign-in and health checks.
 func (s *Service) publicHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/mcp", s.mcp.Handler())
+	auth := s.auth.Handler()
+	mux.Handle("/.well-known/", auth)
+	mux.Handle("/oauth/", auth)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
