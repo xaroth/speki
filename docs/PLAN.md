@@ -19,8 +19,11 @@ The design documents describe the end state. This plan only says in which order 
 | 6 | Write tools | Agents can write back |
 | 7 | Query | Agent SQL in the sandbox |
 | 8 | Several instances | Redis, change notices, operations polish |
+| 10 | Proven against reality | The open checks done by hand, the team using it, someone else's review |
 
 Milestones 1 and 2 can run in parallel, as can 3 and 4. Everything else builds on what came before.
+Milestone 10 picks up the parts of earlier milestones that only a real GitHub App, real clients, other
+people and a second instance can finish.
 
 ## 0. Foundations and checks
 
@@ -189,3 +192,125 @@ other within seconds; kill one in the middle of a write; refresh the same token 
 
 Done when: those scenarios behave as described, and an operator who didn't build speki can follow the
 runbook to rotate a key.
+
+## 10. Proven against reality
+
+Milestones 0 to 8 are built and pass their tests against fakes. Their "done when" still needs things CI
+can't provide: a registered GitHub App, Claude Code and claude.ai as clients, the team, a reviewer who
+didn't write the code, and two instances behind a load balancer. This milestone does those, in order. It
+adds no features. Code changes only fix what a step finds, and each fix comes with a test that fails
+without it. Refactors that don't serve a step wait until the milestone is done.
+
+Each step gets a GitHub issue that holds its results, and closes when its "done when" holds.
+
+### 10.1 Test setup
+
+- A test organisation with the GitHub App registered as in [running.md](functional/running.md), and
+  three scratch vaults: one plain, one with a ruleset that requires a pull request, one with a ruleset that
+  requires a status check. Push protection on for all three.
+- A second GitHub account outside the organisation, and one with only read access to one vault.
+- A staging instance with a public HTTPS address, its own keys, and Redis. It runs the image CI builds
+  from `main`.
+
+Done when: the staging instance is ready and lists the three vaults on `/status`.
+
+### 10.2 GitHub checks
+
+Milestone 0 checks 1 and 2, against the scratch vaults, through speki's own `gh` package where it can be:
+
+1. `createCommitOnBranch` with a test secret (a revoked token of a provider push protection knows) in a
+   new file and in an edit. Is it rejected, with which status and body?
+2. The same mutation against the pull-request and status-check rulesets. Which errors come back?
+3. The commit's author and verification badge when written with a user token.
+4. `GET /user/installations/{id}/repositories` for the read-only user: are the per-repository
+   permissions there and correct? `GET /user/memberships/orgs/{org}` for a member, a pending invite, and
+   the outside account.
+5. A conditional ref lookup that returns 304, and whether it counts against the rate limit.
+
+Record every response under `gh/testdata/` and test `gh` against them, so the error mapping matches
+GitHub's real bodies instead of loose message matches. If push protection doesn't cover
+`createCommitOnBranch`, switch `gh.Commit` to the Git Data API, as [git-access.md](research/git-access.md)
+allows.
+
+Done when: each question has its answer in [git-access.md](research/git-access.md) or
+[security.md](research/security.md), the "not yet verified" notes are gone, and `secret_detected`,
+`vault_read_only` and the other write errors in [tools.md](functional/tools.md) each have a test fed
+by a recorded response.
+
+### 10.3 Clients
+
+Milestone 0 check 5 and milestone 4's manual tests, against staging:
+
+1. Sign in from Claude Code and from claude.ai, read-write and read-only.
+2. Sign in as the outside account: a clear page, no token.
+3. Leave both clients for over an hour, then use them: they refresh without asking.
+4. claude.ai: does it use the client metadata document, from which host, and does it send `Origin`?
+   Do the server instructions reach the model, in both clients?
+5. A read-only session tries to write and gets `read_only_session`; the read-only user can't write to
+   the vault they only read.
+
+Done when: every case behaves as [access.md](functional/access.md) says, and the answers are in
+[mcp-protocol.md](research/mcp-protocol.md) and [authentication.md](research/authentication.md).
+With 10.2 done as well, issue #23 closes: checks 3 and 4 are already answered.
+
+### 10.4 Sandbox review
+
+Milestone 7's last condition. Someone who didn't write `index/sandbox.go` reviews it with
+[index.md](design/index.md) and [security.md](research/security.md) in hand, and tries to break it on
+staging through `query`. Scope: the authorizer, attached databases, limits (time, memory, result size),
+error scrubbing, and reaching another vault's rows or the file system.
+
+Each finding is an issue. Each fix adds the attempt to `index/sandbox_test.go`.
+
+Done when: the reviewer signs off that nothing is open.
+
+### 10.5 Read-only release
+
+Milestone 5's release, which was skipped. One production instance with a persistent data directory and
+the team's real vaults. Everyone signs in read-only for the first week.
+
+Watch, and write down at the end of the week:
+
+- Whether agents reach for speki without being told, from the tool call metrics and from asking people.
+- Searches that found nothing, or found the wrong thing.
+- Errors, slow calls, and memory and disk use against [running.md](functional/running.md).
+
+Tune the instructions and tool descriptions on what agents actually did.
+
+Done when: the team has used it for a week, the notes are written, and nobody reports seeing a vault they
+can't read on GitHub.
+
+### 10.6 Writes on
+
+People sign in read-write. Agents edit, move and delete in real vaults for a week.
+
+Done when: milestone 6's condition holds for real (an agent finds a document, edits it, and finds the
+change by searching right after) and no write was lost, applied twice, or landed in the wrong place.
+
+### 10.7 Several instances and the runbook
+
+Milestone 8's tests, on staging with two instances behind a load balancer:
+
+1. Sign in on one, use the other.
+2. Write on one, search on the other within seconds.
+3. Kill one in the middle of a write: the write either lands once or not at all, and the agent is told
+   which.
+4. Refresh the same token on both at once: one new token pair, both callers get it.
+
+Then someone who didn't build speki follows [running.md](functional/running.md) on staging: key rotation, a
+forced rebuild, a leaked key, a vault that won't index. Every place they get stuck is fixed in the runbook.
+
+Done when: the four scenarios behave as described, and the operator finished the runbook without help.
+
+### 10.8 Housekeeping
+
+- `toolchain` in `go.mod` pinned to the newest Go patch release. `govulncheck` runs on every pull request
+  (today only when `go.mod` or `go.sum` change) and weekly (today monthly), so Go security releases are
+  noticed when they ship.
+- The README says what speki is now.
+- Issue #25 done or closed with what's left. Its recorded `gh` responses are covered by 10.2.
+
+Done when: `go.mod` has a `toolchain` line, and the vulnerability workflow runs on every pull request and
+weekly, and passes.
+
+Done when (milestone): every step above is done, and the team has used speki for writing for a week.
