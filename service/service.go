@@ -44,6 +44,7 @@ type Service struct {
 	github   *gh.Client
 	library  *library.Library
 	sandbox  *index.Sandbox
+	store    sharedStore
 	auth     *oauth.Server
 	mcp      *mcpserver.Server
 	ready    atomic.Bool
@@ -92,6 +93,10 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configuration: auth.keys: %w", err)
 	}
+	shared, err := newStore(cfg.Redis, logger)
+	if err != nil {
+		return nil, err
+	}
 	resolver := access.NewResolver(github, lib.Vaults, cfg.Access.RequiredOrgs)
 	auth := oauth.New(oauth.Config{
 		Issuer:              cfg.PublicURL,
@@ -102,13 +107,14 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 			URL:          cfg.GitHub.OAuthURL,
 		},
 		CheckUser: resolver.CheckMember,
-	}, keys, github, store.NewMemory(), logger)
+	}, keys, github, shared, logger)
+	metrics.MustRegister(auth.Collector())
 
 	sandbox, err := index.NewSandbox()
 	if err != nil {
 		return nil, err
 	}
-	kb := knowledge.New(libraryVaults{lib}, github, sandbox, logger)
+	kb := knowledge.New(libraryVaults{lib}, github, sandbox, shared, logger)
 	mcp := mcpserver.New(auth, resolver, kb, cfg.Version, logger)
 	metrics.MustRegister(mcp.Collector())
 
@@ -119,6 +125,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		github:     github,
 		library:    lib,
 		sandbox:    sandbox,
+		store:      shared,
 		auth:       auth,
 		mcp:        mcp,
 		started:    make(chan struct{}),
@@ -129,6 +136,19 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 // Run serves vaults already on disk straight away, keeps the vaults in step with GitHub, and serves HTTP.
 // It blocks until ctx ends and shutdown is done.
 func (s *Service) Run(ctx context.Context) error {
+	stopTracing, err := telemetry.StartTracing(ctx, s.cfg.Telemetry.Tracing, s.cfg.Version)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		err := stopTracing(flushCtx)
+		if err != nil {
+			s.logger.Warn("flushing traces failed", "err", err)
+		}
+	}()
+
 	var lc net.ListenConfig
 	public, err := lc.Listen(ctx, "tcp", s.cfg.Listen)
 	if err != nil {
@@ -161,6 +181,7 @@ func (s *Service) Run(ctx context.Context) error {
 	var background sync.WaitGroup
 	background.Go(func() { s.discover(work) })
 	background.Go(func() { s.library.Run(work, s.cfg.Sync.PollInterval) })
+	background.Go(func() { s.followNotices(work) })
 
 	g.Go(func() error {
 		<-gctx.Done()
@@ -171,7 +192,7 @@ func (s *Service) Run(ctx context.Context) error {
 		defer cancel()
 		err := errors.Join(publicSrv.Shutdown(shutdownCtx), internalSrv.Shutdown(shutdownCtx))
 		s.library.Close()
-		return errors.Join(err, s.sandbox.Close())
+		return errors.Join(err, s.sandbox.Close(), s.store.Close())
 	})
 
 	err = g.Wait()
@@ -237,6 +258,32 @@ func (s *Service) allowedAccounts(ctx context.Context, giveUp func()) ([]int64, 
 	}
 }
 
+// followNotices syncs a vault when another instance says its branch moved, so a write on one instance
+// shows up on the others within seconds instead of at the next poll. The store is retried while it's
+// unreachable; polling covers the gap.
+func (s *Service) followNotices(ctx context.Context) {
+	for ctx.Err() == nil {
+		err := s.store.Subscribe(ctx, func(repoID int64, commit string) {
+			v, ok := s.library.Vault(repoID)
+			if !ok || v.Index().Commit() == commit {
+				return
+			}
+			err := s.library.Sync(ctx, v)
+			if err != nil {
+				s.logger.Warn("sync after a change notice failed", "vault", v.Info().Name, "err", err)
+			}
+		})
+		if err == nil {
+			return
+		}
+		s.logger.Warn("change notices unavailable; retrying", "err", err)
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
 // publicHandler serves what MCP clients and browsers need: MCP, sign-in and health checks.
 func (s *Service) publicHandler() http.Handler {
 	mux := http.NewServeMux()
@@ -254,7 +301,7 @@ func (s *Service) publicHandler() http.Handler {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	return telemetry.RequestID(mux)
+	return telemetry.RequestID(telemetry.Trace(mux))
 }
 
 // internalHandler serves metrics and the status page. It runs on its own listener and is never
@@ -322,4 +369,27 @@ func (l libraryVaults) Sync(ctx context.Context, repoID int64) error {
 		return fmt.Errorf("vault %d isn't served", repoID)
 	}
 	return l.lib.Sync(ctx, v)
+}
+
+// sharedStore is the state instances share, and the channel they tell each other about changes on.
+type sharedStore interface {
+	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	Delete(ctx context.Context, key string) error
+	Publish(ctx context.Context, repoID int64, commit string) error
+	Subscribe(ctx context.Context, f func(repoID int64, commit string)) error
+	Close() error
+}
+
+// newStore returns Redis when it's configured, otherwise memory for a single instance.
+func newStore(cfg Redis, logger *slog.Logger) (sharedStore, error) {
+	if cfg.URL == "" {
+		return store.NewMemory(), nil
+	}
+	r, err := store.NewRedis(context.Background(), cfg.URL.Reveal(), logger)
+	if err != nil {
+		return nil, fmt.Errorf("configuration: redis.url: %w", err)
+	}
+	return r, nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v88/github"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // ErrNotFound means GitHub definitely says the thing doesn't exist (or the app can't see it).
@@ -35,6 +36,7 @@ type Config struct {
 // Client talks to GitHub as the app and as its installations.
 type Client struct {
 	apiURL  string
+	base    http.RoundTripper
 	web     *http.Client // GitHub's OAuth endpoints, which aren't part of the REST API
 	appAuth *ghinstallation.AppsTransport
 	app     *github.Client
@@ -63,7 +65,7 @@ func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
 		return nil, err
 	}
 
-	base := http.DefaultTransport
+	base := otelhttp.NewTransport(http.DefaultTransport) // a span per GitHub request when tracing is on
 	appAuth, err := ghinstallation.NewAppsTransport(m.observe("app", base), cfg.AppID, cfg.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("github app key: %w", err)
@@ -76,6 +78,7 @@ func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
 	}
 	return &Client{
 		apiURL:   apiURL,
+		base:     base,
 		web:      &http.Client{Transport: m.observe("oauth", base), Timeout: requestTimeout},
 		appAuth:  appAuth,
 		app:      app,

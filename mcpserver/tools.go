@@ -5,9 +5,12 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/index"
@@ -163,6 +166,8 @@ type toolFunc[In, Out any] func(ctx context.Context, g *access.Grant, in In) (Ou
 func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		start := time.Now()
+		ctx, span := telemetry.Tracer().Start(ctx, "tool "+name)
+		defer span.End()
 		var zero Out
 		g, ok := GrantFrom(ctx)
 		if !ok { // the stack always sets it; this is a bug
@@ -183,11 +188,45 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 			s.logger.ErrorContext(ctx, "tool failed", "tool", name, "login", g.User().Login, "err", err)
 			err = fmt.Errorf("unavailable: something went wrong on speki's side or GitHub's. Try again; if it keeps failing, give the operator request ID %s", telemetry.RequestIDFrom(ctx))
 		}
+		took := time.Since(start)
 		s.metrics.calls.WithLabelValues(name, outcome).Inc()
-		s.metrics.duration.WithLabelValues(name).Observe(time.Since(start).Seconds())
+		s.metrics.duration.WithLabelValues(name).Observe(took.Seconds())
+		vault, path := targetOf(in)
+		span.SetAttributes(attribute.String("speki.tool", name), attribute.String("speki.vault", vault), attribute.String("speki.outcome", outcome))
+		s.logger.InfoContext(ctx, "tool call",
+			"tool", name,
+			"login", g.User().Login,
+			"client", g.User().Client,
+			"vault", vault,
+			"path", path,
+			"outcome", outcome,
+			"duration_ms", took.Milliseconds(),
+		)
 		if err != nil {
 			return nil, zero, err
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
 	}
 }
+
+// target is implemented by tool inputs that name a vault and a document, for the log line.
+type target interface {
+	target() (vault, path string)
+}
+
+func targetOf(in any) (vault, path string) {
+	if t, ok := in.(target); ok {
+		return t.target()
+	}
+	return "", ""
+}
+
+func (in ListInput) target() (string, string)    { return in.Vault, in.Path }
+func (in SearchInput) target() (string, string)  { return strings.Join(in.Vaults, ","), in.Path }
+func (in ReadInput) target() (string, string)    { return in.Vault, in.Path }
+func (in HistoryInput) target() (string, string) { return in.Vault, in.Path }
+func (in WriteInput) target() (string, string)   { return in.Vault, in.Path }
+func (in EditInput) target() (string, string)    { return in.Vault, in.Path }
+func (in MoveInput) target() (string, string)    { return in.Vault, in.From }
+func (in DeleteInput) target() (string, string)  { return in.Vault, in.Path }
+func (in QueryInput) target() (string, string)   { return strings.Join(in.Vaults, ","), "" }

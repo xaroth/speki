@@ -56,6 +56,9 @@ func TestWriteCreates(t *testing.T) {
 	if res.Version != blobID([]byte(want)) || res.Commit == "" || res.IndexPending {
 		t.Errorf("result = %+v", res)
 	}
+	if len(f.notices.sent) != 1 || f.notices.sent[0] != "1:"+res.Commit {
+		t.Errorf("notices = %v", f.notices.sent)
+	}
 
 	// The change is searchable right after.
 	found, err := f.base.Search(t.Context(), f.grant, SearchRequest{Query: "deploying zeppelin"})

@@ -11,9 +11,15 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/eve-online-tools/speki/gitsync"
 	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/vault"
+
+	"github.com/eve-online-tools/speki/telemetry"
 )
 
 const (
@@ -246,7 +252,18 @@ func (l *Library) Sync(ctx context.Context, v *Vault) error {
 	return l.syncLocked(ctx, v)
 }
 
-func (l *Library) syncLocked(ctx context.Context, v *Vault) error {
+func (l *Library) syncLocked(ctx context.Context, v *Vault) (err error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "library.Sync", trace.WithAttributes(attribute.String("speki.vault", v.Info().Name)))
+	result := "unchanged"
+	defer func() {
+		if err != nil {
+			result = "failed"
+			span.SetStatus(codes.Error, "sync failed")
+		}
+		span.SetAttributes(attribute.String("speki.result", result))
+		span.End()
+		l.syncs.WithLabelValues(result).Inc()
+	}()
 	if v.removed {
 		return errRemoved
 	}
@@ -267,8 +284,10 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault) error {
 	switch {
 	case commit == head:
 	case commit != "" && v.mirror.Has(commit):
+		result = "applied"
 		err = l.apply(ctx, v, commit, head)
 	default:
+		result = "rebuilt"
 		err = l.build(ctx, v, head)
 	}
 	if err != nil {

@@ -256,12 +256,26 @@ var (
 // fixture serves three vaults. The test user may read ours and shared, and write ours; secret holds a
 // document only others may read.
 type fixture struct {
-	t      *testing.T
-	base   *Base
-	grant  *access.Grant
-	copies map[int64]*fakeCopy
-	github *fakeGitHub
-	vaults *fakeVaults
+	t       *testing.T
+	base    *Base
+	grant   *access.Grant
+	copies  map[int64]*fakeCopy
+	github  *fakeGitHub
+	vaults  *fakeVaults
+	notices *fakeNotices
+}
+
+// fakeNotices records the change notices sent.
+type fakeNotices struct {
+	mu   sync.Mutex
+	sent []string // repo id:commit
+}
+
+func (n *fakeNotices) Publish(_ context.Context, repoID int64, commit string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sent = append(n.sent, fmt.Sprintf("%d:%s", repoID, commit))
+	return nil
 }
 
 var fixedNow = time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC)
@@ -287,7 +301,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sandbox.Close() })
-	f.base = New(f.vaults, f.github, sandbox, discard())
+	f.notices = &fakeNotices{}
+	f.base = New(f.vaults, f.github, sandbox, f.notices, discard())
 	f.base.now = func() time.Time { return fixedNow }
 	f.grant = access.NewGrant(access.User{ID: 7, Login: "octocat", Token: "ghu_x", Client: "Claude Code", Write: true},
 		[]vault.Vault{ours, shared}, []int64{1})

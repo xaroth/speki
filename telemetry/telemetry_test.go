@@ -9,6 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestNewLoggerRedacts(t *testing.T) {
@@ -107,5 +112,35 @@ func TestLogLinesCarryRequestID(t *testing.T) {
 	}
 	if _, ok := out["request_id"]; ok {
 		t.Errorf("line without a request has an ID: %v", out)
+	}
+}
+
+func TestTraceLeavesOutQueryStrings(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(old)
+
+	h := RequestID(Trace(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	})))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/oauth/github/callback?code=secret&state=s", nil))
+
+	spans := rec.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("%d spans", len(spans))
+	}
+	s := spans[0]
+	if s.Name() != "GET /oauth/github/callback" {
+		t.Errorf("span name = %q", s.Name())
+	}
+	for _, a := range s.Attributes() {
+		if strings.Contains(a.Value.String(), "secret") {
+			t.Errorf("attribute %s carries the query: %s", a.Key, a.Value.String())
+		}
+	}
+	if s.Status().Code != codes.Error {
+		t.Errorf("a 502 isn't an error: %v", s.Status())
 	}
 }

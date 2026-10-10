@@ -20,7 +20,7 @@ func (l *Library) Status() []Status {
 	return out
 }
 
-// Collector returns a Prometheus collector for the per-vault metrics. It reads the vaults' status on
+// Collector returns a Prometheus collector for the per-vault metrics and sync results. It reads the vaults' status on
 // every scrape, so removed vaults disappear from the metrics.
 func (l *Library) Collector() prometheus.Collector {
 	return &collector{
@@ -42,6 +42,7 @@ type collector struct {
 }
 
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
+	c.l.syncs.Describe(ch)
 	ch <- c.up
 	ch <- c.documents
 	ch <- c.bytes
@@ -49,6 +50,7 @@ func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
+	c.l.syncs.Collect(ch)
 	now := time.Now()
 	for _, s := range c.l.Status() {
 		up := 0.0

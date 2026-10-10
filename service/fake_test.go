@@ -7,11 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +29,10 @@ type fakeGitHub struct {
 	gitURL string
 	repo   *git.Repository
 	dir    string
+
+	mu        sync.Mutex      // commits, and refresh tokens, arrive from several instances at once
+	refreshed map[string]bool // GitHub refresh tokens work once
+	refreshes int
 }
 
 const (
@@ -36,7 +42,7 @@ const (
 
 func newFakeGitHub(t *testing.T, files map[string]string) *fakeGitHub {
 	t.Helper()
-	f := &fakeGitHub{t: t, gitURL: t.TempDir()}
+	f := &fakeGitHub{t: t, gitURL: t.TempDir(), refreshed: map[string]bool{}}
 	f.dir = filepath.Join(f.gitURL, fakeRepo+".git")
 	var err error
 	f.repo, err = git.PlainInit(f.dir, false)
@@ -89,6 +95,19 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/login/oauth/access_token":
 		_ = r.ParseForm()
+		if refresh := r.Form.Get("refresh_token"); refresh != "" {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.refreshed[refresh] {
+				write(map[string]any{"error": "bad_refresh_token"})
+				return
+			}
+			f.refreshed[refresh] = true
+			f.refreshes++
+			write(map[string]any{"access_token": fakeUserToken, "expires_in": 28800,
+				"refresh_token": fmt.Sprintf("ghr_test_%d", f.refreshes), "refresh_token_expires_in": 15897600})
+			return
+		}
 		if r.Form.Get("code") != "github-code" || r.Form.Get("client_secret") != "secret" {
 			write(map[string]any{"error": "bad_verification_code"})
 			return
@@ -197,6 +216,8 @@ func (f *fakeGitHub) commit(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	in := req.Variables.Input
 	w.Header().Set("Content-Type", "application/json")
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	head, err := f.repo.Head()
 	if err != nil {
 		f.t.Error(err)

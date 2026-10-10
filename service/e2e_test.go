@@ -140,9 +140,22 @@ func callTool(t *testing.T, cs *mcp.ClientSession, name string, args any) string
 
 var consentField = regexp.MustCompile(`name="consent" value="([^"]+)"`)
 
+// signedIn is what a client holds after signing in.
+type signedIn struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ClientID     string `json:"-"`
+}
+
 // signIn registers a client and goes through the browser flow with write access, returning the access
 // token.
 func signIn(t *testing.T, base string) string {
+	t.Helper()
+	return signInFully(t, base).AccessToken
+}
+
+// signInFully is signIn, returning the refresh token and client ID too.
+func signInFully(t *testing.T, base string) signedIn {
 	t.Helper()
 	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	type response struct {
@@ -218,12 +231,11 @@ func signIn(t *testing.T, base string) string {
 		"redirect_uri":  {redirect},
 		"code_verifier": {verifier},
 	}, nil, http.StatusOK)
-	var tokens struct {
-		AccessToken string `json:"access_token"`
-	}
+	var tokens signedIn
 	_ = json.Unmarshal(tok.body, &tokens)
 	if tokens.AccessToken == "" {
 		t.Fatal("no access token")
 	}
-	return tokens.AccessToken
+	tokens.ClientID = reg.ClientID
+	return tokens
 }

@@ -150,15 +150,18 @@ type RepoAccess struct {
 
 // userClient returns an API client authenticated as the user.
 func (c *Client) userClient(token string) (*github.Client, error) {
-	return newGitHub(c.apiURL, c.metrics.observe("user", authTransport{token: token}))
+	return newGitHub(c.apiURL, c.metrics.observe("user", authTransport{token: token, next: c.base}))
 }
 
-type authTransport struct{ token string }
+type authTransport struct {
+	token string
+	next  http.RoundTripper
+}
 
 func (a authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+a.token)
-	return http.DefaultTransport.RoundTrip(r)
+	return a.next.RoundTrip(r)
 }
 
 // userError turns a 401 into ErrUnauthorized.

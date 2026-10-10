@@ -20,6 +20,8 @@ import (
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/gitsync"
 	"github.com/eve-online-tools/speki/vault"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // github is what the library needs from GitHub.
@@ -52,6 +54,7 @@ type Library struct {
 
 	opening    chan struct{} // limits concurrent clones and builds
 	background sync.WaitGroup
+	syncs      *prometheus.CounterVec
 }
 
 // New returns an empty library.
@@ -68,6 +71,10 @@ func New(github github, opts Options, logger *slog.Logger) *Library {
 		logger:  logger,
 		vaults:  make(map[int64]*Vault),
 		opening: make(chan struct{}, opts.Opening),
+		syncs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "speki_sync_total",
+			Help: "Vault syncs, by result: unchanged, applied, rebuilt or failed.",
+		}, []string{"result"}),
 	}
 }
 

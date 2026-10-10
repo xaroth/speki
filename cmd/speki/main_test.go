@@ -73,10 +73,11 @@ func TestLoadConfig(t *testing.T) {
 		},
 		{
 			name:    "lists, numbers and durations from the environment",
-			environ: []string{"SPEKI_GITHUB_APP_ID=12", "SPEKI_GITHUB_ALLOWED_ACCOUNTS=1, 2", "SPEKI_SYNC_POLL_INTERVAL=30s"},
+			environ: []string{"SPEKI_GITHUB_APP_ID=12", "SPEKI_GITHUB_ALLOWED_ACCOUNTS=1, 2", "SPEKI_SYNC_POLL_INTERVAL=30s", "SPEKI_TELEMETRY_TRACING=true"},
 			want: service.Config{
-				GitHub: service.GitHub{AppID: 12, AllowedAccounts: []int64{1, 2}},
-				Sync:   service.Sync{PollInterval: 30 * time.Second},
+				GitHub:    service.GitHub{AppID: 12, AllowedAccounts: []int64{1, 2}},
+				Sync:      service.Sync{PollInterval: 30 * time.Second},
+				Telemetry: service.Telemetry{Tracing: true},
 			},
 		},
 		{
