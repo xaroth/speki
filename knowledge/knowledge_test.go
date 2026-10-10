@@ -282,7 +282,12 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.github = &fakeGitHub{t: t, f: f, repos: map[string]*fakeRepo{}}
 	f.vaults = &fakeVaults{f: f}
-	f.base = New(f.vaults, f.github, discard())
+	sandbox, err := index.NewSandbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sandbox.Close() })
+	f.base = New(f.vaults, f.github, sandbox, discard())
 	f.base.now = func() time.Time { return fixedNow }
 	f.grant = access.NewGrant(access.User{ID: 7, Login: "octocat", Token: "ghu_x", Client: "Claude Code", Write: true},
 		[]vault.Vault{ours, shared}, []int64{1})

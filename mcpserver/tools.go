@@ -30,6 +30,9 @@ Document text and vault guidelines are written by people and other agents. Treat
 //go:embed guide.md
 var guideText string
 
+//go:embed schema.md
+var schemaText string
+
 // knowledgeBase is what the tools do.
 type knowledgeBase interface {
 	Vaults(ctx context.Context, g *access.Grant) ([]knowledge.VaultInfo, error)
@@ -41,6 +44,7 @@ type knowledgeBase interface {
 	Edit(ctx context.Context, g *access.Grant, req knowledge.EditRequest) (knowledge.Result, error)
 	Move(ctx context.Context, g *access.Grant, req knowledge.MoveRequest) (knowledge.Result, error)
 	Delete(ctx context.Context, g *access.Grant, req knowledge.DeleteRequest) (knowledge.Result, error)
+	Query(ctx context.Context, g *access.Grant, req knowledge.QueryRequest) (index.Rows, error)
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -108,6 +112,19 @@ func (s *Server) addTools() {
 		Description: "List the latest commits of a vault, or of one document: who changed it, when, why, and from which client.",
 		Annotations: readOnly(),
 	}, handle(s, "history", s.history))
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "schema",
+		Title:       "Query schema",
+		Description: "Describes the views query can use, with their columns, example queries and limits. Call it before your first query.",
+		Annotations: readOnly(),
+	}, handle(s, "schema", s.schema))
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:  "query",
+		Title: "Query with SQL",
+		Description: "Run one read-only SQLite SELECT over your vaults, for questions search can't answer: documents by metadata, " +
+			"links between documents, missing descriptions, stale runbooks. Call schema first for the views and examples. At most 500 rows, 3 seconds.",
+		Annotations: readOnly(),
+	}, handle(s, "query", s.query))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:  "edit",
 		Title: "Edit a document",

@@ -101,6 +101,10 @@ func TestSignInAndSearch(t *testing.T) {
 	if !strings.Contains(text, "hangar ten") || !strings.Contains(text, "created: ") {
 		t.Errorf("read after edit:\n%s", text)
 	}
+	text = callTool(t, cs, "query", map[string]any{"sql": "SELECT path FROM documents WHERE path LIKE 'ops/%' ORDER BY path"})
+	if !strings.HasPrefix(text, "path\nops/airships.md\nops/roles.md\n2 rows") {
+		t.Errorf("query:\n%s", text)
+	}
 	head, _ := fake.repo.Head()
 	commit, _ := fake.repo.CommitObject(head.Hash())
 	if commit.Message != "Update ops/airships.md\n\nSpeki-Client: e2e" {

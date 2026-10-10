@@ -165,3 +165,27 @@ the end, instead of row by row through triggers, nearly halved build time.
 
 The generated text is harsher than real text: common words show up in most documents, so most queries
 match thousands of them. Real vaults should do better.
+
+## Query sandbox checks
+
+Milestone 0, check 3, answered while building the sandbox in milestone 7, with go-sqlite3 1.14.52 and
+the `sqlite_fts5,sqlite_omit_load_extension` build tags. The tests in `index/sandbox_test.go` repeat
+each of these.
+
+- `ATTACH 'file:<path>?mode=ro'` works: go-sqlite3 opens connections with `SQLITE_OPEN_URI`. It works
+  on an index in WAL mode while `Apply` writes to it from another connection, and each query sees a
+  consistent snapshot.
+- `MATCH` works through a `TEMP` view that is a `UNION ALL` of joins across attached databases, when it
+  names a column (`WHERE body MATCH 'cache'`). SQLite pushes the condition into each arm. Matching on the
+  view's name doesn't work, since the view has no column by that name.
+- The authorizer sees FTS5's own statements. A match reads `fts_idx`, `fts_config` and the content table,
+  and runs `PRAGMA data_version`, all on the attached database. No `fts5_*` function call reaches it.
+- go-sqlite3's authorizer callback gets three of SQLite's four string arguments, so the view a read
+  comes from is unknown. Reads are allowed by database and table name instead.
+- A small C file can call `sqlite3_auto_extension` and `sqlite3_db_config` from the SQLite that
+  go-sqlite3 compiles in: the symbols link. `DEFENSIVE` then refuses `UPDATE sqlite_schema` even with
+  `writable_schema` on, and file connections, where it's not set, can still turn the journal off.
+- Changing `temp_store` deletes the temp database, so it has to be set before the views are created.
+- `database/sql` hands a released connection to a waiting caller regardless of `SetMaxIdleConns(0)`, so
+  each sandbox connection is closed explicitly by returning `driver.ErrBadConn` from `Raw`.
+- `sqlite3_soft_heap_limit64` is set once for the process, through the same C file.

@@ -456,3 +456,64 @@ func (s *Server) delete(ctx context.Context, g *access.Grant, in DeleteInput) (C
 	out, text := changeOutput(r, "Deleted")
 	return out, text, nil
 }
+
+// SchemaInput takes nothing.
+type SchemaInput struct{}
+
+// SchemaOutput describes what query can read.
+type SchemaOutput struct {
+	Schema string `json:"schema"`
+}
+
+func (s *Server) schema(context.Context, *access.Grant, SchemaInput) (SchemaOutput, string, error) {
+	return SchemaOutput{Schema: schemaText}, schemaText, nil
+}
+
+// QueryInput is one SQL query.
+type QueryInput struct {
+	SQL    string   `json:"sql" jsonschema:"one read-only SQLite SELECT statement; see schema"`
+	Vaults []string `json:"vaults,omitempty" jsonschema:"the vaults to query (owner/repo), at most 10. Leave out for all your vaults, if that's 10 or fewer"`
+}
+
+// QueryOutput is a query's result.
+type QueryOutput struct {
+	Columns   []string `json:"columns"`
+	Rows      [][]any  `json:"rows"`
+	Truncated bool     `json:"truncated" jsonschema:"true when rows were cut at 500 rows or 1 MiB"`
+}
+
+func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (QueryOutput, string, error) {
+	r, err := s.kb.Query(ctx, g, knowledge.QueryRequest{SQL: in.SQL, Vaults: in.Vaults})
+	if err != nil {
+		return QueryOutput{}, "", err
+	}
+	out := QueryOutput{Columns: r.Columns, Rows: r.Rows, Truncated: r.Truncated}
+	if out.Columns == nil {
+		out.Columns = []string{}
+	}
+	if out.Rows == nil {
+		out.Rows = [][]any{}
+	}
+	var b strings.Builder
+	cells := make([]string, len(out.Columns))
+	for i, c := range out.Columns {
+		cells[i] = oneLine(c)
+	}
+	b.WriteString(strings.Join(cells, "\t") + "\n")
+	for _, row := range out.Rows {
+		for i, v := range row {
+			if v == nil {
+				cells[i] = "NULL"
+			} else {
+				cells[i] = oneLine(fmt.Sprint(v))
+			}
+		}
+		b.WriteString(strings.Join(cells, "\t") + "\n")
+	}
+	fmt.Fprintf(&b, "%d rows", len(out.Rows))
+	if out.Truncated {
+		b.WriteString(", truncated: add a LIMIT or narrow the query to see the rest")
+	}
+	b.WriteString("\n")
+	return out, b.String(), nil
+}
