@@ -39,7 +39,7 @@ func (c Changes) Empty() bool {
 type Problem struct {
 	RepoID int64  `json:"repo_id"`
 	Name   string `json:"name"`
-	Err    string `json:"error"`
+	Error  string `json:"error"`
 }
 
 // githubAPI is what discovery needs from GitHub.
@@ -247,7 +247,7 @@ func (r *Registry) discoverRepo(
 		cfg, err = ParseConfig(raw)
 	}
 	if err != nil {
-		problems[repo.ID] = Problem{RepoID: repo.ID, Name: repo.FullName, Err: err.Error()}
+		problems[repo.ID] = Problem{RepoID: repo.ID, Name: repo.FullName, Error: err.Error()}
 		r.logger.WarnContext(ctx, "unusable vault configuration", "vault", repo.FullName, "err", err)
 		return v, wasVault, nil // an existing vault keeps its last good configuration
 	}

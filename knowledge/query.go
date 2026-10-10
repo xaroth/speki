@@ -18,32 +18,14 @@ type QueryRequest struct {
 // Query runs one SELECT over the user's vaults, one query per user at a time, within index.QueryTimeout
 // (waiting for the user's earlier query included).
 func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (index.Rows, error) {
-	var sources []index.Source
-	if len(req.Vaults) == 0 {
-		for _, v := range g.Readable() {
-			c, ok := b.vaults.Copy(v.RepoID)
-			if ok {
-				sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
-			}
-		}
-		if len(sources) > index.MaxQuerySources {
+	sources, err := b.sources(g, req.Vaults)
+	if err != nil {
+		return index.Rows{}, err
+	}
+	if len(sources) > index.MaxQuerySources { // counted after repeats are dropped
+		if len(req.Vaults) == 0 {
 			return index.Rows{}, errorf(CodeInvalid, "you can read %d vaults, and a query covers at most %d. Name the ones to query in vaults", len(sources), index.MaxQuerySources)
 		}
-	}
-	seen := map[int64]bool{}
-	for _, name := range req.Vaults {
-		v, c, err := b.open(g, name)
-		if err != nil {
-			return index.Rows{}, err
-		}
-		if seen[v.RepoID] {
-			continue
-		}
-		seen[v.RepoID] = true
-		sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
-	}
-
-	if len(sources) > index.MaxQuerySources { // counted after repeats are dropped
 		return index.Rows{}, errorf(CodeInvalid, "a query covers at most %d vaults", index.MaxQuerySources)
 	}
 	ctx, cancel := context.WithTimeout(ctx, index.QueryTimeout)

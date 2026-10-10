@@ -42,7 +42,7 @@ type resolver interface {
 type Server struct {
 	id     Identity
 	auth   authenticator
-	access resolver
+	grants resolver
 	kb     knowledgeBase
 	logger *slog.Logger
 	mcp    *mcp.Server
@@ -93,7 +93,7 @@ func (id Identity) instructions() string {
 }
 
 // New returns the MCP endpoint, with its tools.
-func New(auth authenticator, access resolver, kb knowledgeBase, id Identity, version string, logger *slog.Logger) *Server {
+func New(auth authenticator, grants resolver, kb knowledgeBase, id Identity, version string, logger *slog.Logger) *Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    id.name(),
 		Title:   id.title(),
@@ -102,7 +102,7 @@ func New(auth authenticator, access resolver, kb knowledgeBase, id Identity, ver
 	s := &Server{
 		id:       id,
 		auth:     auth,
-		access:   access,
+		grants:   grants,
 		kb:       kb,
 		logger:   logger,
 		mcp:      srv,
@@ -145,7 +145,7 @@ func (s *Server) grant(next http.Handler) http.Handler {
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
 		}
-		g, err := s.access.Resolve(r.Context(), access.User{
+		g, err := s.grants.Resolve(r.Context(), access.User{
 			ID:     id.UserID,
 			Login:  id.Login,
 			Token:  id.GitHubToken,

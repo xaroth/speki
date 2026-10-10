@@ -60,7 +60,7 @@ func (b *Base) History(ctx context.Context, g *access.Grant, req HistoryRequest)
 		return nil, noVault(v.Name)
 	}
 	if errors.Is(err, gh.ErrUnauthorized) {
-		return nil, errorf(CodeUnavailable, "GitHub no longer accepts your sign-in. Ask the user to reconnect speki")
+		return nil, signedOut()
 	}
 	if err != nil {
 		return nil, err

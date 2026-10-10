@@ -126,7 +126,7 @@ func (c Config) withDefaults() Config {
 	c.GitHub.GitURL = strings.TrimSuffix(c.GitHub.GitURL, "/")
 	c.PublicURL = strings.TrimSuffix(c.PublicURL, "/")
 	if c.GitHub.OAuthURL == "" {
-		c.GitHub.OAuthURL = "https://github.com"
+		c.GitHub.OAuthURL = gh.DefaultOAuthURL
 	}
 	if len(c.Auth.ClientMetadataHosts) == 0 {
 		c.Auth.ClientMetadataHosts = []string{"claude.ai"}

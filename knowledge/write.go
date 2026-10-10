@@ -277,10 +277,6 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 	})
 }
 
-// ErrRebuilding is what Vaults.Sync returns when a vault's index needs a full rebuild before it can catch
-// up, which isn't done for a waiting request.
-var ErrRebuilding = errors.New("the vault's index is being rebuilt")
-
 func rebuilding(name string) *Error {
 	return errorf(CodeUnavailable, "%s is rebuilding its index. Try again in a minute", name)
 }
@@ -641,7 +637,7 @@ func commitError(name string, err error) error {
 	case errors.Is(err, gh.ErrForbidden):
 		return errorf(CodeNoWriteAccess, "GitHub refused the commit: the user can't push to %s", name)
 	case errors.Is(err, gh.ErrUnauthorized):
-		return errorf(CodeUnavailable, "GitHub no longer accepts the user's sign-in. Ask them to reconnect speki")
+		return signedOut()
 	}
 	return err
 }

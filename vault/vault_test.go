@@ -322,7 +322,7 @@ func TestNewVaultWithBrokenConfigIsNotAdded(t *testing.T) {
 	if len(c.Added) != 0 {
 		t.Errorf("added %v", names(c.Added))
 	}
-	if p := r.Problems(); len(p) != 1 || !strings.Contains(p[0].Err, "title is required") {
+	if p := r.Problems(); len(p) != 1 || !strings.Contains(p[0].Error, "title is required") {
 		t.Errorf("problems = %+v", p)
 	}
 }
@@ -375,7 +375,7 @@ func TestOversizedConfig(t *testing.T) {
 		t.Errorf("a vault with an oversized speki.yaml was added: %v", names(c.Added))
 	}
 	problems := r.Problems()
-	if len(problems) != 1 || problems[0].RepoID != 100 || !strings.Contains(problems[0].Err, "larger") {
+	if len(problems) != 1 || problems[0].RepoID != 100 || !strings.Contains(problems[0].Error, "larger") {
 		t.Errorf("problems = %+v", problems)
 	}
 	reads := f.fileReads
