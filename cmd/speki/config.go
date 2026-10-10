@@ -72,9 +72,9 @@ type secretFile struct {
 	field []int  // the secret it fills in, as an index path into service.Config
 }
 
-// decodeYAML decodes raw into cfg, rejecting unknown keys: a typo should fail, not be ignored. A secret
-// can also be given as a file: private_key_file instead of private_key. Those entries are returned, not
-// read. The YAML is decoded as written, so errors name the right lines.
+// decodeYAML decodes raw into cfg, rejecting unknown keys: a typo should fail, not be ignored. Any text
+// setting, meant for secrets, can also be given as a file: private_key_file instead of private_key. Those
+// entries are returned, not read. The YAML is decoded as written, so errors name the right lines.
 func decodeYAML(raw []byte, cfg *service.Config) ([]secretFile, error) {
 	var doc yaml.Node
 	err := yaml.Unmarshal(raw, &doc)
@@ -124,7 +124,7 @@ func takeSecretFiles(n *yaml.Node, t reflect.Type, index []int, prefix string, f
 		}
 		base, isFile := strings.CutSuffix(key.Value, "_file")
 		f, ok := fieldByTag(t, base)
-		if !isFile || !ok || f.Type != reflect.TypeFor[service.Secret]() {
+		if !isFile || !ok || f.Type.Kind() != reflect.String {
 			return fmt.Errorf("line %d: unknown setting %q", key.Line, key.Value)
 		}
 		if hasKey(n, base) {
@@ -176,9 +176,9 @@ func readSecret(path string) (string, error) {
 
 // applyEnv sets every field of cfg that has a matching environment variable. The variable name is the
 // field's YAML path in upper case, joined with underscores: telemetry.log_level is
-// SPEKI_TELEMETRY_LOG_LEVEL. A secret can also come from a file named by the variable with _FILE added.
-// Lists are comma separated. Other SPEKI_* variables are ignored; orchestrators add their own (a
-// Kubernetes service called speki brings SPEKI_PORT).
+// SPEKI_TELEMETRY_LOG_LEVEL. A text setting, meant for secrets, can also come from a file named by the
+// variable with _FILE added. Lists are comma separated. Other SPEKI_* variables are ignored; orchestrators
+// add their own (a Kubernetes service called speki brings SPEKI_PORT).
 // It returns the variables it used.
 func applyEnv(cfg *service.Config, environ []string) (map[string]bool, error) {
 	env := make(map[string]string)
@@ -211,7 +211,7 @@ func walkEnv(v reflect.Value, prefix string, env map[string]string, set map[stri
 		}
 
 		s, ok := env[name]
-		if file, isFile := env[name+"_FILE"]; isFile && fv.Type() == reflect.TypeFor[service.Secret]() {
+		if file, isFile := env[name+"_FILE"]; isFile && fv.Kind() == reflect.String {
 			if ok {
 				return fmt.Errorf("%s and %s_FILE are both set", name, name)
 			}

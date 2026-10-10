@@ -103,7 +103,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 
 	github, err := gh.New(gh.Config{
 		AppID:      cfg.GitHub.AppID,
-		PrivateKey: []byte(cfg.GitHub.PrivateKey.Reveal()),
+		PrivateKey: []byte(cfg.GitHub.PrivateKey),
 		APIURL:     cfg.GitHub.APIURL,
 		Logger:     logger,
 	}, metrics)
@@ -118,7 +118,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	}, logger)
 	metrics.MustRegister(lib.Collector())
 
-	keys, err := seal.ParseKeyring([]byte(cfg.Auth.Keys.Reveal()))
+	keys, err := seal.ParseKeyring([]byte(cfg.Auth.Keys))
 	if err != nil {
 		return nil, fmt.Errorf("configuration: auth.keys: %w", err)
 	}
@@ -132,7 +132,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		ClientMetadataHosts: cfg.Auth.ClientMetadataHosts,
 		GitHub: gh.OAuthConfig{
 			ClientID:     cfg.GitHub.ClientID,
-			ClientSecret: cfg.GitHub.ClientSecret.Reveal(),
+			ClientSecret: cfg.GitHub.ClientSecret,
 			URL:          cfg.GitHub.OAuthURL,
 		},
 		CheckUser: func(ctx context.Context, token string) error {
@@ -501,7 +501,7 @@ func newStore(cfg Redis, logger *slog.Logger) (sharedStore, error) {
 	if cfg.URL == "" {
 		return store.NewMemory(), nil
 	}
-	r, err := store.NewRedis(context.Background(), cfg.URL.Reveal(), logger)
+	r, err := store.NewRedis(context.Background(), cfg.URL, logger)
 	if err != nil {
 		return nil, fmt.Errorf("configuration: redis.url: %w", err)
 	}

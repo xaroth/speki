@@ -29,9 +29,8 @@ and fails at startup when Redis doesn't answer.
 Zero values mean "use the default", and `service.New` fills them in before checking the result. It
 collects every problem (a missing app ID, a `public_url` that isn't `https`, a duration of zero) into one
 error, so an operator fixes them all in one go: that includes parsing the GitHub App key and the key
-file, and the log level (`run` logs at info until then). Secrets have a `Secret` type whose `String`,
-`GoString`, `LogValue`, `MarshalJSON` and `MarshalText` methods return `[redacted]`, so printing,
-logging or encoding a config is safe.
+file, and the log level (`run` logs at info until then). Secrets are plain strings in `Config`, so the
+config itself is never printed or logged. `service.New` hands each one to the package that uses it.
 
 `cmd/speki/config.go` produces that struct:
 
@@ -42,11 +41,11 @@ func loadConfig(path string, environ []string) (service.Config, error)
 
 1. Decode the YAML file named by `--config` (default `config.yaml`), with unknown keys rejected: a typo in
    a key should fail, not be silently ignored. A missing file is fine when everything comes from the
-   environment. The `..._file` keys of secrets are set aside, not read yet. The YAML is decoded as
-   written, so errors name the right line.
+   environment. The `..._file` keys are set aside, not read yet. Any text setting can have one; they're
+   meant for secrets. The YAML is decoded as written, so errors name the right line.
 2. Walk the struct by reflection and apply environment variables named after the `yaml` tags:
    `SPEKI_GITHUB_CLIENT_SECRET` for `github.client_secret`.
-3. Read the `..._file` keys from the YAML into their secrets, skipping any secret the environment set. So
+3. Read the `..._file` keys from the YAML into their settings, skipping any the environment set. So
    a config file baked into an image, naming a secret file, can be overridden at deploy time.
 
 Durations use Go syntax (`60s`, `5m`). `environ` comes from `os.Environ()` in `main`, so tests pass their

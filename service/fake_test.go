@@ -214,13 +214,13 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func testKey(t *testing.T) Secret {
+func testKey(t *testing.T) string {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Secret(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 }
 
 // testConfig returns a configuration that talks to fake and keeps its data in a temporary directory.
@@ -244,10 +244,10 @@ func testConfig(t *testing.T, fake *fakeGitHub) Config {
 	}
 }
 
-func testKeys() Secret {
+func testKeys() string {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
-	return Secret("keys:\n  - id: test\n    secret: " + base64.StdEncoding.EncodeToString(b) + "\n    primary: true\n")
+	return "keys:\n  - id: test\n    secret: " + base64.StdEncoding.EncodeToString(b) + "\n    primary: true\n"
 }
 
 // commit answers GraphQL createCommitOnBranch by committing to the repository on disk.
