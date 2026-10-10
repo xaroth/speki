@@ -103,7 +103,8 @@ captured tokens and use the GitHub token inside directly.
 ## One instance or several
 
 With no `redis` configured, speki runs as a single instance and keeps its short-lived state in memory:
-used authorization codes, refresh locks, the per-user access cache. A restart loses that state, which only
+used authorization codes, refresh locks and refresh results. Each instance also keeps its own short
+access cache per user, which isn't shared. A restart loses that state, which only
 means a few users get checked against GitHub again.
 
 With `redis` configured, any number of instances can run behind a load balancer without sticky sessions.
@@ -114,8 +115,9 @@ reach Redis at startup refuses to start. If Redis goes away later, sign-in and r
 back, and changes reach the other instances at their next poll.
 
 Speki's keys in Redis are small and short-lived (minutes), all prefixed `speki:`. Configure Redis not to
-evict them early (`maxmemory-policy noeviction` or `volatile-ttl`): an evicted key could let an
-authorization code be used twice. Persistence isn't needed.
+evict them (`maxmemory-policy noeviction`): every speki key has a time to live, so policies such as
+`volatile-ttl` would evict exactly the used-code markers, and an evicted one could let an authorization
+code be used twice. Persistence isn't needed.
 
 Every instance clones and indexes every vault itself. Plan disk and memory for that per instance
 (see below).

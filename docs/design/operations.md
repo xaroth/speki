@@ -102,10 +102,11 @@ shouldn't be exposed publicly.
 ## Tracing
 
 OpenTelemetry, off unless `telemetry.tracing` is true. The exporter is OTLP over HTTP, configured by the
-standard `OTEL_EXPORTER_OTLP_*` variables. Spans: the HTTP request (`otelhttp`), each tool call, GitHub
-requests (an `otelhttp` transport on the GitHub client), `index.Search`, `index.Query`, `index.Apply`, and
-`gitsync.Sync`. Span attributes follow the logging rules: no content, no SQL, no tokens. The `otelhttp` handler is set up
-to leave out query strings, because the GitHub callback carries `code` and `state` there.
+standard `OTEL_EXPORTER_OTLP_*` variables. Spans: the HTTP request (`telemetry.Trace`, a new trace per request that keeps
+an incoming `traceparent` only as a link), each tool call, GitHub requests (an `otelhttp` transport on the
+GitHub client, which doesn't send speki's trace context to GitHub), `index.Search`, `index.Query`,
+`index.Apply`, and `library.Sync`. Span attributes follow the logging rules: no content, no SQL, no tokens. The server span leaves out query strings,
+because the GitHub callback carries `code` and `state` there, and names spans from a fixed set of routes.
 
 ## Builds
 

@@ -474,3 +474,21 @@ func TestSyncChangesHonoursTheContext(t *testing.T) {
 		t.Errorf("SyncChanges = %v, want it to give up", err)
 	}
 }
+
+// A notice doesn't override a vault's backoff after failures.
+func TestSyncAfterNoticeBacksOff(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	r.push(map[string]string{"a.md": "# A\n\nchanged\n"})
+
+	v.recordFailure(errors.New("fetch failed"))
+	if err := l.SyncAfterNotice(t.Context(), v); err != nil {
+		t.Fatal(err)
+	}
+	if got := search(t, v, "changed"); len(got) != 0 {
+		t.Error("synced while backing off")
+	}
+}

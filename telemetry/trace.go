@@ -48,15 +48,21 @@ func Tracer() trace.Tracer { return otel.Tracer("github.com/eve-online-tools/spe
 // the query string: the GitHub callback carries code and state there.
 func Trace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-		ctx, span := Tracer().Start(ctx, r.Method+" "+route(r.URL.Path),
+		// The public edge starts a trace of its own: anyone on the internet can send a traceparent. A
+		// valid incoming one is kept as a link, not as the parent.
+		remote := trace.SpanContextFromContext(otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header)))
+		opts := []trace.SpanStartOption{trace.WithNewRoot()}
+		if remote.IsValid() {
+			opts = append(opts, trace.WithLinks(trace.Link{SpanContext: remote}))
+		}
+		ctx, span := Tracer().Start(r.Context(), r.Method+" "+route(r.URL.Path), append(opts,
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
 				semconv.HTTPRequestMethodKey.String(r.Method),
 				semconv.URLPath(r.URL.Path),
 				attribute.String("speki.request_id", RequestIDFrom(r.Context())),
 			),
-		)
+		)...)
 		defer span.End()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r.WithContext(ctx))

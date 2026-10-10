@@ -12,6 +12,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -164,5 +165,29 @@ func TestTraceKeepsFlushing(t *testing.T) {
 		if got := route(path); got != want {
 			t.Errorf("route(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+// Anyone can send a traceparent to the public edge, so it starts a new trace and keeps the incoming one
+// only as a link.
+func TestTraceStartsANewRoot(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	oldTP, oldProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	defer func() {
+		otel.SetTracerProvider(oldTP)
+		otel.SetTextMapPropagator(oldProp)
+	}()
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+	Trace(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(httptest.NewRecorder(), req)
+	s := rec.Ended()[0]
+	if s.Parent().IsValid() || s.SpanContext().TraceID().String() == "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("the span joined the caller's trace: parent %v", s.Parent())
+	}
+	if len(s.Links()) != 1 || s.Links()[0].SpanContext.TraceID().String() != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("links = %v", s.Links())
 	}
 }

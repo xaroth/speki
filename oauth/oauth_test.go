@@ -878,3 +878,50 @@ func TestMetadataFetcherRefusesPrivateAddresses(t *testing.T) {
 		t.Errorf("fetch from loopback: %v", err)
 	}
 }
+
+// flakyStore fails the operations named in fail, and passes the rest to a memory store.
+type flakyStore struct {
+	*store.Memory
+	fail map[string]bool
+}
+
+func (f flakyStore) Get(ctx context.Context, key string) ([]byte, bool, error) {
+	if f.fail["get"] {
+		return nil, false, errors.New("redis: connection refused")
+	}
+	return f.Memory.Get(ctx, key)
+}
+
+func (f flakyStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	if f.fail["set"] {
+		return errors.New("redis: connection refused")
+	}
+	return f.Memory.Set(ctx, key, value, ttl)
+}
+
+// With the store away, a refresh fails as temporary: the client keeps its refresh token.
+func TestRefreshWithoutTheStore(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	mem := store.NewMemory()
+	h.s.store = flakyStore{Memory: mem, fail: map[string]bool{"get": true}}
+	_, rec := h.tokens(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}})
+	if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "invalid_grant") {
+		t.Errorf("store away: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// When the result of a refresh can't be kept, the lock stays until it runs out, so a second request
+// with the same token waits instead of refreshing with a GitHub token that's spent.
+func TestRefreshKeepsTheLockWhenTheResultIsLost(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	mem := store.NewMemory()
+	h.s.store = flakyStore{Memory: mem, fail: map[string]bool{"set": true}}
+	if _, rec := h.tokens(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}); rec.Code != http.StatusOK {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
+	}
+	if _, held, _ := mem.Get(t.Context(), "refresh-lock:"+hash(first.RefreshToken)); !held {
+		t.Error("the lock was released although the result wasn't kept")
+	}
+}
