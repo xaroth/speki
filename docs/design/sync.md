@@ -67,6 +67,9 @@ Eligible files: `.md`, regular file modes `100644` and `100755`, no path segment
 most 1 MiB, not an LFS pointer. Symlinks and submodules are never eligible. A rename shows up as a delete
 plus an add. Paths are reported as the raw bytes git has.
 
+`createCommitOnBranch` has no file modes, so a change writes a file as `100644`: an executable `.md` file
+loses its executable bit when speki edits or moves it.
+
 `Paths` sees every file, eligible or not. The write path uses it to make sure it doesn't overwrite
 something the index doesn't know about.
 

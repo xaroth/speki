@@ -53,6 +53,8 @@ func CheckPath(p string, existing func(folded string) (string, bool)) (string, e
 		return "", fmt.Errorf("path %q: may not contain any of %s", p, forbiddenChars)
 	case strings.ContainsFunc(p, unicode.IsControl):
 		return "", fmt.Errorf("path %q: may not contain control characters", p)
+	case strings.ContainsFunc(p, func(r rune) bool { return unicode.Is(unicode.Cf, r) }):
+		return "", fmt.Errorf("path %q: may not contain invisible characters such as zero-width spaces or direction marks", p)
 	case path.Clean(p) != p || !filepath.IsLocal(p):
 		return "", fmt.Errorf("path %q: must be a clean relative path without . or .. segments", p)
 	}
@@ -62,6 +64,12 @@ func CheckPath(p string, existing func(folded string) (string, bool)) (string, e
 		return "", fmt.Errorf("path %q: at most %d folders deep", p, maxFolders)
 	}
 	for i, s := range segments {
+		if reservedOnWindows(s) {
+			return "", fmt.Errorf("path %q: %q is a name Windows reserves; Obsidian users on Windows couldn't open it", p, s)
+		}
+		if strings.HasSuffix(s, " ") || strings.HasSuffix(s, ".") {
+			return "", fmt.Errorf("path %q: no part may end in a space or a dot", p)
+		}
 		if strings.HasPrefix(s, ".") {
 			return "", fmt.Errorf("path %q: no part may start with a dot", p)
 		}
@@ -91,4 +99,15 @@ func CheckPath(p string, existing func(folded string) (string, bool)) (string, e
 		}
 	}
 	return p, nil
+}
+
+// reservedOnWindows reports whether a path segment is a device name Windows reserves (CON, NUL, COM1 and
+// the like), with or without an extension.
+func reservedOnWindows(segment string) bool {
+	base, _, _ := strings.Cut(strings.ToLower(segment), ".")
+	switch base {
+	case "con", "prn", "aux", "nul":
+		return true
+	}
+	return len(base) == 4 && (strings.HasPrefix(base, "com") || strings.HasPrefix(base, "lpt")) && base[3] >= '1' && base[3] <= '9'
 }
