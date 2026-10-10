@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 func readFixtureFS(name string) ([]byte, error) {
@@ -13,7 +15,7 @@ func readFixtureFS(name string) ([]byte, error) {
 
 func TestCheckPath(t *testing.T) {
 	existing := map[string]string{} // folded -> actual
-	for _, p := range []string{"Runbooks", "Runbooks/deploy.md", "ops", "ops/Fleet.md", "café.md"} {
+	for _, p := range []string{"Runbooks", "Runbooks/deploy.md", "ops", "ops/Fleet.md", "café.md", nfd("menü"), nfd("menü/Brötchen.md")} {
 		existing[Fold(p)] = p
 	}
 	lookup := func(folded string) (string, bool) {
@@ -51,6 +53,10 @@ func TestCheckPath(t *testing.T) {
 		{path: "ops/fleet.md", wantErr: `"ops/Fleet.md"`},
 		{path: "café.md", want: "café.md"}, // same as the existing NFC path
 		{path: "CAFÉ.md", wantErr: "café.md"},
+		{path: "menü/new.md", want: nfd("menü") + "/new.md"},      // the folder git stores in NFD
+		{path: nfd("menü/new.md"), want: nfd("menü") + "/new.md"}, // given in NFD too
+		{path: "menü/Brötchen.md", want: nfd("menü/Brötchen.md")}, // an existing NFD file: git's bytes
+		{path: "Menü/new.md", wantErr: "letter case"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -70,3 +76,5 @@ func TestCheckPath(t *testing.T) {
 		})
 	}
 }
+
+func nfd(s string) string { return norm.NFD.String(s) }

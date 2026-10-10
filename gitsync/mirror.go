@@ -19,10 +19,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+
+	"github.com/eve-online-tools/speki/document"
 )
 
-// MaxFileSize is the largest file speki reads from a repository.
-const MaxFileSize = 1 << 20
+// MaxFileSize is the largest file speki reads from a repository: the largest document.
+const MaxFileSize = document.MaxSize
 
 // lfsPointer starts every git LFS pointer file. A clone has only the pointer, not the content.
 const lfsPointer = "version https://git-lfs.github.com/spec/v1"

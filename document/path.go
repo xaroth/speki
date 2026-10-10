@@ -29,7 +29,9 @@ func Fold(p string) string {
 
 // CheckPath reports whether p is a path speki may create, and returns it in NFC. existing looks up a
 // folded path (see Fold) and returns the path git has for it, if any. It's called for the file and each
-// of its folders, so "Runbooks/x.md" is refused when "runbooks/" exists. A nil existing skips that check.
+// of its folders, so "Runbooks/x.md" is refused when "runbooks/" exists. Where git has a folder or file
+// that differs only in Unicode normalisation (folders made on macOS are often NFD), the returned path uses
+// git's spelling instead, so the document lands in that folder. A nil existing skips that check.
 func CheckPath(p string, existing func(folded string) (string, bool)) (string, error) {
 	if !utf8.ValidString(p) {
 		return "", errors.New("path: not valid UTF-8")
@@ -67,9 +69,13 @@ func CheckPath(p string, existing func(folded string) (string, bool)) (string, e
 		}
 		prefix := strings.Join(segments[:i+1], "/")
 		have, ok := existing(Fold(prefix))
-		if ok && have != prefix {
-			return "", fmt.Errorf("path %q: %q already exists and differs only in letter case or accents", p, have)
+		switch {
+		case !ok || have == prefix:
+		case norm.NFC.String(have) == norm.NFC.String(prefix): // the same name, stored decomposed: use git's bytes
+			copy(segments, strings.Split(have, "/"))
+		default:
+			return "", fmt.Errorf("path %q: %q already exists and differs only in letter case", p, have)
 		}
 	}
-	return p, nil
+	return strings.Join(segments, "/"), nil
 }
