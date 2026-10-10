@@ -518,3 +518,28 @@ func TestPollerCompactsPacksFromWrites(t *testing.T) {
 		t.Errorf("%d packs after polling", n)
 	}
 }
+
+// A copy that lost its objects while in use still catches up at the next sync.
+func TestCopyWithoutObjectsCatchesUp(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n\nfirst\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+
+	packs, err := filepath.Glob(filepath.Join(v.dir, gitDir, "objects", "pack", "*"))
+	if err != nil || len(packs) == 0 {
+		t.Fatalf("no pack files to remove: %v", err)
+	}
+	for _, p := range packs {
+		_ = os.Remove(p)
+	}
+	r.push(map[string]string{"a.md": "# A\n\nsecond\n"})
+	err = l.Sync(t.Context(), v)
+	if err != nil {
+		t.Fatalf("sync of a copy without its objects: %v", err)
+	}
+	if got := search(t, v, "second"); len(got) != 1 {
+		t.Errorf("after the sync: %v", got)
+	}
+}
