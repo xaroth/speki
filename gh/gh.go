@@ -146,13 +146,11 @@ func (c *Client) installationClient(id int64) (*github.Client, error) {
 // GitHub refuses to issue because the installation is gone. Other failures, a 403 included (it may be a
 // rate limit), stay ordinary errors.
 func notFound(err error) error {
-	var gerr *github.ErrorResponse
-	if errors.As(err, &gerr) && gerr.Response != nil && gerr.Response.StatusCode == http.StatusNotFound {
+	if gerr, ok := errors.AsType[*github.ErrorResponse](err); ok && gerr.Response != nil && gerr.Response.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
-	var terr *ghinstallation.HTTPError
 	closeTokenError(err) // for token requests made outside an installation's transport, for git
-	if errors.As(err, &terr) && terr.Response != nil && terr.Response.StatusCode == http.StatusNotFound {
+	if terr, ok := errors.AsType[*ghinstallation.HTTPError](err); ok && terr.Response != nil && terr.Response.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
 	return err

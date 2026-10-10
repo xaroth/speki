@@ -50,16 +50,14 @@ type knowledgeBase interface {
 	Query(ctx context.Context, g *access.Grant, req knowledge.QueryRequest) (index.Rows, error)
 }
 
-func ptr[T any](v T) *T { return &v }
-
 // readOnly returns the annotations of a tool that changes nothing. MCP's defaults assume the worst, so
 // every hint is set.
 func readOnly() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
 		ReadOnlyHint:    true,
-		DestructiveHint: ptr(false),
+		DestructiveHint: new(false),
 		IdempotentHint:  true,
-		OpenWorldHint:   ptr(false),
+		OpenWorldHint:   new(false),
 	}
 }
 
@@ -68,9 +66,9 @@ func readOnly() *mcp.ToolAnnotations {
 func changes(destructive bool) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
 		ReadOnlyHint:    false,
-		DestructiveHint: ptr(destructive),
+		DestructiveHint: new(destructive),
 		IdempotentHint:  false,
-		OpenWorldHint:   ptr(false),
+		OpenWorldHint:   new(false),
 	}
 }
 

@@ -83,8 +83,6 @@ func (s *source) commit(files map[string]*string) string {
 	return h.String()
 }
 
-func str(s string) *string { return &s }
-
 func paths(files []File) []string {
 	var out []string
 	for _, f := range files {
@@ -97,16 +95,16 @@ func paths(files []File) []string {
 func TestOpenClonesEligibleFiles(t *testing.T) {
 	src := newSource(t)
 	head := src.commit(map[string]*string{
-		"README.md":                  str("# Vault\n"),
-		"ops/fleet.md":               str("# Fleet\n"),
-		"notes.txt":                  str("not markdown"),
-		".obsidian/workspace.md":     str("dot folder"),
-		"ops/.hidden.md":             str("dot file"),
-		"big.md":                     str(strings.Repeat("x", MaxFileSize+1)),
-		"lfs.md":                     str(lfsPointer + "\noid sha256:abc\nsize 12\n"),
-		"link.md":                    str("->README.md"),
-		"speki.yaml":                 str("title: x\n"),
-		"deep/er/still/fine/file.md": str("ok"),
+		"README.md":                  new("# Vault\n"),
+		"ops/fleet.md":               new("# Fleet\n"),
+		"notes.txt":                  new("not markdown"),
+		".obsidian/workspace.md":     new("dot folder"),
+		"ops/.hidden.md":             new("dot file"),
+		"big.md":                     new(strings.Repeat("x", MaxFileSize+1)),
+		"lfs.md":                     new(lfsPointer + "\noid sha256:abc\nsize 12\n"),
+		"link.md":                    new("->README.md"),
+		"speki.yaml":                 new("title: x\n"),
+		"deep/er/still/fine/file.md": new("ok"),
 	})
 
 	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
@@ -149,12 +147,12 @@ func TestOpenClonesEligibleFiles(t *testing.T) {
 func TestFetchAndDiff(t *testing.T) {
 	src := newSource(t)
 	first := src.commit(map[string]*string{
-		"keep.md":    str("same"),
-		"edit.md":    str("before"),
-		"delete.md":  str("bye"),
-		"rename.md":  str("moving"),
-		"shrink.md":  str(strings.Repeat("x", MaxFileSize+1)),
-		"README.txt": str("ignored"),
+		"keep.md":    new("same"),
+		"edit.md":    new("before"),
+		"delete.md":  new("bye"),
+		"rename.md":  new("moving"),
+		"shrink.md":  new(strings.Repeat("x", MaxFileSize+1)),
+		"README.txt": new("ignored"),
 	})
 	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
 	if err != nil {
@@ -162,17 +160,17 @@ func TestFetchAndDiff(t *testing.T) {
 	}
 
 	// A few pushes, so the copy has to fetch on top of a shallow history.
-	src.commit(map[string]*string{"edit.md": str("middle")})
+	src.commit(map[string]*string{"edit.md": new("middle")})
 	second := src.commit(map[string]*string{
-		"edit.md":      str("after"),
+		"edit.md":      new("after"),
 		"delete.md":    nil,
 		"rename.md":    nil,
-		"renamed.md":   str("moving"),
-		"shrink.md":    str("small now"),
-		"new.md":       str("hello"),
-		"keep.md":      str("same"),
-		"README.txt":   str("still ignored"),
-		".hidden/x.md": str("ignored"),
+		"renamed.md":   new("moving"),
+		"shrink.md":    new("small now"),
+		"new.md":       new("hello"),
+		"keep.md":      new("same"),
+		"README.txt":   new("still ignored"),
+		".hidden/x.md": new("ignored"),
 	})
 
 	head, err := m.Fetch(t.Context(), nil)
@@ -214,14 +212,14 @@ func TestFetchAndDiff(t *testing.T) {
 
 func TestOpenReusesAndRepairs(t *testing.T) {
 	src := newSource(t)
-	head := src.commit(map[string]*string{"a.md": str("a")})
+	head := src.commit(map[string]*string{"a.md": new("a")})
 	dir := filepath.Join(t.TempDir(), "copy")
 
 	_, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	src.commit(map[string]*string{"b.md": str("b")})
+	src.commit(map[string]*string{"b.md": new("b")})
 
 	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
 	if err != nil {
@@ -250,12 +248,12 @@ func TestOpenReusesAndRepairs(t *testing.T) {
 func TestDiffEligibilityTransitions(t *testing.T) {
 	src := newSource(t)
 	first := src.commit(map[string]*string{
-		"to-symlink.md": str("text"),
-		"grows.md":      str("small"),
-		"to-lfs.md":     str("real content"),
-		"target.md":     str("target"),
-		"run.md":        str("exec"),
-		"with space.md": str("spaced"),
+		"to-symlink.md": new("text"),
+		"grows.md":      new("small"),
+		"to-lfs.md":     new("real content"),
+		"target.md":     new("target"),
+		"run.md":        new("exec"),
+		"with space.md": new("spaced"),
 	})
 	err := os.Chmod(filepath.Join(src.dir, "run.md"), 0o755)
 	if err != nil {
@@ -266,11 +264,11 @@ func TestDiffEligibilityTransitions(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	second := src.commit(map[string]*string{
-		"to-symlink.md": str("->target.md"),
-		"grows.md":      str(strings.Repeat("x", MaxFileSize+1)),
-		"to-lfs.md":     str(lfsPointer + "\noid sha256:abc\nsize 12\n"),
-		"run.md":        str("exec, changed"),
-		"with space.md": str("spaced, changed"),
+		"to-symlink.md": new("->target.md"),
+		"grows.md":      new(strings.Repeat("x", MaxFileSize+1)),
+		"to-lfs.md":     new(lfsPointer + "\noid sha256:abc\nsize 12\n"),
+		"run.md":        new("exec, changed"),
+		"with space.md": new("spaced, changed"),
 	})
 	_, err = m.Fetch(t.Context(), nil)
 	if err != nil {
@@ -299,7 +297,7 @@ func TestDiffEligibilityTransitions(t *testing.T) {
 
 func TestOpenReplacesNonRepository(t *testing.T) {
 	src := newSource(t)
-	src.commit(map[string]*string{"a.md": str("a")})
+	src.commit(map[string]*string{"a.md": new("a")})
 	dir := filepath.Join(t.TempDir(), "copy")
 	err := os.MkdirAll(dir, 0o755)
 	if err != nil {
@@ -344,8 +342,8 @@ func mustHead(t *testing.T, m *Mirror) string {
 // SetSource, and when an existing copy is opened with another URL.
 func TestFetchFollowsTheSource(t *testing.T) {
 	first, second := newSource(t), newSource(t)
-	first.commit(map[string]*string{"a.md": str("# First\n")})
-	want := second.commit(map[string]*string{"b.md": str("# Second\n")})
+	first.commit(map[string]*string{"a.md": new("# First\n")})
+	want := second.commit(map[string]*string{"b.md": new("# Second\n")})
 	dir := filepath.Join(t.TempDir(), "copy")
 
 	m, err := Open(t.Context(), dir, Source{URL: first.dir, Branch: "master"})
@@ -358,7 +356,7 @@ func TestFetchFollowsTheSource(t *testing.T) {
 		t.Errorf("Fetch after SetSource = %s, %v; want %s", got, err, want)
 	}
 
-	want = second.commit(map[string]*string{"c.md": str("# More\n")})
+	want = second.commit(map[string]*string{"c.md": new("# More\n")})
 	m, err = Open(t.Context(), dir, Source{URL: second.dir, Branch: "master"})
 	if err != nil {
 		t.Fatal(err)
@@ -373,7 +371,7 @@ func TestFetchFollowsTheSource(t *testing.T) {
 func TestPathsKeepGitsBytes(t *testing.T) {
 	src := newSource(t)
 	name := norm.NFD.String("menü/brötchen.md")
-	head := src.commit(map[string]*string{name: str("# B\n")})
+	head := src.commit(map[string]*string{name: new("# B\n")})
 	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
 	if err != nil {
 		t.Fatal(err)
@@ -437,7 +435,7 @@ func treeOf(t *testing.T, repo *git.Repository, commit, path string) string {
 // A copy missing a tree object isn't an empty vault: Open clones it again, and reading it says it's broken.
 func TestBrokenCopies(t *testing.T) {
 	src := newSource(t)
-	head := src.commit(map[string]*string{"d/x.md": str("# X\n"), "top.md": str("# Top\n")})
+	head := src.commit(map[string]*string{"d/x.md": new("# X\n"), "top.md": new("# Top\n")})
 	dir := filepath.Join(t.TempDir(), "copy")
 	copyDir(t, src.dir, dir) // a working repository, with loose objects
 	sub := treeOf(t, src.repo, head, "d")
@@ -483,8 +481,8 @@ func TestControlCharacterInAName(t *testing.T) {
 // A missing subtree on either side of a diff is a broken copy, not an empty folder.
 func TestDiffOnABrokenCopy(t *testing.T) {
 	src := newSource(t)
-	first := src.commit(map[string]*string{"d/x.md": str("# X\n"), "e/y.md": str("# Y\n"), "top.md": str("# Top\n")})
-	second := src.commit(map[string]*string{"d/x.md": nil, "e/y.md": str("# Y2\n")})
+	first := src.commit(map[string]*string{"d/x.md": new("# X\n"), "e/y.md": new("# Y\n"), "top.md": new("# Top\n")})
+	second := src.commit(map[string]*string{"d/x.md": nil, "e/y.md": new("# Y2\n")})
 	dir := filepath.Join(t.TempDir(), "copy")
 	copyDir(t, src.dir, dir)
 	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
@@ -512,7 +510,7 @@ func TestDiffOnABrokenCopy(t *testing.T) {
 // change of the executable bit alone.
 func TestDiffNeedsOnlyWhatItReads(t *testing.T) {
 	src := newSource(t)
-	first := src.commit(map[string]*string{"gone.md": str("# Gone\n"), ".obsidian/x.md": str("x"), "run.md": str("# Run\n")})
+	first := src.commit(map[string]*string{"gone.md": new("# Gone\n"), ".obsidian/x.md": new("x"), "run.md": new("# Run\n")})
 	if err := os.Chmod(filepath.Join(src.dir, "run.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +518,7 @@ func TestDiffNeedsOnlyWhatItReads(t *testing.T) {
 	if _, err := wt.Add("run.md"); err != nil {
 		t.Fatal(err)
 	}
-	second := src.commit(map[string]*string{"gone.md": nil, ".obsidian/x.md": str("y")})
+	second := src.commit(map[string]*string{"gone.md": nil, ".obsidian/x.md": new("y")})
 	dir := filepath.Join(t.TempDir(), "copy")
 	copyDir(t, src.dir, dir)
 	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})

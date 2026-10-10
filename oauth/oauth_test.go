@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -180,9 +181,7 @@ func authorizeURL(clientID, redirect string, extra url.Values) string {
 		"state":                 {"client-state"},
 		"resource":              {issuer + "/mcp"},
 	}
-	for k, v := range extra {
-		q[k] = v
-	}
+	maps.Copy(q, extra)
 	return "/oauth/authorize?" + q.Encode()
 }
 
@@ -550,9 +549,7 @@ func TestTokenRejects(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}}
-			for k, v := range tt.form {
-				form[k] = v
-			}
+			maps.Copy(form, tt.form)
 			_, rec := h.tokens(form)
 			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tt.want) {
 				t.Errorf("%d %s", rec.Code, rec.Body)

@@ -92,8 +92,7 @@ func (m *metrics) observeInstallation(id int64, next http.RoundTripper) http.Rou
 // closeTokenError drains and closes the response body of a failed installation token request, which
 // ghinstallation returns unread and open. Closing twice is harmless.
 func closeTokenError(err error) {
-	var terr *ghinstallation.HTTPError
-	if errors.As(err, &terr) && terr.Response != nil && terr.Response.Body != nil {
+	if terr, ok := errors.AsType[*ghinstallation.HTTPError](err); ok && terr.Response != nil && terr.Response.Body != nil {
 		_, _ = io.Copy(io.Discard, io.LimitReader(terr.Response.Body, 4<<10))
 		_ = terr.Response.Body.Close()
 	}

@@ -155,8 +155,7 @@ func hasKey(n *yaml.Node, key string) bool {
 }
 
 func fieldByTag(t reflect.Type, tag string) (reflect.StructField, bool) {
-	for i := range t.NumField() {
-		f := t.Field(i)
+	for f := range t.Fields() {
 		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
 		if name == tag && name != "" && name != "-" {
 			return f, true

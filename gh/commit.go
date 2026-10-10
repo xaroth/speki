@@ -125,16 +125,13 @@ func (c *Client) Commit(ctx context.Context, token string, req CommitRequest) (s
 
 // commitError maps HTTP-level failures.
 func commitError(err error) error {
-	var rl *github.RateLimitError
-	if errors.As(err, &rl) {
+	if rl, ok := errors.AsType[*github.RateLimitError](err); ok {
 		return &RateLimitError{RetryAfter: max(time.Until(rl.Rate.Reset.Time), time.Second)}
 	}
-	var abuse *github.AbuseRateLimitError
-	if errors.As(err, &abuse) {
+	if abuse, ok := errors.AsType[*github.AbuseRateLimitError](err); ok {
 		return &RateLimitError{RetryAfter: max(abuse.GetRetryAfter(), time.Second)}
 	}
-	var gerr *github.ErrorResponse
-	if errors.As(err, &gerr) && gerr.Response != nil {
+	if gerr, ok := errors.AsType[*github.ErrorResponse](err); ok && gerr.Response != nil {
 		switch gerr.Response.StatusCode {
 		case http.StatusForbidden, http.StatusNotFound:
 			return fmt.Errorf("%w: %w", ErrForbidden, err)
