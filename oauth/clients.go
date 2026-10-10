@@ -43,6 +43,7 @@ type clientResolver struct {
 	fetch func(ctx context.Context, url string) ([]byte, error)
 
 	fetching chan struct{}      // a slot per metadata fetch in progress
+	known    chan struct{}      // slots kept for refetching documents that were fetched before
 	flight   singleflight.Group // one fetch per URL at a time, shared by its callers
 
 	mu     sync.Mutex
@@ -52,7 +53,7 @@ type clientResolver struct {
 
 type cachedClient struct {
 	client  client
-	expires time.Time
+	expires time.Time // after this it's refetched, but still used while its host can't be reached
 	used    time.Time // for evicting the least recently used
 }
 
@@ -68,6 +69,7 @@ const (
 	metadataRetryTime  = 10 * time.Second
 	metadataSlotWait   = 2 * time.Second
 	metadataFetches    = 4 // at once
+	metadataKnown      = 2 // at once, for documents fetched before, besides metadataFetches
 	metadataMaxBytes   = 64 << 10
 )
 
@@ -77,6 +79,7 @@ func newClientResolver(keys *seal.Keyring, hosts []string) *clientResolver {
 		hosts:    hosts,
 		fetch:    newMetadataFetcher(hosts),
 		fetching: make(chan struct{}, metadataFetches),
+		known:    make(chan struct{}, metadataKnown),
 		cache:    make(map[string]cachedClient),
 		failed:   make(map[string]failedClient),
 	}
@@ -105,29 +108,48 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 	}
 	now := time.Now()
 	r.mu.Lock()
-	if c, ok := r.cache[clientID]; ok && now.Before(c.expires) {
-		c.used = now
-		r.cache[clientID] = c
-		r.mu.Unlock()
-		return c.client, nil
+	cached, known := r.cache[clientID]
+	if known {
+		cached.used = now
+		r.cache[clientID] = cached
 	}
-	if f, ok := r.failed[clientID]; ok && now.Before(f.expires) {
-		r.mu.Unlock()
+	f, failed := r.failed[clientID]
+	r.mu.Unlock()
+	switch {
+	case known && now.Before(cached.expires):
+		return cached.client, nil
+	case failed && now.Before(f.expires) && known: // its host had a blip: the old document still holds
+		return cached.client, nil
+	case failed && now.Before(f.expires):
 		return client{}, f.err
 	}
-	r.mu.Unlock()
 
 	// Requests for the same document share one fetch. The fetch is the server's, not the request's: a
-	// client that disconnects mustn't fail it for the others.
-	v, err, _ := r.flight.Do(clientID, func() (any, error) {
-		cl, failure, err := r.fetchClient(context.WithoutCancel(ctx), u, clientID)
+	// client that disconnects mustn't fail it for the others, but it needn't wait for it either.
+	ch := r.flight.DoChan(clientID, func() (any, error) {
+		cl, failure, err := r.fetchClient(context.WithoutCancel(ctx), u, clientID, known)
 		r.remember(clientID, cl, failure, err)
-		return cl, err
+		return fetched{cl, failure}, err
 	})
-	if err != nil {
-		return client{}, err
+	var res singleflight.Result
+	select {
+	case res = <-ch:
+	case <-ctx.Done():
+		return client{}, ctx.Err()
 	}
-	return v.(client), nil
+	if res.Err != nil {
+		if known && res.Val.(fetched).failure != badDocument {
+			return cached.client, nil
+		}
+		return client{}, res.Err
+	}
+	return res.Val.(fetched).client, nil
+}
+
+// fetched is the outcome of a shared metadata fetch.
+type fetched struct {
+	client  client
+	failure failureKind
 }
 
 // remember caches a fetched client, or a failure for as long as its kind deserves. Failures have their
@@ -154,6 +176,9 @@ func (r *clientResolver) remember(clientID string, cl client, failure failureKin
 			}
 		}
 		r.failed[clientID] = failedClient{err: err, expires: now.Add(ttl)}
+		if failure == badDocument {
+			delete(r.cache, clientID) // the document is gone or now wrong: stop using the old one
+		}
 		return
 	}
 	delete(r.failed, clientID)
@@ -174,22 +199,31 @@ type failureKind int
 
 const (
 	noFailure   failureKind = iota
-	badDocument             // the document itself is wrong: remembered for a minute
+	badDocument             // the document is missing or wrong: remembered for a minute
 	unreachable             // it couldn't be fetched: remembered for a few seconds
 	busy                    // too many fetches already: not remembered
 )
 
 // fetchClient fetches and checks a client metadata document. It waits a moment for a free fetch slot.
-func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID string) (client, failureKind, error) {
+// Documents fetched before have slots of their own, so a crowd of unknown URLs can't keep known clients
+// out.
+func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID string, known bool) (client, failureKind, error) {
+	slots := r.fetching
+	if known {
+		slots = r.known
+	}
 	wait := time.NewTimer(metadataSlotWait)
 	defer wait.Stop()
 	select {
-	case r.fetching <- struct{}{}:
-		defer func() { <-r.fetching }()
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
 	case <-wait.C:
 		return client{}, busy, fmt.Errorf("%w: too many metadata documents being fetched", errUnknownClient)
 	}
 	raw, err := r.fetch(ctx, clientID)
+	if errors.Is(err, errNoDocument) {
+		return client{}, badDocument, fmt.Errorf("%w: fetching its metadata document: %w", errUnknownClient, err)
+	}
 	if err != nil {
 		return client{}, unreachable, fmt.Errorf("%w: fetching its metadata document: %w", errUnknownClient, err)
 	}
@@ -320,6 +354,9 @@ func hidesText(r rune) bool {
 		(r >= 0x2066 && r <= 0x2069) || (r >= 0xe0000 && r <= 0xe007f)
 }
 
+// errNoDocument means the host answered that there's no such document, as opposed to not answering.
+var errNoDocument = errors.New("no metadata document")
+
 // newMetadataFetcher returns a function that fetches client metadata documents from the allowed hosts
 // only, refusing any address that isn't public after DNS resolution, ignoring proxy settings, following
 // no redirects, and reading at most metadataMaxBytes within five seconds.
@@ -349,7 +386,12 @@ func newMetadataFetcher(hosts []string) func(ctx context.Context, url string) ([
 			return nil, err
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
+		switch {
+		case resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests:
+			return nil, fmt.Errorf("status %s", resp.Status)
+		case resp.StatusCode >= 400 && resp.StatusCode < 500:
+			return nil, fmt.Errorf("%w: status %s", errNoDocument, resp.Status)
+		case resp.StatusCode != http.StatusOK:
 			return nil, fmt.Errorf("status %s", resp.Status)
 		}
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, metadataMaxBytes+1))

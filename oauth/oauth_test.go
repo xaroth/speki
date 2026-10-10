@@ -857,6 +857,101 @@ func TestMetadataFetchFailures(t *testing.T) {
 	}
 }
 
+// A document that was fetched before is still used while its host can't be reached, and gets fetch
+// slots of its own. A document that's gone isn't used any more.
+func TestMetadataKnownClients(t *testing.T) {
+	h := newHarness(t)
+	const known = "https://claude.ai/c.json"
+	var mu sync.Mutex
+	var fail error
+	hang := make(chan struct{})
+	h.s.clients.fetch = func(_ context.Context, u string) ([]byte, error) {
+		if u != known {
+			<-hang
+			return nil, errors.New("timeout")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if fail != nil {
+			return nil, fail
+		}
+		return json.Marshal(map[string]any{"client_id": u, "client_name": "Claude", "redirect_uris": []string{"https://claude.ai/cb"}})
+	}
+	expire := func() {
+		h.s.clients.mu.Lock()
+		c := h.s.clients.cache[known]
+		c.expires = time.Now().Add(-time.Second)
+		h.s.clients.cache[known] = c
+		h.s.clients.mu.Unlock()
+	}
+	signIn := func() int {
+		return h.do(http.MethodGet, authorizeURL(known, "https://claude.ai/cb", nil), nil).Code
+	}
+	if code := signIn(); code != http.StatusOK {
+		t.Fatalf("first sign-in: %d", code)
+	}
+
+	var wg sync.WaitGroup
+	for i := range metadataFetches {
+		wg.Go(func() { h.authorizeTo(fmt.Sprintf("https://claude.ai/made-up-%d.json", i), nil) })
+	}
+	defer func() { close(hang); wg.Wait() }()
+	for len(h.s.clients.fetching) < metadataFetches {
+		time.Sleep(time.Millisecond)
+	}
+	expire()
+	if code := signIn(); code != http.StatusOK {
+		t.Errorf("refetch while the other slots are taken: %d", code)
+	}
+	if c := h.s.clients.cache[known]; !time.Now().Before(c.expires) {
+		t.Error("the document wasn't refetched while the other slots were taken")
+	}
+
+	mu.Lock()
+	fail = errors.New("connection reset")
+	mu.Unlock()
+	expire()
+	if code := signIn(); code != http.StatusOK {
+		t.Errorf("sign-in while the host is unreachable: %d", code)
+	}
+	if code := signIn(); code != http.StatusOK {
+		t.Errorf("sign-in with the failure remembered: %d", code)
+	}
+
+	mu.Lock()
+	fail = fmt.Errorf("%w: status 404 Not Found", errNoDocument)
+	mu.Unlock()
+	h.s.clients.mu.Lock()
+	delete(h.s.clients.failed, known)
+	h.s.clients.mu.Unlock()
+	expire()
+	if code := signIn(); code == http.StatusOK {
+		t.Error("sign-in with a document that's gone succeeded")
+	}
+	f := h.s.clients.failed[known]
+	if time.Until(f.expires) <= metadataRetryTime {
+		t.Errorf("a missing document is remembered until %v", f.expires)
+	}
+}
+
+// A request waiting on a shared fetch gives up when its client leaves.
+func TestMetadataWaitEndsWithTheRequest(t *testing.T) {
+	h := newHarness(t)
+	release := make(chan struct{})
+	defer close(release)
+	h.s.clients.fetch = func(context.Context, string) ([]byte, error) {
+		<-release
+		return nil, errors.New("timeout")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := h.s.clients.resolve(ctx, "https://claude.ai/slow.json")
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+		t.Errorf("resolve: %v after %v", err, time.Since(start))
+	}
+}
+
 // Requests for one document share a fetch, and wait briefly for a free slot instead of failing.
 func TestMetadataFetchesAreShared(t *testing.T) {
 	h := newHarness(t)
@@ -978,6 +1073,40 @@ func TestRefreshKeepsTheLockWhenTheResultIsLost(t *testing.T) {
 	if _, held, _ := mem.Get(t.Context(), "refresh-lock:"+hash(first.RefreshToken)); !held {
 		t.Error("the lock was released although the result wasn't kept")
 	}
+}
+
+// A request with a refresh token whose result was lost is told to sign in again, without asking GitHub
+// with the spent token.
+func TestRefreshResultLost(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	mem := store.NewMemory()
+	h.s.store = &failingSets{Memory: mem, left: 2}
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
+	if _, rec := h.tokens(form); rec.Code != http.StatusOK {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
+	}
+	if _, held, _ := mem.Get(t.Context(), "refresh-lock:"+hash(first.RefreshToken)); held {
+		t.Error("the lock was kept although the marker was written")
+	}
+	_, rec := h.tokens(form)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "lost the result") {
+		t.Errorf("second refresh: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// failingSets fails the first left Set calls.
+type failingSets struct {
+	*store.Memory
+	left int
+}
+
+func (f *failingSets) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	if f.left > 0 {
+		f.left--
+		return errors.New("redis: i/o timeout")
+	}
+	return f.Memory.Set(ctx, key, value, ttl)
 }
 
 // watchedStore says when a SetNX finds its key taken: someone is waiting on a lock.

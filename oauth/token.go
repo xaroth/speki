@@ -149,6 +149,10 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 	deadline := time.Now().Add(refreshLockTime)
 	for {
 		resp, found, err := s.refreshResult(ctx, key, old)
+		if errors.Is(err, errResultLost) {
+			oauthError(w, http.StatusBadRequest, "invalid_grant", "this refresh token was just used, and speki lost the result; sign in again")
+			return
+		}
 		if err != nil {
 			s.tokenServerError(w, r, err)
 			return
@@ -239,15 +243,24 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 		s.tokenServerError(w, r, err)
 		return
 	}
-	err = s.keepRefreshResult(context.WithoutCancel(ctx), key, old, resp)
+	// The result must be kept before the lock runs out, or a waiting request takes the lock and refreshes
+	// again with the spent GitHub token.
+	kctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), lock.at.Add(refreshLockTime))
+	defer cancel()
+	err = s.keepRefreshResult(kctx, key, old, resp)
 	if err != nil {
-		err = s.keepRefreshResult(context.WithoutCancel(ctx), key, old, resp) // once more
+		err = s.keepRefreshResult(kctx, key, old, resp) // once more
 	}
 	if err != nil {
-		// Another request with the same token would refresh again with a GitHub token that's spent.
-		// Keeping the lock until it runs out makes it wait and fail as temporary instead.
-		keepLock = true
+		// A request with the same token can't be given the result. A small marker tells it why, so it
+		// doesn't try GitHub with a spent token; if even that can't be written, the store is down and
+		// the lock is kept until it runs out.
 		s.logger.WarnContext(ctx, "keeping refresh result failed", "err", err)
+		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if s.store.Set(mctx, "refresh-result:"+key, []byte(resultLost), refreshResultTime) != nil {
+			keepLock = true
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -351,10 +364,20 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
+// resultLost is kept in place of a refresh result that couldn't be stored. It can't be mistaken for a
+// sealed result, which is longer than a nonce.
+const resultLost = "lost"
+
+// errResultLost means the token was refreshed, but the result couldn't be kept for other requests.
+var errResultLost = errors.New("refresh result lost")
+
 func (s *Server) refreshResult(ctx context.Context, key, old string) (tokenResponse, bool, error) {
 	raw, found, err := s.store.Get(ctx, "refresh-result:"+key)
 	if err != nil || !found {
 		return tokenResponse{}, false, err
+	}
+	if string(raw) == resultLost {
+		return tokenResponse{}, false, errResultLost
 	}
 	plain, err := resultCipher(old, raw, false)
 	if err != nil {
