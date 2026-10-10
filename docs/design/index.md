@@ -43,7 +43,7 @@ CREATE TABLE documents (
 	id          INTEGER PRIMARY KEY,
 	path        TEXT NOT NULL UNIQUE,    -- exactly as in git
 	key         TEXT NOT NULL,           -- path in NFC, which links are matched against (indexed)
-	name        TEXT NOT NULL,           -- lowercased file name without .md, in NFC, for wikilinks
+	name        TEXT NOT NULL,           -- file name without .md, folded (document.LinkName), for wikilinks
 	title       TEXT NOT NULL,
 	description TEXT,
 	status      TEXT NOT NULL,           -- draft | active | deprecated
@@ -119,14 +119,16 @@ CREATE VIEW resolved_links AS
 SELECT l.doc_id, l.target, l.kind, l.text,
        CASE l.kind
          WHEN 'wikilink' THEN (SELECT path FROM documents d WHERE d.name = l.candidate
-                               ORDER BY length(d.path), d.path LIMIT 1)
+                               ORDER BY length(d.key), d.path LIMIT 1)
          ELSE (SELECT path FROM documents d WHERE d.key = l.candidate ORDER BY d.path LIMIT 1)
        END AS target_path
 FROM links l;
 ```
 
 Paths and names compare in NFC, so a link typed in NFC finds a file macOS named in NFD, and the other way
-round. `target_path` is the path as stored in git.
+round. Names fold case after normalising, so letters that lowercase differently composed and decomposed
+(İ) still match. The `path` filter of `search` compares in NFC too. `target_path` is the path as stored
+in git.
 
 The shortest path wins for ambiguous wikilinks, which is close to what Obsidian does.
 

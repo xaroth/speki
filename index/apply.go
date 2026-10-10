@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"path"
 	"runtime"
 	"strings"
 	"time"
@@ -269,11 +268,6 @@ type row struct {
 	headings                                []document.Heading
 }
 
-// linkName is the name wikilinks find a document by: its file name without .md, lowercased, in NFC.
-func linkName(p string) string {
-	return norm.NFC.String(strings.ToLower(strings.TrimSuffix(path.Base(p), ".md")))
-}
-
 func parse(c Change) (row, error) {
 	d, err := document.Parse(c.Path, c.Content)
 	if err != nil {
@@ -291,7 +285,7 @@ func parse(c Change) (row, error) {
 	r := row{
 		path:        c.Path,
 		key:         norm.NFC.String(c.Path),
-		name:        linkName(c.Path),
+		name:        document.LinkName(c.Path),
 		title:       m.Title,
 		description: m.Description,
 		status:      string(m.Status),
@@ -363,7 +357,7 @@ func insert(ctx context.Context, tx *sql.Tx, r row) error {
 	for _, l := range r.links {
 		_, err = tx.ExecContext(ctx,
 			"INSERT INTO links (doc_id, target, candidate, kind, text) VALUES (?, ?, ?, ?, ?)",
-			id, l.Target, nullIfEmpty(norm.NFC.String(l.Candidate)), string(l.Kind), nullIfEmpty(l.Text),
+			id, l.Target, nullIfEmpty(l.Candidate), string(l.Kind), nullIfEmpty(l.Text),
 		)
 		if err != nil {
 			return err

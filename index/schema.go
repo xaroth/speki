@@ -13,7 +13,7 @@ CREATE TABLE documents (
 	id          INTEGER PRIMARY KEY,
 	path        TEXT NOT NULL UNIQUE, -- exactly as in git
 	key         TEXT NOT NULL,        -- path in NFC, which links are matched against
-	name        TEXT NOT NULL,        -- lowercased file name without .md, in NFC, for wikilinks
+	name        TEXT NOT NULL,        -- document.LinkName of path, for wikilinks
 	title       TEXT NOT NULL,
 	description TEXT,
 	status      TEXT NOT NULL,        -- draft | active | deprecated
@@ -92,7 +92,7 @@ CREATE VIEW resolved_links AS
 SELECT l.doc_id, l.target, l.kind, l.text,
 	CASE l.kind
 		WHEN 'wikilink' THEN (SELECT d.path FROM documents d WHERE d.name = l.candidate
-			ORDER BY length(d.path), d.path LIMIT 1)
+			ORDER BY length(d.key), d.path LIMIT 1)
 		ELSE (SELECT d.path FROM documents d WHERE d.key = l.candidate ORDER BY d.path LIMIT 1)
 	END AS target_path
 FROM links l;

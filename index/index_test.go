@@ -727,6 +727,8 @@ func TestLinksAcrossNormalForms(t *testing.T) {
 		"index.md":       "# Index\n\n[menu](café/menu.md) and [[Menu]]\n",
 		"résumé.md":      "# Résumé\n",
 		"other/links.md": "# Links\n\n[cv](../" + norm.NFD.String("résumé.md") + ")\n",
+		"İstanbul.md":    "# Istanbul\n",
+		"trip.md":        "# Trip\n\n[[" + norm.NFD.String("İstanbul") + "]]\n",
 	})
 	g, err := x.acquire()
 	if err != nil {
@@ -748,15 +750,19 @@ func TestLinksAcrossNormalForms(t *testing.T) {
 		}
 		got = append(got, from+" -> "+to.String)
 	}
-	want := []string{"index.md -> " + nfd, "index.md -> " + nfd, "other/links.md -> résumé.md"}
+	want := []string{"index.md -> " + nfd, "index.md -> " + nfd, "other/links.md -> résumé.md", "trip.md -> İstanbul.md"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("resolved links (-want +got):\n%s", diff)
 	}
-	for path, want := range map[string][]string{nfd: {"index.md"}, "résumé.md": {"other/links.md"}} {
+	for path, want := range map[string][]string{nfd: {"index.md"}, "résumé.md": {"other/links.md"}, "İstanbul.md": {"trip.md"}} {
 		from, err := x.LinkedFrom(t.Context(), path)
 		if err != nil || !slices.Equal(from, want) {
 			t.Errorf("LinkedFrom(%q) = %v, %v; want %v", path, from, err, want)
 		}
+	}
+	res := search(t, []Source{{Name: "kb", Index: x}}, "menu", Options{PathPrefix: "café"})
+	if !slices.Equal(hitPaths(res), []string{nfd}) {
+		t.Errorf("search under an NFC folder name: %v", hitPaths(res))
 	}
 }
 

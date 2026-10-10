@@ -306,8 +306,8 @@ func filters(opt Options) (string, []any) {
 	if opt.ExcludeDeprecated {
 		b.WriteString(" AND d.status != 'deprecated'")
 	}
-	if p := strings.Trim(opt.PathPrefix, "/"); p != "" {
-		b.WriteString(" AND substr(d.path, 1, length(?)) = ?")
+	if p := norm.NFC.String(strings.Trim(opt.PathPrefix, "/")); p != "" {
+		b.WriteString(" AND substr(d.key, 1, length(?)) = ?") // in NFC, so a folder matches however it's typed
 		args = append(args, p+"/", p+"/")
 	}
 	for _, t := range opt.Tags {

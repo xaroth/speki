@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/eve-online-tools/speki/document"
 )
 
 // ErrNotFound means the index has no document at that path.
@@ -162,14 +164,14 @@ func (x *Index) LinkedFrom(ctx context.Context, path string) ([]string, error) {
 	defer g.release()
 
 	// The same matching as resolved_links, which is in NFC.
-	name, key := linkName(path), norm.NFC.String(path)
+	name, key := document.LinkName(path), norm.NFC.String(path)
 	rows, err := g.reader.QueryContext(ctx, `SELECT DISTINCT d.path
 		FROM links l JOIN documents d ON d.id = l.doc_id
 		WHERE d.path != ? AND (
 			(l.kind != 'wikilink' AND l.candidate = ? AND ? = (
 				SELECT k.path FROM documents k WHERE k.key = ? ORDER BY k.path LIMIT 1))
 			OR (l.kind = 'wikilink' AND l.candidate = ? AND ? = (
-				SELECT w.path FROM documents w WHERE w.name = ? ORDER BY length(w.path), w.path LIMIT 1))
+				SELECT w.path FROM documents w WHERE w.name = ? ORDER BY length(w.key), w.path LIMIT 1))
 		)
 		ORDER BY d.path`, path, key, path, key, name, path, name)
 	if err != nil {

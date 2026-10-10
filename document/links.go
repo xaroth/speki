@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // markdownLink resolves a markdown link destination relative to the document it appears in.
@@ -45,15 +47,14 @@ func pathCandidate(dest, docPath string) string {
 	if p == "." || p == ".." || strings.HasPrefix(p, "../") {
 		return ""
 	}
-	return p
+	return norm.NFC.String(p)
 }
 
-// wikiCandidate returns the name a wikilink target matches documents by: the file name, lowercased,
-// without .md.
+// wikiCandidate returns the name a wikilink target matches documents by: LinkName of the target.
 func wikiCandidate(target string) string {
 	name := path.Base(strings.TrimSpace(target))
 	if name == "." || name == "/" {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSuffix(name, ".md"))
+	return LinkName(name)
 }
