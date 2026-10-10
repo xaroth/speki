@@ -27,6 +27,9 @@ func Fold(p string) string {
 	return strings.ToLower(norm.NFC.String(p))
 }
 
+// ErrExists is returned by CheckPath for a file that already exists, spelled in another normalisation.
+var ErrExists = errors.New("already exists")
+
 // CheckPath reports whether p is a path speki may create, and returns it in NFC. existing looks up a
 // folded path (see Fold) and returns the path git has for it, if any. It's called for the file and each
 // of its folders, so "Runbooks/x.md" is refused when "runbooks/" exists, and so is a file that exists in
@@ -76,7 +79,7 @@ func CheckPath(p string, existing func(folded string) (string, bool)) (string, e
 		case folder && norm.NFC.String(have) == norm.NFC.String(prefix):
 			copy(segments, strings.Split(have, "/")) // the same folder, stored decomposed: use git's bytes
 		case norm.NFC.String(have) == norm.NFC.String(prefix):
-			return "", fmt.Errorf("path %q: %q already exists", p, have)
+			return "", fmt.Errorf("path %q: %q %w", p, have, ErrExists)
 		default:
 			return "", fmt.Errorf("path %q: %q already exists and differs only in letter case", p, have)
 		}

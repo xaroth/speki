@@ -153,7 +153,8 @@ Build:
 - `knowledge`: write, edit, move, delete, with version checks, the existence and collision check against
   the mirror, the retry on a moved head, message sanitising, the post-write sync and `index_pending`,
   `linked_from`.
-- Change notices on the in-memory store (a no-op with one instance, but the call sites exist).
+- Change notices: the call site after a commit, with a no-op on the in-memory store. (Built with the
+  Redis store in milestone 8, call site included.)
 
 Tests: concurrent edits to one document and to different documents of one vault; a write to a path that
 exists in git but not in the index; case and normalisation collisions; frontmatter with existing problems;

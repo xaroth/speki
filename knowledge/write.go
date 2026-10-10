@@ -121,6 +121,9 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 
 // Edit replaces OldText in a document, once unless ReplaceAll is set.
 func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Result, error) {
+	if _, err := writable(g, req.Vault); err != nil {
+		return Result{}, err
+	}
 	if req.OldText == "" {
 		return Result{}, errorf(Invalid, "old_text is empty. Give the exact text to replace")
 	}
@@ -164,6 +167,9 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 // Move moves a document in one commit. Links to it elsewhere aren't changed: the result lists the
 // documents that link to the old path.
 func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Result, error) {
+	if _, err := writable(g, req.Vault); err != nil {
+		return Result{}, err
+	}
 	if req.Version == "" {
 		return Result{}, errorf(Invalid, "move needs the version of the document being moved. Read it first")
 	}
@@ -218,6 +224,9 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 
 // Delete deletes a document. It stays in git history.
 func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (Result, error) {
+	if _, err := writable(g, req.Vault); err != nil {
+		return Result{}, err
+	}
 	if req.Version == "" {
 		return Result{}, errorf(Invalid, "delete needs the version of the document. Read it first")
 	}
@@ -239,6 +248,21 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 		}
 		return plan{changes: []gh.FileChange{{Path: cur.Path}}, message: "Delete " + cur.Path, path: cur.Path, linkedFrom: linked}, nil
 	})
+}
+
+// writable returns a vault the user may change, or why not. Every change checks this first, so the
+// answer doesn't depend on whether the rest of the request is well formed.
+func writable(g *access.Grant, name string) (vault.Vault, error) {
+	v, ok := g.Vault(name)
+	switch {
+	case !ok:
+		return vault.Vault{}, noVault(name)
+	case g.ReadOnlySession():
+		return vault.Vault{}, errorf(ReadOnlySession, "the user connected speki read-only. Ask them to reconnect it with write access")
+	case !g.CanWrite(v.RepoID):
+		return vault.Vault{}, errorf(NoWriteAccess, "the user can read %s but can't push to it on GitHub. An owner of the repository can give them write access", v.Name)
+	}
+	return v, nil
 }
 
 // state is a vault as a change sees it: its copy at the head the commit will be based on.
@@ -284,6 +308,9 @@ func (st state) newPath(path, moving string) (string, error) {
 		p, ok := folded[f]
 		return p, ok
 	})
+	if errors.Is(err, document.ErrExists) {
+		return "", errorf(AlreadyExists, "%s. Pick another path", err)
+	}
 	if err != nil {
 		return "", errorf(Invalid, "%s", err)
 	}
@@ -363,14 +390,9 @@ type plan struct {
 // again; when the branch moved, it syncs and starts over, up to commitAttempts times. After the commit it
 // waits for the index to catch up, up to syncWait.
 func (b *Base) change(ctx context.Context, g *access.Grant, name, message string, prepare func(context.Context, state) (plan, error)) (Result, error) {
-	v, ok := g.Vault(name)
-	switch {
-	case !ok:
-		return Result{}, noVault(name)
-	case g.ReadOnlySession():
-		return Result{}, errorf(ReadOnlySession, "the user connected speki read-only. Ask them to reconnect it with write access")
-	case !g.CanWrite(v.RepoID):
-		return Result{}, errorf(NoWriteAccess, "the user can read %s but can't push to it on GitHub. An owner of the repository can give them write access", v.Name)
+	v, err := writable(g, name)
+	if err != nil {
+		return Result{}, err
 	}
 	unlock, err := b.lock(ctx, v.RepoID)
 	if err != nil {
@@ -422,7 +444,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		if errors.Is(err, gh.ErrHeadMoved) {
 			moved++
 			if moved == commitAttempts {
-				return Result{}, errorf(Conflict, "%s kept changing while speki tried to commit. Read the document again and redo your change", v.Name)
+				return Result{}, b.keptChanging(ctx, v, p.path)
 			}
 			err = b.vaults.Sync(ctx, v.RepoID)
 			if err != nil {
@@ -450,6 +472,19 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		}
 		return res, nil
 	}
+}
+
+// keptChanging is the conflict for a vault whose branch moved under every attempt. It carries the
+// document's current version, as every conflict does, when speki has it.
+func (b *Base) keptChanging(ctx context.Context, v vault.Vault, path string) *Error {
+	e := errorf(Conflict, "%s kept changing while speki tried to commit. Read the document again and redo your change", v.Name)
+	if c, ok := b.vaults.Copy(v.RepoID); ok {
+		if d, err := c.Index().Document(ctx, path); err == nil {
+			e.Version = d.Version
+			e.Message = fmt.Sprintf("%s kept changing while speki tried to commit. Current version of %s: %s. Read it again and redo your change", v.Name, d.Path, d.Version)
+		}
+	}
+	return e
 }
 
 // indexed reports whether the index has the document at path in version, or not at all when version is

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/vault"
@@ -325,6 +327,10 @@ func TestCommitRetriesWhenTheBranchMoves(t *testing.T) {
 	f.github.before = func(r *fakeRepo) { r.head += "+" }
 	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "airship", NewText: "zeppelin"})
 	wantCode(t, err, Conflict)
+	var kerr *Error
+	if errors.As(err, &kerr); kerr.Version == "" || !strings.Contains(kerr.Message, kerr.Version) {
+		t.Errorf("conflict without the current version: %+v", kerr)
+	}
 	if n := len(f.github.requests); n != 2*commitAttempts {
 		t.Errorf("%d commit attempts in all, want %d", n, 2*commitAttempts)
 	}
@@ -520,4 +526,35 @@ func TestWriteLockHonoursTheContext(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("waiting on a held lock: %v", err)
 	}
+}
+
+// Names that git stores in NFD, through the write path with the mirror's real paths.
+func TestWriteNormalisation(t *testing.T) {
+	f := newFixture(t)
+	nfd := norm.NFD.String
+	f.copies[1] = newCopy(t, map[string]string{nfd("menü/brötchen.md"): "# Brötchen\n"})
+	ctx := t.Context()
+
+	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "menü/käse.md", Content: "# Käse\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.lastCommit(t).Changes[0].Path; got != nfd("menü")+"/käse.md" {
+		t.Errorf("new document at %q, not in the existing NFD folder", got)
+	}
+	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "menü/brötchen.md", Content: "# Copy\n"})
+	wantCode(t, err, AlreadyExists)
+}
+
+// The grant is checked before the request itself, so a read-only session always hears so.
+func TestGrantIsCheckedFirst(t *testing.T) {
+	f := newFixture(t)
+	readOnly := access.NewGrant(access.User{Login: "octocat"}, []vault.Vault{ours}, []int64{1})
+	ctx := t.Context()
+	_, err := f.base.Move(ctx, readOnly, MoveRequest{Vault: "ours/kb", From: "a.md", To: "a.md"})
+	wantCode(t, err, ReadOnlySession)
+	_, err = f.base.Delete(ctx, readOnly, DeleteRequest{Vault: "ours/kb", Path: "a.md"})
+	wantCode(t, err, ReadOnlySession)
+	_, err = f.base.Edit(ctx, readOnly, EditRequest{Vault: "ours/kb", Path: "a.md"})
+	wantCode(t, err, ReadOnlySession)
 }

@@ -372,6 +372,16 @@ func TestHandleErrors(t *testing.T) {
 		return err
 	}
 
+	var reqCtx context.Context
+	withID := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	withID.Header.Set(telemetry.RequestIDHeader, "test-id")
+	telemetry.RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		reqCtx = context.WithValue(r.Context(), grantKey{}, g)
+	})).ServeHTTP(httptest.NewRecorder(), withID)
+	if err := run(reqCtx, &knowledge.Error{Code: knowledge.Unavailable, Message: "reconnect"}); err == nil || !strings.Contains(err.Error(), "Request ID: test-id") {
+		t.Errorf("unavailable without a request ID: %v", err)
+	}
+
 	wrapped := fmt.Errorf("vault x: %w", &knowledge.Error{Code: knowledge.Invalid, Message: "bad"})
 	if err := run(ctx, wrapped); err == nil || err.Error() != "invalid: bad" {
 		t.Errorf("wrapped knowledge error = %v", err)
@@ -384,7 +394,7 @@ func TestHandleErrors(t *testing.T) {
 	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "canceled")); got != 1 {
 		t.Errorf("canceled calls = %v", got)
 	}
-	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "unavailable")); got != 0 {
+	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "unavailable")); got != 1 { // the knowledge error above
 		t.Errorf("a canceled call counted as unavailable")
 	}
 }
