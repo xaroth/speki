@@ -5,12 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
 )
+
+// blankLines matches two or more blank lines in a row.
+var blankLines = regexp.MustCompile(`\n{3,}`)
 
 // bom is the UTF-8 byte order mark some editors put at the start of a file.
 var bom = []byte("\ufeff")
@@ -67,8 +73,12 @@ func trimEOL(s string) string {
 
 // decode parses the block into a YAML node tree, or records why it can't be used.
 func (f *frontmatter) decode() {
+	// Decode with plain \n line endings: comment nodes would otherwise keep a \r that Touch doubles
+	// when it writes \r\n back. A lone \r is a line break in YAML too, so no value changes.
+	content := bytes.ReplaceAll(f.content, []byte("\r\n"), []byte("\n"))
+	content = bytes.ReplaceAll(content, []byte("\r"), []byte("\n"))
 	var doc yaml.Node
-	dec := yaml.NewDecoder(bytes.NewReader(f.content))
+	dec := yaml.NewDecoder(bytes.NewReader(content))
 	err := dec.Decode(&doc)
 	if err != nil && !errors.Is(err, io.EOF) { // EOF: empty, or only comments
 		f.broken = "not valid YAML: " + strings.TrimPrefix(err.Error(), "yaml: ")
@@ -84,8 +94,10 @@ func (f *frontmatter) decode() {
 	if doc.Kind == 0 { // empty, or only comments
 		f.node = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		f.doc = &yaml.Node{
-			Kind:        yaml.DocumentNode,
-			HeadComment: strings.TrimSpace(string(f.content)),
+			Kind: yaml.DocumentNode,
+			// The YAML parser keeps at most one blank line inside a comment, so collapse them here too:
+			// otherwise the block changes again after the next Touch.
+			HeadComment: blankLines.ReplaceAllString(strings.TrimSpace(string(content)), "\n\n"),
 			Content:     []*yaml.Node{f.node},
 		}
 		return
@@ -307,6 +319,11 @@ func jsonSafe(v any) (any, bool) {
 			out[ks] = safe
 		}
 		return out, true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) { // JSON has no such numbers
+			return strconv.FormatFloat(v, 'g', -1, 64), true
+		}
+		return v, true
 	case []any:
 		for i, x := range v {
 			safe, ok := jsonSafe(x)

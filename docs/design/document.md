@@ -17,7 +17,7 @@ type Meta struct {
 	Related     []string
 	Created     time.Time // zero when missing
 	Updated     time.Time
-	Extra       map[string]any // keys speki doesn't own, as decoded YAML
+	Extra       map[string]any // keys speki doesn't own, as decoded YAML; NaN and infinity become text
 }
 
 type Document struct {
@@ -76,7 +76,14 @@ frontmatter only works if the change fixes the frontmatter, because speki has to
 `Touch` edits the `yaml.Node` tree in place: it updates the value node for `updated` (and `created`), or
 appends key and value nodes at the end of the mapping. Then it re-encodes only the frontmatter block, using
 2-space indentation, and splices it back before the untouched body bytes. The line ending style of the
-original is kept. If the file had no frontmatter, `Touch` adds a block with just those fields.
+original is kept: the block is decoded with `\n` endings and `\r\n` is put back on output. If the file had
+no frontmatter, `Touch` adds a block with just those fields.
+
+The encoder sometimes places a comment or a blank line where the decoder reads it back differently, which
+would make every `Touch` change the block again. So `Touch` decodes and re-encodes its own output until
+it stops changing (a few rounds at most) and refuses the change if it doesn't settle. It also refuses when
+the dates push the document over 1 MiB or the block over 64 KiB, since `Check` measured the document
+before they were added.
 
 Re-encoding a node tree keeps key order and most comments. It may change quoting style or indentation of
 unknown keys. That's accepted: the alternative (editing YAML as text) breaks on the first unusual
@@ -108,10 +115,14 @@ Link candidates:
 ## Paths
 
 ```go
-// CheckPath reports whether p is a path speki may write. existing is used to refuse case-only collisions.
-func CheckPath(p string, existing func(folded string) (string, bool)) error
+// CheckPath reports whether p is a path speki may write, and returns the path to use. existing is used
+// to refuse case-only collisions and to reuse git's spelling of a name.
+func CheckPath(p string, existing func(folded string) (string, bool)) (string, error)
 ```
 
 The rules are in [documents.md](../functional/documents.md). `CheckPath` is for new paths. It normalises
-to NFC and returns an error naming the rule that failed, which goes straight to the agent. Existing
-documents keep the exact path git has, even when it isn't NFC.
+to NFC and returns an error naming the rule that failed, which goes straight to the agent. A folder name
+that git has in another normalisation is returned with git's bytes, so `café/new.md` lands in an existing
+NFD `café/`. A file that exists in another normalisation, or a name that differs in letter case, is
+refused. Existing documents keep the exact
+path git has, even when it isn't NFC.

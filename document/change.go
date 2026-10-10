@@ -17,7 +17,7 @@ import (
 func Check(current, next *Document) error {
 	var problems []error
 	if len(next.raw) > MaxSize {
-		problems = append(problems, fmt.Errorf("document is larger than %d bytes", MaxSize))
+		problems = append(problems, fmt.Errorf("%w: the document is larger than %d bytes", ErrTooLarge, MaxSize))
 	}
 	if next.front != nil && next.front.broken != "" {
 		// Even when the current document has the same problem: Touch must rewrite the block.
@@ -68,33 +68,73 @@ func (d *Document) Touch(now time.Time, created bool) ([]byte, error) {
 	}
 	setKey(node, keyUpdated, stamp)
 
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	err := enc.Encode(doc)
+	encoded, err := encodeStable(doc)
 	if err != nil {
-		return nil, fmt.Errorf("encode frontmatter: %w", err)
+		return nil, err
 	}
-	err = enc.Close()
-	if err != nil {
-		return nil, fmt.Errorf("encode frontmatter: %w", err)
-	}
-	encoded := buf.String()
 	if f.eol == "\r\n" {
 		encoded = strings.ReplaceAll(encoded, "\n", "\r\n")
 	}
 
 	closing := f.close
-	if !strings.HasSuffix(closing, "\n") {
-		closing += f.eol // the block closed on the file's last line
+	if !strings.HasSuffix(closing, "\n") { // the block closed on the file's last line
+		closing = trimEOL(closing) + f.eol
 	}
 
+	if len(encoded) > MaxFrontmatterSize {
+		return nil, fmt.Errorf("%w: the frontmatter would be larger than %d bytes once speki sets the dates", ErrTooLarge, MaxFrontmatterSize)
+	}
 	var out bytes.Buffer
 	out.WriteString(f.open)
 	out.WriteString(encoded)
 	out.WriteString(closing)
 	out.Write(body)
+	if out.Len() > MaxSize {
+		return nil, fmt.Errorf("%w: the document would be larger than %d bytes once speki sets the dates", ErrTooLarge, MaxSize)
+	}
 	return out.Bytes(), nil
+}
+
+// encodeStable encodes doc so that decoding and encoding the result gives the same text. The YAML
+// encoder sometimes moves a comment or adds a blank line that the decoder reads back differently, which
+// would make every Touch change the block again. A few rounds settle it.
+func encodeStable(doc *yaml.Node) (string, error) {
+	out, err := encode(doc)
+	for range 3 {
+		if err != nil {
+			return "", err
+		}
+		var again yaml.Node
+		err = yaml.Unmarshal([]byte(out), &again)
+		if err != nil {
+			return "", fmt.Errorf("encode frontmatter: %w", err)
+		}
+		var next string
+		next, err = encode(&again)
+		if err == nil && next == out {
+			return out, nil
+		}
+		out = next
+	}
+	if err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("%w; move or remove them", ErrUnstable)
+}
+
+func encode(doc *yaml.Node) (string, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	err := enc.Encode(doc)
+	if err != nil {
+		return "", fmt.Errorf("encode frontmatter: %w", err)
+	}
+	err = enc.Close()
+	if err != nil {
+		return "", fmt.Errorf("encode frontmatter: %w", err)
+	}
+	return buf.String(), nil
 }
 
 func copyNode(n *yaml.Node) *yaml.Node {

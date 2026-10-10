@@ -2,6 +2,8 @@ package document
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -134,6 +136,26 @@ func TestTouch(t *testing.T) {
 			want: "---\r\ntitle: A\r\nupdated: 2026-10-09T14:02:11Z\r\n...\r\nBody\r\n",
 		},
 		{
+			name: "CRLF with comments",
+			raw:  "---\r\ntitle: A\r\n# a\r\n# b\r\n---\r\nBody\r\n",
+			want: "---\r\ntitle: A\r\nupdated: 2026-10-09T14:02:11Z\r\n# a\r\n# b\r\n---\r\nBody\r\n",
+		},
+		{
+			name: "CRLF comment-only block",
+			raw:  "---\r\n# a\r\n# b\r\n---\r\nBody\r\n",
+			want: "---\r\n# a\r\n# b\r\n\r\nupdated: 2026-10-09T14:02:11Z\r\n---\r\nBody\r\n",
+		},
+		{
+			name: "CRLF comment in a list",
+			raw:  "---\r\ntags:\r\n  - a\r\n  # about b\r\n  - b\r\n---\r\nBody\r\n",
+			want: "---\r\ntags:\r\n  - a\r\n  # about b\r\n  - b\r\nupdated: 2026-10-09T14:02:11Z\r\n---\r\nBody\r\n",
+		},
+		{
+			name: "block on the last line, ending in a lone CR",
+			raw:  "---\r\ntitle: A\r\n---\r",
+			want: "---\r\ntitle: A\r\nupdated: 2026-10-09T14:02:11Z\r\n---\r\n",
+		},
+		{
 			name: "block on the last line",
 			raw:  "---\ntitle: A\n---",
 			want: "---\ntitle: A\nupdated: 2026-10-09T14:02:11Z\n---\n",
@@ -230,5 +252,30 @@ func TestTouchKeepsTextAfterAnOpenClosingLine(t *testing.T) {
 	}
 	if Check(d, d) == nil {
 		t.Error("Check accepts a change that keeps the broken block")
+	}
+}
+
+func TestTouchStaysWithinLimits(t *testing.T) {
+	head := "---\ntitle: A\n---\n"
+	d := mustParse(t, "a.md", []byte(head+strings.Repeat("x", MaxSize-len(head))))
+	if err := Check(nil, d); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if _, err := d.Touch(now, true); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("Touch past MaxSize: %v", err)
+	}
+	big := mustParse(t, "a.md", []byte(head+strings.Repeat("x", MaxSize)))
+	if err := Check(nil, big); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("Check past MaxSize: %v", err)
+	}
+}
+
+func TestNonFiniteValuesAreKept(t *testing.T) {
+	d := mustParse(t, "a.md", []byte("---\nweight: .nan\nx: -.inf\n---\n"))
+	if d.Meta.Extra["weight"] != "NaN" || d.Meta.Extra["x"] != "-Inf" {
+		t.Errorf("extra = %v", d.Meta.Extra)
+	}
+	if _, err := json.Marshal(d.Meta.Extra); err != nil {
+		t.Errorf("extra doesn't marshal: %v", err)
 	}
 }
