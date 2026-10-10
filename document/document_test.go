@@ -3,6 +3,7 @@ package document
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -320,7 +321,27 @@ func TestNFDFileNames(t *testing.T) {
 	if d.Meta.Title != norm.NFD.String("brötchen") {
 		t.Errorf("title from the file name = %q", d.Meta.Title)
 	}
-	if len(d.Links) != 1 || d.Links[0].Candidate != norm.NFD.String("menü/käse.md") {
+	if len(d.Links) != 1 || d.Links[0].Candidate != "menü/käse.md" { // candidates are in NFC
 		t.Errorf("links = %+v", d.Links)
+	}
+}
+
+// Link candidates are in NFC, and wikilink names are folded the same way whatever the input's form.
+func TestLinkCandidatesAreNormalised(t *testing.T) {
+	nfdPath := norm.NFD.String("café/menu.md")
+	d, err := Parse("index.md", []byte("[a]("+nfdPath+") [[İstanbul]] [["+norm.NFD.String("İstanbul")+"]]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, l := range d.Links {
+		got = append(got, l.Candidate)
+	}
+	want := []string{"café/menu.md", LinkName("İstanbul.md"), LinkName("İstanbul.md")}
+	if !slices.Equal(got, want) {
+		t.Errorf("candidates = %q, want %q", got, want)
+	}
+	if LinkName(norm.NFD.String("İstanbul")) != LinkName("İstanbul") {
+		t.Error("LinkName depends on the normal form")
 	}
 }

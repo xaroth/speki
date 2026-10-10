@@ -63,9 +63,9 @@ const (
 // Link is a link found in a document.
 type Link struct {
 	Target string // as written
-	// Candidate is what the link may point to in the same vault: a cleaned path for markdown links and
-	// related entries, a lowercased file name without .md for wikilinks. Empty for links that leave the
-	// vault (web addresses, paths above the vault root).
+	// Candidate is what the link may point to in the same vault: a cleaned path in NFC for markdown links
+	// and related entries, LinkName of the target for wikilinks. Empty for links that leave the vault
+	// (web addresses, paths above the vault root).
 	Candidate string
 	Kind      LinkKind
 	Text      string

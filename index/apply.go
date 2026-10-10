@@ -9,12 +9,12 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"path"
 	"runtime"
 	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/text/unicode/norm"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -257,7 +257,8 @@ func fill(
 
 // row is a parsed document, ready to insert.
 type row struct {
-	path, name, title, description, status  string
+	path, key, name, title, description     string
+	status                                  string
 	tags, aliases, related, extra, warnings string // JSON
 	created, updated                        sql.NullString
 	headingText, body, version              string
@@ -283,7 +284,8 @@ func parse(c Change) (row, error) {
 	}
 	r := row{
 		path:        c.Path,
-		name:        strings.ToLower(strings.TrimSuffix(path.Base(c.Path), ".md")),
+		key:         norm.NFC.String(c.Path),
+		name:        document.LinkName(c.Path),
 		title:       m.Title,
 		description: m.Description,
 		status:      string(m.Status),
@@ -333,10 +335,10 @@ func timeValue(t time.Time) sql.NullString {
 
 func insert(ctx context.Context, tx *sql.Tx, r row) error {
 	res, err := tx.ExecContext(ctx, `INSERT INTO documents
-		(path, name, title, description, status, tags, aliases, related, created, updated, extra,
+		(path, key, name, title, description, status, tags, aliases, related, created, updated, extra,
 		 headings, body, bytes, lines, version, warnings)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.path, r.name, r.title, nullIfEmpty(r.description), r.status, r.tags, r.aliases, r.related,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.path, r.key, r.name, r.title, nullIfEmpty(r.description), r.status, r.tags, r.aliases, r.related,
 		r.created, r.updated, r.extra, r.headingText, r.body, r.bytes, r.lines, r.version, r.warnings,
 	)
 	if err != nil {

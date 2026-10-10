@@ -22,9 +22,15 @@ const (
 const forbiddenChars = `[]#^|:?*<>"\`
 
 // Fold returns the form of p used to find paths that differ only in letter case or Unicode
-// normalisation: NFC, lowercased.
+// normalisation: lowercased, in NFC. It normalises before lowercasing as well, since some letters
+// lowercase differently composed and decomposed (İ and I with a combining dot).
 func Fold(p string) string {
-	return strings.ToLower(norm.NFC.String(p))
+	return norm.NFC.String(strings.ToLower(norm.NFC.String(p)))
+}
+
+// LinkName is the name wikilinks find a document at p by: its file name without .md, folded.
+func LinkName(p string) string {
+	return Fold(strings.TrimSuffix(path.Base(p), ".md"))
 }
 
 // ErrExists is returned by CheckPath for a file that already exists, spelled in another normalisation.

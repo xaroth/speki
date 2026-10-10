@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/mattn/go-sqlite3"
+	"golang.org/x/text/unicode/norm"
 )
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -715,6 +716,53 @@ func TestBoldMatches(t *testing.T) {
 	}
 	if got := boldMatches("short \x01match\x02 here"); got != "short **match** here" {
 		t.Errorf("short snippet: %q", got)
+	}
+}
+
+// Links typed in NFC find files named in NFD, as macOS names them, and the other way round.
+func TestLinksAcrossNormalForms(t *testing.T) {
+	nfd := norm.NFD.String("café/menu.md")
+	x := newIndex(t, map[string]string{
+		nfd:              "# Menu\n",
+		"index.md":       "# Index\n\n[menu](café/menu.md) and [[Menu]]\n",
+		"résumé.md":      "# Résumé\n",
+		"other/links.md": "# Links\n\n[cv](../" + norm.NFD.String("résumé.md") + ")\n",
+		"İstanbul.md":    "# Istanbul\n",
+		"trip.md":        "# Trip\n\n[[" + norm.NFD.String("İstanbul") + "]]\n",
+	})
+	g, err := x.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.release()
+	rows, err := g.reader.QueryContext(t.Context(), `SELECT d.path, l.target_path FROM resolved_links l
+		JOIN documents d ON d.id = l.doc_id ORDER BY d.path, l.kind`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var from string
+		var to sql.NullString
+		if err := rows.Scan(&from, &to); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, from+" -> "+to.String)
+	}
+	want := []string{"index.md -> " + nfd, "index.md -> " + nfd, "other/links.md -> résumé.md", "trip.md -> İstanbul.md"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("resolved links (-want +got):\n%s", diff)
+	}
+	for path, want := range map[string][]string{nfd: {"index.md"}, "résumé.md": {"other/links.md"}, "İstanbul.md": {"trip.md"}} {
+		from, err := x.LinkedFrom(t.Context(), path)
+		if err != nil || !slices.Equal(from, want) {
+			t.Errorf("LinkedFrom(%q) = %v, %v; want %v", path, from, err, want)
+		}
+	}
+	res := search(t, []Source{{Name: "kb", Index: x}}, "menu", Options{PathPrefix: "café"})
+	if !slices.Equal(hitPaths(res), []string{nfd}) {
+		t.Errorf("search under an NFC folder name: %v", hitPaths(res))
 	}
 }
 

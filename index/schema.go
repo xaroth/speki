@@ -2,7 +2,7 @@ package index
 
 // schemaVersion changes whenever schema does. An index with another version is rebuilt; there are no
 // migrations, because rebuilding from git is always possible.
-const schemaVersion = "2"
+const schemaVersion = "3"
 
 // schema creates one vault's index, without the triggers. Documents are only ever inserted and deleted,
 // never updated.
@@ -12,7 +12,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE documents (
 	id          INTEGER PRIMARY KEY,
 	path        TEXT NOT NULL UNIQUE, -- exactly as in git
-	name        TEXT NOT NULL,        -- lowercased file name without .md, for wikilinks
+	key         TEXT NOT NULL,        -- path in NFC, which links are matched against
+	name        TEXT NOT NULL,        -- document.LinkName of path, for wikilinks
 	title       TEXT NOT NULL,
 	description TEXT,
 	status      TEXT NOT NULL,        -- draft | active | deprecated
@@ -29,6 +30,7 @@ CREATE TABLE documents (
 	version     TEXT NOT NULL,        -- git blob SHA
 	warnings    TEXT NOT NULL         -- JSON array of frontmatter problems
 );
+CREATE INDEX documents_key ON documents (key);
 CREATE INDEX documents_name ON documents (name);
 CREATE INDEX documents_updated ON documents (updated);
 CREATE INDEX documents_deprecated ON documents (id) WHERE status = 'deprecated'; -- for ranking
@@ -43,7 +45,7 @@ CREATE INDEX tags_tag ON tags (tag);
 CREATE TABLE links (
 	doc_id    INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
 	target    TEXT NOT NULL,
-	candidate TEXT,
+	candidate TEXT,          -- in NFC, like documents.key and documents.name
 	kind      TEXT NOT NULL,
 	text      TEXT
 );
@@ -84,13 +86,14 @@ CREATE VIRTUAL TABLE words USING fts5 (
 CREATE VIRTUAL TABLE words_vocab USING fts5vocab (words, 'row');
 
 -- Links resolved when read, so adding a document fixes the links pointing at it. The shortest path wins
--- for ambiguous wikilinks, close to what Obsidian does.
+-- for ambiguous wikilinks, close to what Obsidian does. Paths compare in NFC, so a link typed on one
+-- system finds a file named on another (macOS writes NFD).
 CREATE VIEW resolved_links AS
 SELECT l.doc_id, l.target, l.kind, l.text,
 	CASE l.kind
 		WHEN 'wikilink' THEN (SELECT d.path FROM documents d WHERE d.name = l.candidate
-			ORDER BY length(d.path), d.path LIMIT 1)
-		ELSE (SELECT d.path FROM documents d WHERE d.path = l.candidate)
+			ORDER BY length(d.key), d.path LIMIT 1)
+		ELSE (SELECT d.path FROM documents d WHERE d.key = l.candidate ORDER BY d.path LIMIT 1)
 	END AS target_path
 FROM links l;
 `

@@ -42,7 +42,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE documents (
 	id          INTEGER PRIMARY KEY,
 	path        TEXT NOT NULL UNIQUE,    -- exactly as in git
-	name        TEXT NOT NULL,           -- lowercased file name without .md, for wikilinks
+	key         TEXT NOT NULL,           -- path in NFC, which links are matched against (indexed)
+	name        TEXT NOT NULL,           -- file name without .md, folded (document.LinkName), for wikilinks
 	title       TEXT NOT NULL,
 	description TEXT,
 	status      TEXT NOT NULL,           -- draft | active | deprecated
@@ -72,7 +73,7 @@ CREATE INDEX tags_tag ON tags (tag);
 CREATE TABLE links (
 	doc_id    INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
 	target    TEXT NOT NULL,             -- as written
-	candidate TEXT,                      -- path it would resolve to, or lowercased wikilink name
+	candidate TEXT,                      -- path it would resolve to, or lowercased wikilink name, in NFC
 	kind      TEXT NOT NULL,             -- markdown | wikilink | related
 	text      TEXT
 );
@@ -118,11 +119,16 @@ CREATE VIEW resolved_links AS
 SELECT l.doc_id, l.target, l.kind, l.text,
        CASE l.kind
          WHEN 'wikilink' THEN (SELECT path FROM documents d WHERE d.name = l.candidate
-                               ORDER BY length(d.path), d.path LIMIT 1)
-         ELSE (SELECT path FROM documents d WHERE d.path = l.candidate)
+                               ORDER BY length(d.key), d.path LIMIT 1)
+         ELSE (SELECT path FROM documents d WHERE d.key = l.candidate ORDER BY d.path LIMIT 1)
        END AS target_path
 FROM links l;
 ```
+
+Paths and names compare in NFC, so a link typed in NFC finds a file macOS named in NFD, and the other way
+round. Names fold case after normalising, so letters that lowercase differently composed and decomposed
+(İ) still match. The `path` filter of `search` compares in NFC too. `target_path` is the path as stored
+in git.
 
 The shortest path wins for ambiguous wikilinks, which is close to what Obsidian does.
 
@@ -211,8 +217,8 @@ after a given path (keyset pagination), so a cursor stays valid while documents 
 returns the metadata and version. `knowledge` reads the raw bytes from the mirror by version, so the index
 doesn't store each file twice.
 
-`LinkedFrom(path)` returns the documents with a link whose `candidate` is that path, or whose wikilink
-name resolves to it. `knowledge` calls it before a `move` or `delete` commits, while the target still
+`LinkedFrom(path)` returns the documents with a link that resolves to that path, by the same rules as
+`resolved_links`. `knowledge` calls it before a `move` or `delete` commits, while the target still
 exists.
 
 ## The query sandbox
