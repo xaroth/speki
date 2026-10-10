@@ -134,6 +134,9 @@ Details per step:
   doesn't match exactly (loopback: any port) gets an error page. It never redirects, so speki can't be used
   as an open redirector. Other errors (missing PKCE, wrong `resource`) redirect to the client with an OAuth
   error, as the spec says.
+- Client names lose control characters, line separators, bidi controls and tag characters, which could
+  hide or reorder text. Other format characters (zero-width spaces and joiners, the word joiner, soft
+  hyphens) are kept: emoji and some scripts need them, and they can't reorder anything.
 - The consent page shows who is asking (host, or "a program on this computer"), the redirect target, a
   "read and write" / "read only" choice, and a continue button. It sends
   `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'` and loads

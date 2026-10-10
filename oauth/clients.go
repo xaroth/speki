@@ -18,6 +18,8 @@ import (
 	"unicode"
 
 	"github.com/eve-online-tools/speki/seal"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // client is a registered MCP client.
@@ -40,23 +42,31 @@ type clientResolver struct {
 	hosts []string
 	fetch func(ctx context.Context, url string) ([]byte, error)
 
-	fetching chan struct{} // a slot per metadata fetch in progress
+	fetching chan struct{}      // a slot per metadata fetch in progress
+	flight   singleflight.Group // one fetch per URL at a time, shared by its callers
 
-	mu    sync.Mutex
-	cache map[string]cachedClient // metadata documents, by URL
+	mu     sync.Mutex
+	cache  map[string]cachedClient // metadata documents, by URL
+	failed map[string]failedClient // failed fetches, by URL
 }
 
 type cachedClient struct {
 	client  client
-	err     error // a failed fetch, remembered for a while too
 	expires time.Time
 	used    time.Time // for evicting the least recently used
+}
+
+type failedClient struct {
+	err     error
+	expires time.Time
 }
 
 const (
 	metadataCacheSize  = 100
 	metadataCacheTime  = 10 * time.Minute
 	metadataFailedTime = time.Minute
+	metadataRetryTime  = 10 * time.Second
+	metadataSlotWait   = 2 * time.Second
 	metadataFetches    = 4 // at once
 	metadataMaxBytes   = 64 << 10
 )
@@ -68,6 +78,7 @@ func newClientResolver(keys *seal.Keyring, hosts []string) *clientResolver {
 		fetch:    newMetadataFetcher(hosts),
 		fetching: make(chan struct{}, metadataFetches),
 		cache:    make(map[string]cachedClient),
+		failed:   make(map[string]failedClient),
 	}
 }
 
@@ -94,26 +105,58 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 	}
 	now := time.Now()
 	r.mu.Lock()
-	c, ok := r.cache[clientID]
-	if ok && now.Before(c.expires) {
+	if c, ok := r.cache[clientID]; ok && now.Before(c.expires) {
 		c.used = now
 		r.cache[clientID] = c
 		r.mu.Unlock()
-		return c.client, c.err
+		return c.client, nil
+	}
+	if f, ok := r.failed[clientID]; ok && now.Before(f.expires) {
+		r.mu.Unlock()
+		return client{}, f.err
 	}
 	r.mu.Unlock()
 
-	// A fetch is the server's, not the request's: a client that disconnects mustn't fail it.
-	cl, lasting, err := r.fetchClient(context.WithoutCancel(ctx), u, clientID)
-	if err != nil && !lasting {
-		return client{}, err // a network error or a busy fetcher: try again on the next request
-	}
-	expires := now.Add(metadataCacheTime)
+	// Requests for the same document share one fetch. The fetch is the server's, not the request's: a
+	// client that disconnects mustn't fail it for the others.
+	v, err, _ := r.flight.Do(clientID, func() (any, error) {
+		cl, failure, err := r.fetchClient(context.WithoutCancel(ctx), u, clientID)
+		r.remember(clientID, cl, failure, err)
+		return cl, err
+	})
 	if err != nil {
-		expires = now.Add(metadataFailedTime) // a bad document stays bad for a while
+		return client{}, err
 	}
+	return v.(client), nil
+}
+
+// remember caches a fetched client, or a failure for as long as its kind deserves. Failures have their
+// own small cache, so a stream of made-up URLs can't push real clients out.
+func (r *clientResolver) remember(clientID string, cl client, failure failureKind, err error) {
+	now := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err != nil {
+		var ttl time.Duration
+		switch failure {
+		case badDocument:
+			ttl = metadataFailedTime
+		case unreachable:
+			ttl = metadataRetryTime
+		default:
+			return // busy: the next request tries again
+		}
+		if len(r.failed) >= metadataCacheSize {
+			for k, f := range r.failed {
+				if !now.Before(f.expires) || len(r.failed) >= metadataCacheSize {
+					delete(r.failed, k)
+				}
+			}
+		}
+		r.failed[clientID] = failedClient{err: err, expires: now.Add(ttl)}
+		return
+	}
+	delete(r.failed, clientID)
 	if _, ok := r.cache[clientID]; !ok && len(r.cache) >= metadataCacheSize {
 		oldest := ""
 		for k, e := range r.cache {
@@ -123,22 +166,32 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 		}
 		delete(r.cache, oldest)
 	}
-	r.cache[clientID] = cachedClient{client: cl, err: err, expires: expires, used: now}
-	return cl, err
+	r.cache[clientID] = cachedClient{client: cl, expires: now.Add(metadataCacheTime), used: now}
 }
 
-// fetchClient fetches and checks a client metadata document. lasting reports whether a failure is the
-// document's own, which another fetch soon wouldn't change.
-func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID string) (cl client, lasting bool, err error) {
+// failureKind says why a metadata fetch failed, which decides how long the failure is remembered.
+type failureKind int
+
+const (
+	noFailure   failureKind = iota
+	badDocument             // the document itself is wrong: remembered for a minute
+	unreachable             // it couldn't be fetched: remembered for a few seconds
+	busy                    // too many fetches already: not remembered
+)
+
+// fetchClient fetches and checks a client metadata document. It waits a moment for a free fetch slot.
+func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID string) (client, failureKind, error) {
+	wait := time.NewTimer(metadataSlotWait)
+	defer wait.Stop()
 	select {
 	case r.fetching <- struct{}{}:
 		defer func() { <-r.fetching }()
-	default:
-		return client{}, false, fmt.Errorf("%w: too many metadata documents being fetched", errUnknownClient)
+	case <-wait.C:
+		return client{}, busy, fmt.Errorf("%w: too many metadata documents being fetched", errUnknownClient)
 	}
 	raw, err := r.fetch(ctx, clientID)
 	if err != nil {
-		return client{}, false, fmt.Errorf("%w: fetching its metadata document: %w", errUnknownClient, err)
+		return client{}, unreachable, fmt.Errorf("%w: fetching its metadata document: %w", errUnknownClient, err)
 	}
 	var doc struct {
 		ClientID     string   `json:"client_id"`
@@ -147,14 +200,14 @@ func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID s
 	}
 	err = json.Unmarshal(raw, &doc)
 	if err != nil || doc.ClientID != clientID || len(doc.RedirectURIs) == 0 {
-		return client{}, true, fmt.Errorf("%w: invalid metadata document", errUnknownClient)
+		return client{}, badDocument, fmt.Errorf("%w: invalid metadata document", errUnknownClient)
 	}
 	for _, ru := range doc.RedirectURIs {
 		if !isLoopback(ru) && !sameHTTPSHost(ru, u.Hostname()) {
-			return client{}, true, fmt.Errorf("%w: redirect URI %q isn't on %s or loopback", errUnknownClient, ru, u.Hostname())
+			return client{}, badDocument, fmt.Errorf("%w: redirect URI %q isn't on %s or loopback", errUnknownClient, ru, u.Hostname())
 		}
 	}
-	return client{ID: clientID, Name: oneLine(doc.ClientName), Host: u.Hostname(), RedirectURIs: doc.RedirectURIs}, true, nil
+	return client{ID: clientID, Name: oneLine(doc.ClientName), Host: u.Hostname(), RedirectURIs: doc.RedirectURIs}, noFailure, nil
 }
 
 // register handles dynamic client registration. Only local programs register, so only loopback
