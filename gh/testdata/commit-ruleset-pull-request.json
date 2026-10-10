@@ -1,0 +1,1 @@
+{"data":{"createCommitOnBranch":null},"errors":[{"type":"FORBIDDEN","path":["createCommitOnBranch"],"locations":[{"line":1,"column":44}],"message":"Repository rule violations found\n\nChanges must be made through a pull request.\n\n"}]}

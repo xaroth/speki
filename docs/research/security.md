@@ -160,7 +160,8 @@ history. That's a GitHub task, outside speki.
 GitHub push protection applies to REST API writes and returns a 409 when it finds a secret
 ([docs](https://docs.github.com/en/code-security/concepts/secret-security/push-protection-from-the-rest-api)).
 Speki passes that to the agent as `secret_detected` and never calls the bypass endpoint. GitHub doesn't
-document whether push protection also covers the GraphQL commit mutation speki prefers. Not yet verified.
+document whether push protection also covers the GraphQL commit mutation speki uses, but it does: a test
+in October 2026 was refused with `Secret detected in content` (see [git-access.md](git-access.md)).
 
 ## 9. Hostile input to the indexer
 

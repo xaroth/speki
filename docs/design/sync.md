@@ -177,11 +177,8 @@ type CommitRequest struct {
 ```
 
 `gh.Client.Commit` uses GraphQL `createCommitOnBranch`: several changes in one commit (`move` is a delete
-plus an add), checked against `expectedHeadOid`, signed by GitHub. Whether GitHub's push protection
-applies to this mutation isn't documented, and is checked before anything is built on it (see
-[PLAN.md](../PLAN.md)). If it doesn't, `Commit` uses the Git Data API (blobs, tree, commit, non-forced ref
-update) for every write instead. Nothing outside
-`gh` changes either way.
+plus an add), checked against `expectedHeadOid`, signed by GitHub. Push protection and branch rulesets
+apply to it (see [git-access.md](../research/git-access.md)).
 
 Before committing, `knowledge` checks the target path against every path in the mirror's tree at the
 expected head (`Paths`, plus the folders they imply): a path that exists (as any kind of entry), or that differs only in letter case from an existing
@@ -200,13 +197,15 @@ message.
 | GitHub says | `gh` returns | Tool sees |
 |---|---|---|
 | expected head doesn't match | `gh.ErrHeadMoved` | retried up to three times, then `conflict` |
+| push protection found a secret | `*gh.SecretError{Detail}` | `secret_detected`, with GitHub's message |
 | rule violation, protected branch | `gh.ErrBranchRules` | `vault_read_only` |
-| push protection found a secret | `*gh.SecretError{Detail}` | `secret_detected`, with GitHub's description of the secret type |
-| 403 or 404 on the repository | `gh.ErrForbidden` | `no_write_access` |
+| 403 or 404, "not accessible", or `FORBIDDEN`/`NOT_FOUND` for any other reason | `gh.ErrForbidden` | `no_write_access` |
 | secondary rate limit | `*gh.RateLimitError{RetryAfter}` | `rate_limited` |
 
-GitHub documents the GraphQL error types but not their messages, so `gh` matches the messages loosely.
-The exact responses still have to be recorded against a real app (milestone 0, check 1).
+GitHub documents the GraphQL error types but not their messages. Push protection and rulesets both come
+back as type `FORBIDDEN`, the same type as a missing permission, so `gh` matches the messages first and
+only then falls back to the type. The responses recorded from github.com are in `gh/testdata/`. A refused
+commit is logged with GitHub's message, since the agent only gets the code.
 
 When the agent's version doesn't match the index, `knowledge` syncs once before answering `conflict`: the
 agent may have read a version GitHub has and the index doesn't yet. One write runs at a time per vault on

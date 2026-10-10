@@ -531,6 +531,11 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			cerr := commitError(st.vault.Name, err)
 			var kerr *Error
 			if errors.As(cerr, &kerr) || errors.Is(err, gh.ErrRefused) {
+				var secret *gh.SecretError
+				if errors.As(err, &secret) || errors.Is(err, gh.ErrRefused) || errors.Is(err, gh.ErrBranchRules) || errors.Is(err, gh.ErrForbidden) {
+					// The agent gets a code; the operator needs GitHub's own words.
+					b.logger.InfoContext(ctx, "GitHub refused a commit", "vault", v.Name, "err", err)
+				}
 				return Result{}, cerr // GitHub answered: nothing landed
 			}
 			// The answer was lost (a dropped connection, a timeout, a 5xx): GitHub may have made the

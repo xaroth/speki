@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,6 +46,14 @@ func fakeGraphQL(t *testing.T) *Client {
 		fail := func(typ, msg string) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{map[string]any{"type": typ, "message": msg}}})
 		}
+		if name, ok := strings.CutPrefix(in.Head, "recorded/"); ok {
+			body, err := os.ReadFile(filepath.Join("testdata", name+".json"))
+			if err != nil {
+				t.Error(err)
+			}
+			_, _ = w.Write(body)
+			return
+		}
 		switch in.Head {
 		case "good":
 			content, _ := base64.StdEncoding.DecodeString(in.FileChanges.Additions[0].Contents)
@@ -61,6 +71,10 @@ func fakeGraphQL(t *testing.T) *Client {
 			fail("UNPROCESSABLE", "Push cannot contain secrets: GitHub Personal Access Token")
 		case "forbidden":
 			fail("FORBIDDEN", "Resource not accessible by integration")
+		case "forbidden-other":
+			fail("FORBIDDEN", "Something went wrong: you can't do that")
+		case "check-named-secret":
+			fail("FORBIDDEN", "Repository rule violations found\n\nRequired status check \"secret scanning\" is expected.\n\n")
 		case "empty":
 			if a := in.FileChanges.Additions; len(a) != 1 || a[0].Contents != "" {
 				t.Errorf("empty file sent as %+v", a)
@@ -110,10 +124,13 @@ func TestCommit(t *testing.T) {
 	}
 
 	for head, want := range map[string]error{
-		"moved":     ErrHeadMoved,
-		"protected": ErrBranchRules,
-		"forbidden": ErrForbidden,
-		"missing":   ErrForbidden,
+		"moved":           ErrHeadMoved,
+		"protected":       ErrBranchRules,
+		"forbidden":       ErrForbidden,
+		"forbidden-other": ErrForbidden,
+		"missing":         ErrForbidden,
+		// a status check's name is the user's, not GitHub's verdict
+		"check-named-secret": ErrBranchRules,
 		// a path named secrets.md in a stale-head message isn't push protection
 		"stale-secrets": ErrHeadMoved,
 	} {
@@ -122,10 +139,19 @@ func TestCommit(t *testing.T) {
 			t.Errorf("%s: %v, want %v", head, err, want)
 		}
 	}
-	_, err = c.Commit(t.Context(), "ghu_good", req("secret"))
+	// Responses recorded from github.com: all FORBIDDEN, told apart only by their messages.
+	for _, name := range []string{"commit-ruleset-pull-request", "commit-ruleset-status-check"} {
+		_, err := c.Commit(t.Context(), "ghu_good", req("recorded/"+name))
+		if !errors.Is(err, ErrBranchRules) {
+			t.Errorf("%s: %v, want %v", name, err, ErrBranchRules)
+		}
+	}
 	var serr *SecretError
-	if !errors.As(err, &serr) || serr.Detail == "" {
-		t.Errorf("secret: %v", err)
+	for _, head := range []string{"secret", "recorded/commit-secret"} {
+		_, err = c.Commit(t.Context(), "ghu_good", req(head))
+		if !errors.As(err, &serr) || serr.Detail == "" || strings.Contains(serr.Detail, "\n") {
+			t.Errorf("%s: %v", head, err)
+		}
 	}
 	_, err = c.Commit(t.Context(), "ghu_good", req("abuse"))
 	var rerr *RateLimitError
