@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -254,12 +255,44 @@ func TestEscapeMarkers(t *testing.T) {
 		"<Guidelines>":      "&lt;Guidelines>",
 		"<documents are ok": "&lt;documents are ok",
 		"a < b":             "a < b",
+		"<\u00a0/document>": "&lt;\u00a0/document>",
+		"<\u200b/document>": "&lt;\u200b/document>",
+		"<\u2003document>":  "&lt;\u2003document>",
 	} {
 		if got := escapeMarkers(in); got != want {
 			t.Errorf("escapeMarkers(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := oneLine("a\nb\u202ec\x00d"); got != "a bcd" {
+	if got := oneLine("a\nb\u202ec\x00d\u2028e\u2029f</document>"); got != "a bcd e f&lt;/document>" {
 		t.Errorf("oneLine = %q", got)
+	}
+}
+
+func TestHandleErrors(t *testing.T) {
+	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	g := access.NewGrant(access.User{Login: "alice"}, nil, nil)
+	ctx := context.WithValue(t.Context(), grantKey{}, g)
+	run := func(ctx context.Context, err error) error {
+		h := handle(s, "t", func(context.Context, *access.Grant, struct{}) (struct{}, string, error) {
+			return struct{}{}, "", err
+		})
+		_, _, err = h(ctx, nil, struct{}{})
+		return err
+	}
+
+	wrapped := fmt.Errorf("vault x: %w", &knowledge.Error{Code: knowledge.Invalid, Message: "bad"})
+	if err := run(ctx, wrapped); err == nil || err.Error() != "invalid: bad" {
+		t.Errorf("wrapped knowledge error = %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := run(canceled, context.Canceled); err == nil {
+		t.Error("canceled call succeeded")
+	}
+	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "canceled")); got != 1 {
+		t.Errorf("canceled calls = %v", got)
+	}
+	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "unavailable")); got != 0 {
+		t.Errorf("a canceled call counted as unavailable")
 	}
 }

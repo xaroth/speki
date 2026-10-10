@@ -17,6 +17,7 @@ import (
 const (
 	maxReadLines = 1000
 	maxReadBytes = 64 << 10
+	maxOutline   = 200 // headings
 )
 
 // ReadRequest asks for a document, or part of it.
@@ -91,6 +92,10 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 		parsed, err := document.Parse(path, raw)
 		if err == nil {
 			p.Outline = parsed.Headings
+			if len(p.Outline) > maxOutline {
+				p.Outline = p.Outline[:maxOutline]
+				p.Warnings = append(p.Warnings, fmt.Sprintf("the outline shows the first %d headings only", maxOutline))
+			}
 		}
 	}
 	return p, nil

@@ -74,7 +74,7 @@ func (s *Server) addTools() {
 		Name:  "read",
 		Title: "Read a document",
 		Description: "Read a document's raw markdown, frontmatter included, with its version. " +
-			"Long documents come back in parts of at most 1,000 lines or 64 KiB, with an outline of headings and line numbers: use from_line and line_count to read the rest.",
+			"Long documents come back in parts of at most 1,000 lines or 64 KiB, with an outline of headings and line numbers: use from_line and line_count to read the rest. A single line longer than 64 KiB is cut.",
 		Annotations: readOnly(),
 		Meta:        alwaysLoad(),
 	}, handle(s, "read", s.read))
@@ -109,15 +109,18 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 		}
 		out, text, err := f(ctx, g, in)
 		outcome := "ok"
-		if err != nil {
-			var kerr *knowledge.Error
-			if errors.As(err, &kerr) {
-				outcome = string(kerr.Code)
-			} else {
-				outcome = "unavailable"
-				s.logger.ErrorContext(ctx, "tool failed", "tool", name, "login", g.User().Login, "err", err)
-				err = fmt.Errorf("unavailable: something went wrong on speki's side or GitHub's. Try again; if it keeps failing, give the operator request ID %s", telemetry.RequestIDFrom(ctx))
-			}
+		var kerr *knowledge.Error
+		switch {
+		case err == nil:
+		case errors.As(err, &kerr):
+			outcome = string(kerr.Code)
+			err = kerr // without any context wrapped around it
+		case ctx.Err() != nil: // the client went away or gave up
+			outcome = "canceled"
+		default:
+			outcome = string(knowledge.Unavailable)
+			s.logger.ErrorContext(ctx, "tool failed", "tool", name, "login", g.User().Login, "err", err)
+			err = fmt.Errorf("unavailable: something went wrong on speki's side or GitHub's. Try again; if it keeps failing, give the operator request ID %s", telemetry.RequestIDFrom(ctx))
 		}
 		s.metrics.calls.WithLabelValues(name, outcome).Inc()
 		s.metrics.duration.WithLabelValues(name).Observe(time.Since(start).Seconds())

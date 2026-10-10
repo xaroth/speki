@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -410,4 +411,46 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 	// Names are matched exactly.
 	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "OURS/SECRET", Path: "services/esi-proxy.md"})
 	wantCode(t, err, NotFound)
+}
+
+func TestReadEdges(t *testing.T) {
+	f := newFixture(t)
+	headings := strings.Repeat("# H\n", maxOutline+5)
+	straddle := strings.Repeat("y", maxReadBytes-1) + "é\n"
+	f.copies[1] = newCopy(t, map[string]string{
+		"crlf.md":     "# A\r\n\r\nb\r\n",
+		"empty.md":    "",
+		"headings.md": headings,
+		"straddle.md": straddle,
+	})
+	ctx := t.Context()
+
+	p, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "crlf.md", FromLine: 2})
+	if err != nil || p.Content != "\r\nb\r\n" || p.TotalLines != 3 {
+		t.Errorf("CRLF: %q of %d, %v", p.Content, p.TotalLines, err)
+	}
+	p, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "empty.md"})
+	if err != nil || p.Content != "" || p.TotalLines != 0 || p.LineCount != 0 {
+		t.Errorf("empty: %+v, %v", p, err)
+	}
+	p, _ = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "headings.md", LineCount: 1})
+	if len(p.Outline) != maxOutline || len(p.Warnings) != 1 {
+		t.Errorf("outline of %d, warnings %v", len(p.Outline), p.Warnings)
+	}
+	p, _ = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "straddle.md"})
+	if len(p.Content) != maxReadBytes-1 || !utf8.ValidString(p.Content) {
+		t.Errorf("cut inside a character: %d bytes", len(p.Content))
+	}
+}
+
+func TestHistoryEdges(t *testing.T) {
+	f := newFixture(t)
+	f.history.commits = []gh.Commit{{SHA: "c1", Message: "x\n\nSpeki-Client: " + strings.Repeat("é", 100)}}
+	got, err := f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
+	if err != nil || len(got[0].Client) > maxClient || !utf8.ValidString(got[0].Client) {
+		t.Errorf("long client: %q, %v", got[0].Client, err)
+	}
+	f.history.err = fmt.Errorf("commits: %w", gh.ErrUnauthorized)
+	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
+	wantCode(t, err, Unavailable)
 }

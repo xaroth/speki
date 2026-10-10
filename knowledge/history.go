@@ -13,6 +13,10 @@ import (
 // clientTrailer is the commit trailer that names the MCP client a change came from.
 const clientTrailer = "Speki-Client:"
 
+// maxClient is the longest client name history shows, in bytes. Speki writes shorter ones; commits
+// made elsewhere may carry anything.
+const maxClient = 64
+
 // HistoryRequest asks for the latest commits of a vault or one document.
 type HistoryRequest struct {
 	Vault string
@@ -47,6 +51,9 @@ func (b *Base) History(ctx context.Context, g *access.Grant, req HistoryRequest)
 	if errors.Is(err, gh.ErrNotFound) {
 		return nil, noVault(v.Name)
 	}
+	if errors.Is(err, gh.ErrUnauthorized) {
+		return nil, errorf(Unavailable, "GitHub no longer accepts your sign-in. Ask the user to reconnect speki")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +76,7 @@ func client(message string) string {
 	lines := strings.Split(strings.TrimRight(message, "\n"), "\n")
 	for i := len(lines) - 1; i > 0; i-- {
 		if v, ok := strings.CutPrefix(lines[i], clientTrailer); ok {
-			return strings.TrimSpace(v)
+			return cutUTF8(strings.TrimSpace(v), maxClient)
 		}
 		if strings.TrimSpace(lines[i]) == "" {
 			break // trailers are the last paragraph

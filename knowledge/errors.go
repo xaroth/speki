@@ -7,8 +7,9 @@ type Code string
 
 // The codes the read tools return.
 const (
-	NotFound Code = "not_found"
-	Invalid  Code = "invalid"
+	NotFound    Code = "not_found"
+	Invalid     Code = "invalid"
+	Unavailable Code = "unavailable"
 )
 
 // Error is a failure the agent can do something about. Its message says what happened and what to do
