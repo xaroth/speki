@@ -158,6 +158,16 @@ func TestSecretsFromFiles(t *testing.T) {
 		},
 		{name: "missing file", environ: []string{"SPEKI_GITHUB_PRIVATE_KEY_FILE=/nonexistent"}, wantErr: "PRIVATE_KEY_FILE"},
 		{name: "file key that isn't a secret", file: "listen_file: x\n", wantErr: "listen_file"},
+		{
+			name:    "environment over a file in YAML",
+			file:    "github:\n  private_key_file: /run/secrets/not-mounted\n",
+			environ: []string{"SPEKI_GITHUB_PRIVATE_KEY_FILE=" + keyFile},
+		},
+		{
+			name:    "missing file in YAML",
+			file:    "github:\n  app_id: 1\n  private_key_file: /run/secrets/not-mounted\n",
+			wantErr: "line 3: private_key_file",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -180,6 +190,36 @@ func TestSecretsFromFiles(t *testing.T) {
 				t.Errorf("private key = %q, want %q", cfg.GitHub.PrivateKey.Reveal(), want.Reveal())
 			}
 		})
+	}
+}
+
+// Errors name the line as written, whatever secret files the YAML reads.
+func TestConfigErrorLines(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "key.pem")
+	err := os.WriteFile(keyFile, []byte("1\n2\n3\n4\n5\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ file, want string }{
+		{"# comment\n\ngithub:\n  private_key_file: " + keyFile + "\n  app_id: 1\n  typo: x\n", "line 6"},
+		{"github:\n  private_key_file: " + keyFile + "\nsync:\n  poll_interval: soon\n", "line 4"},
+		{"- a\n- b\n", "line 1"},
+		{"base: &b\n  app_id: 1\ngithub: *b\n", "anchors"},
+		{"github:\n  <<: {app_id: 1}\n", "merge keys"},
+		{"github:\n  private_key_file: a\n  private_key_file: b\n", "line 3: private_key_file appears twice"},
+		{"-: x\n", "unknown setting"},
+		{"github: just text\n", "line 1"},
+	} {
+		_, err := loadConfig(writeFile(t, tt.file), nil)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%q: err = %v, want %s", tt.file, err, tt.want)
+		}
+	}
+	for _, empty := range []string{"", "---\n", "# only a comment\n"} {
+		if _, err := loadConfig(writeFile(t, empty), nil); err != nil {
+			t.Errorf("%q: %v", empty, err)
+		}
 	}
 }
 
