@@ -367,6 +367,26 @@ func getStatus(t *testing.T, s *Service) statusPage {
 	return page
 }
 
+// A service runs once: a second Run fails, while the first runs and after it ended, without touching
+// the first.
+func TestRunTwice(t *testing.T) {
+	s := newTestService(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	<-s.started
+	if err := s.Run(t.Context()); err == nil {
+		t.Error("a second Run while the first runs succeeded")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("first Run: %v", err)
+	}
+	if err := s.Run(t.Context()); err == nil {
+		t.Error("Run after the first ended succeeded")
+	}
+}
+
 func TestRunFailsOnBusyAddress(t *testing.T) {
 	busy := httptest.NewServer(http.NotFoundHandler())
 	defer busy.Close()

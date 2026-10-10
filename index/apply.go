@@ -100,7 +100,7 @@ func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
 	}
 	_, err := tx.ExecContext(ctx, "SAVEPOINT change")
 	if err != nil {
-		return err
+		return fmt.Errorf("savepoint: %w", err)
 	}
 	err = replaceDocument(ctx, tx, c.Path, c.Version != "", r)
 	if err != nil {
@@ -109,14 +109,17 @@ func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, "RELEASE change")
-	return err
+	if err != nil {
+		return fmt.Errorf("release savepoint: %w", err)
+	}
+	return nil
 }
 
 // replaceDocument deletes the document at path, and inserts r in its place if add is set.
 func replaceDocument(ctx context.Context, tx *sql.Tx, path string, add bool, r row) error {
 	_, err := tx.ExecContext(ctx, "DELETE FROM documents WHERE path = ?", path)
 	if err != nil {
-		return fmt.Errorf("delete %s: %w", path, err)
+		return fmt.Errorf("delete document: %w", err)
 	}
 	if !add {
 		return nil
@@ -230,7 +233,7 @@ func fill(
 		}
 		insertErr = insert(ctx, tx, r)
 		if insertErr != nil {
-			insertErr = fmt.Errorf("build: insert %s: %w", r.path, insertErr)
+			insertErr = fmt.Errorf("build: %s: %w", r.path, insertErr)
 			stop()
 			continue
 		}
@@ -352,16 +355,16 @@ func insert(ctx context.Context, tx *sql.Tx, r row) error {
 		r.created, r.updated, r.extra, r.headingText, r.body, r.bytes, r.lines, r.version, r.warnings,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("insert document: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return err
+		return fmt.Errorf("document id: %w", err)
 	}
 	for _, t := range r.tagList {
 		_, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO tags (doc_id, tag) VALUES (?, ?)", id, t)
 		if err != nil {
-			return err
+			return fmt.Errorf("insert tag: %w", err)
 		}
 	}
 	for _, l := range r.links {
@@ -370,7 +373,7 @@ func insert(ctx context.Context, tx *sql.Tx, r row) error {
 			id, l.Target, nullIfEmpty(l.Candidate), string(l.Kind), nullIfEmpty(l.Text),
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("insert link: %w", err)
 		}
 	}
 	for _, h := range r.headings {
@@ -379,7 +382,7 @@ func insert(ctx context.Context, tx *sql.Tx, r row) error {
 			id, h.Level, h.Text, h.Line,
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("insert heading: %w", err)
 		}
 	}
 	return nil

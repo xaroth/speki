@@ -134,6 +134,31 @@ func newLibrary(t *testing.T, r *remote, dataDir string) *Library {
 	return l
 }
 
+// clock is a fake clock for the library's backoff and fresh-clone times.
+type clock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+// fakeClock sets l's clock to a fake one. Call it before the library has vaults.
+func fakeClock(l *Library) *clock {
+	c := &clock{t: time.Now()}
+	l.now = c.now
+	return c
+}
+
+func (c *clock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *clock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
 func search(t *testing.T, v *Vault, q string) []string {
 	t.Helper()
 	res, err := index.Search(t.Context(), []index.Source{{Name: "kb", Index: v.Index()}}, q, index.Options{})
@@ -527,23 +552,29 @@ func TestCopyWithoutObjectsCatchesUp(t *testing.T) {
 	}
 }
 
-// A vault that can't be cloned backs off longer with every attempt.
+// A vault that can't be cloned backs off longer with every attempt, up to half an hour.
 func TestFailedVaultBacksOffMore(t *testing.T) {
 	r := newRemote(t)
 	r.push(map[string]string{"a.md": "# A\n"})
 	l := newLibrary(t, r, t.TempDir())
+	clock := fakeClock(l)
 	missing := kb
 	missing.Name = "ours/missing"
 	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{missing}})
 	l.background.Wait()
 	v := l.vaults[missing.RepoID]
-	first := v.retryAt
-	v.mu.Lock()
-	v.retryAt = time.Now() // due again
-	v.mu.Unlock()
-	l.initialise(t.Context(), v)
-	if v.failures != 2 || !v.retryAt.After(first.Add(time.Minute)) {
-		t.Errorf("after two failures: %d failures, retry at %v (first %v)", v.failures, v.retryAt, first)
+	for i, backoff := range []time.Duration{2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
+		if i > 0 {
+			l.initialise(t.Context(), v)
+		}
+		clock.advance(backoff - time.Second)
+		if v.due() {
+			t.Fatalf("due before %v after failure %d", backoff, i+1)
+		}
+		clock.advance(2 * time.Second)
+		if !v.due() {
+			t.Fatalf("not due %v after failure %d", backoff, i+1)
+		}
 	}
 }
 
@@ -634,6 +665,7 @@ func TestFailedVaultRecovers(t *testing.T) {
 	r := newRemote(t)
 	r.push(map[string]string{"a.md": "# A\n"})
 	l := newLibrary(t, r, t.TempDir())
+	clock := fakeClock(l)
 	late := kb
 	late.Name = "ours/late"
 	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{late}})
@@ -646,14 +678,11 @@ func TestFailedVaultRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.setID(late.Name, late.RepoID)
-	v := l.vaults[late.RepoID]
-	v.mu.Lock()
-	v.retryAt = time.Now() // due
-	v.mu.Unlock()
+	clock.advance(time.Hour) // due
 	l.Poll(t.Context())
 	l.WaitIdle()
 	if _, ok := l.Vault(late.RepoID); !ok {
-		t.Errorf("not serving after recovery: %+v", v.Status())
+		t.Errorf("not serving after recovery: %+v", l.vaults[late.RepoID].Status())
 	}
 }
 
@@ -688,6 +717,7 @@ func TestHeadCheckRecovers(t *testing.T) {
 	r := newRemote(t)
 	r.push(map[string]string{"a.md": "# A\n"})
 	l := newLibrary(t, r, t.TempDir())
+	clock := fakeClock(l)
 	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
 	v := serving(t, l)
 	r.mu.Lock()
@@ -697,9 +727,7 @@ func TestHeadCheckRecovers(t *testing.T) {
 	r.mu.Lock()
 	r.headErr = nil
 	r.mu.Unlock()
-	v.mu.Lock()
-	v.retryAt = time.Now()
-	v.mu.Unlock()
+	clock.advance(time.Hour) // due
 	l.Poll(t.Context())
 	if st := v.Status(); st.Error != "" {
 		t.Errorf("error still shown after a good check: %q", st.Error)
@@ -762,6 +790,7 @@ func TestCompactionKeepsTheIndexCommit(t *testing.T) {
 	r := newRemote(t)
 	r.push(map[string]string{"a.md": "# A\n"})
 	l := newLibrary(t, r, t.TempDir())
+	clock := fakeClock(l)
 	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
 	v := serving(t, l)
 	for i := range maxPacks + 1 {
@@ -778,10 +807,10 @@ func TestCompactionKeepsTheIndexCommit(t *testing.T) {
 	if !v.mirror.Has(commit) {
 		t.Fatal("the copy lost the index's commit")
 	}
-	if wait := time.Until(v.freshCloneAt.Add(time.Hour)); wait > movedOnRetry || wait < movedOnRetry-time.Minute {
+	if wait := v.freshCloneAt.Add(time.Hour).Sub(clock.now()); wait != movedOnRetry {
 		t.Errorf("the next fresh clone comes in %v, want %v", wait, movedOnRetry)
 	}
-	v.freshCloneAt = time.Time{}
+	clock.advance(movedOnRetry)
 	if err := l.Sync(t.Context(), v); err != nil {
 		t.Fatal(err)
 	}

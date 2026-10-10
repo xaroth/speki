@@ -476,12 +476,13 @@ func knownAnywhere(ctx context.Context, gens []*generation, word string, asPrefi
 		for _, g := range gens {
 			var one int
 			err := g.reader.QueryRowContext(ctx, q.q, q.args...).Scan(&one)
-			if err == nil {
-				return true, nil
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
 			}
-			if !errors.Is(err, sql.ErrNoRows) {
+			if err != nil {
 				return false, err
 			}
+			return true, nil
 		}
 	}
 	return false, nil

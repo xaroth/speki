@@ -63,6 +63,7 @@ type Status struct {
 // Vault is one vault's local copy: a shallow git copy and a search index.
 type Vault struct {
 	dir string
+	now func() time.Time
 
 	mu       sync.Mutex // guards the fields up to syncMu
 	info     vault.Vault
@@ -82,9 +83,10 @@ type Vault struct {
 	index        *index.Index // set once by open, then never changed
 }
 
-func newVault(info vault.Vault, dir string) *Vault {
+func newVault(info vault.Vault, dir string, now func() time.Time) *Vault {
 	return &Vault{
 		dir:    dir,
+		now:    now,
 		info:   info,
 		status: Status{RepoID: info.RepoID, Name: info.Name, State: StateBuilding},
 		syncMu: make(syncLock, 1),
@@ -220,14 +222,14 @@ func (v *Vault) recordLocked(err error) {
 	v.status.Error = err.Error()
 	v.failures++
 	backoff := min(time.Minute<<min(v.failures, 5), 30*time.Minute)
-	v.retryAt = time.Now().Add(backoff)
+	v.retryAt = v.now().Add(backoff)
 }
 
 // due reports whether a failed vault or a failing sync may be tried again.
 func (v *Vault) due() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return time.Now().After(v.retryAt)
+	return v.now().After(v.retryAt)
 }
 
 // errRemoved is returned by work on a vault that was removed meanwhile.
@@ -316,7 +318,7 @@ func (l *Library) Sync(ctx context.Context, v *Vault) error {
 func (l *Library) SyncChanges(ctx context.Context, v *Vault) error {
 	err := v.syncMu.LockContext(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("wait for the vault's sync: %w", err)
 	}
 	defer v.syncMu.Unlock()
 	return l.syncLocked(ctx, v, true)
@@ -405,7 +407,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 	if err != nil {
 		return fmt.Errorf("index stats: %w", err)
 	}
-	now := time.Now()
+	now := v.now()
 	v.mu.Lock()
 	v.status.Commit = head
 	v.status.Documents = stats.Documents
@@ -478,14 +480,14 @@ var errMovedOn = errors.New("the branch moved on during the clone")
 // compactLocked replaces a copy with too many pack files by a fresh clone, at most once an hour, or ten
 // minutes after a commit landing during the clone spoiled the last try. Called with syncMu held.
 func (l *Library) compactLocked(ctx context.Context, v *Vault) {
-	if v.mirror.Packs() <= maxPacks || time.Since(v.freshCloneAt) < time.Hour {
+	if v.mirror.Packs() <= maxPacks || v.now().Sub(v.freshCloneAt) < time.Hour {
 		return
 	}
-	v.freshCloneAt = time.Now()
+	v.freshCloneAt = v.now()
 	err := l.freshClone(ctx, v, v.index.Commit())
 	switch {
 	case errors.Is(err, errMovedOn):
-		v.freshCloneAt = time.Now().Add(movedOnRetry - time.Hour)
+		v.freshCloneAt = v.now().Add(movedOnRetry - time.Hour)
 		l.logger.Info("fresh clone missed the index's commit; trying again later", "vault", v.Info().Name)
 	case err != nil:
 		l.logger.Warn("fresh clone failed", "vault", v.Info().Name, "err", err)

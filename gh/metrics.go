@@ -36,6 +36,7 @@ var githubRemaining = promauto.NewGaugeVec(prometheus.GaugeOpts{
 // and the gauge are process-wide; the budget bookkeeping is per client, and a process has one client.
 type metrics struct {
 	logger *slog.Logger
+	now    func() time.Time
 
 	mu       sync.Mutex
 	installs map[int64]reading     // the latest reading per installation
@@ -56,6 +57,7 @@ type warnKey struct {
 func newMetrics(logger *slog.Logger) *metrics {
 	return &metrics{
 		logger:   logger,
+		now:      time.Now,
 		installs: make(map[int64]reading),
 		warned:   make(map[warnKey]time.Time),
 	}
@@ -128,7 +130,7 @@ func (m *metrics) record(kind string, installation int64, h http.Header) {
 	if err != nil {
 		return
 	}
-	now := time.Now()
+	now := m.now()
 	var reset time.Time
 	if s, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil {
 		reset = time.Unix(s, 0)
