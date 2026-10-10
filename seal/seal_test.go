@@ -122,20 +122,21 @@ func TestRotation(t *testing.T) {
 func TestParseKeyringRejects(t *testing.T) {
 	good := secret()
 	short := base64.StdEncoding.EncodeToString([]byte("too short"))
-	tests := map[string]string{
-		"no primary":     fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n", good),
-		"two primaries":  fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n  - id: b\n    secret: %s\n    primary: true\n", good, good),
-		"short key":      fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n", short),
-		"duplicate id":   fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n  - id: a\n    secret: %s\n", good, good),
-		"not base64":     "keys:\n  - id: a\n    secret: '!!'\n    primary: true\n",
-		"dot in id":      fmt.Sprintf("keys:\n  - id: a.b\n    secret: %s\n    primary: true\n", good),
-		"not yaml":       "keys: [",
-		"no keys at all": "",
+	tests := []struct{ name, raw, want string }{
+		{"no primary", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n", good), "no primary key"},
+		{"two primaries", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n  - id: b\n    secret: %s\n    primary: true\n", good, good), "more than one primary"},
+		{"short key", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n", short), "at least 32"},
+		{"duplicate id", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n  - id: a\n    secret: %s\n", good, good), "duplicate key id"},
+		{"not base64", "keys:\n  - id: a\n    secret: '!!'\n    primary: true\n", "isn't base64"},
+		{"dot in id", fmt.Sprintf("keys:\n  - id: a.b\n    secret: %s\n    primary: true\n", good), "no dots"},
+		{"not yaml", "keys: [", "key file:"},
+		{"no keys at all", "", "no primary key"},
 	}
-	for name, raw := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, err := ParseKeyring([]byte(raw)); err == nil {
-				t.Error("accepted")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseKeyring([]byte(tt.raw))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tt.want)
 			}
 		})
 	}

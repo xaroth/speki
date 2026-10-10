@@ -12,17 +12,17 @@ import (
 	"github.com/google/go-github/v88/github"
 )
 
-// Why GitHub refused a commit.
-var (
-	// ErrHeadMoved means the branch no longer points at the expected head.
-	ErrHeadMoved = errors.New("the branch moved")
-	// ErrBranchRules means branch protection or a ruleset doesn't allow direct commits.
-	ErrBranchRules = errors.New("the branch's rules don't allow this commit")
-	// ErrForbidden means the user can't push to the repository.
-	ErrForbidden = errors.New("no permission to push")
-	// ErrRefused means GitHub answered and refused the commit, for a reason none of the others name.
-	ErrRefused = errors.New("GitHub refused the commit")
-)
+// ErrHeadMoved means the branch no longer points at the expected head.
+var ErrHeadMoved = errors.New("the branch moved")
+
+// ErrBranchRules means branch protection or a ruleset doesn't allow direct commits.
+var ErrBranchRules = errors.New("the branch's rules don't allow this commit")
+
+// ErrForbidden means the user can't push to the repository.
+var ErrForbidden = errors.New("no permission to push")
+
+// ErrRefused means GitHub answered and refused the commit, for a reason none of the others name.
+var ErrRefused = errors.New("GitHub refused the commit")
 
 // SecretError means GitHub's push protection found a secret in the content.
 type SecretError struct {

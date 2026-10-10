@@ -57,7 +57,7 @@ type Registry struct {
 
 	round sync.Mutex // one discovery round at a time
 	// checked holds, per repository, what it looked like when its speki.yaml was last read. Only
-	// Discover uses it, under round.
+	// discover uses it, under round.
 	checked map[int64]checkedRepo
 
 	mu       sync.RWMutex // guards vaults and problems, which readers use
@@ -117,7 +117,7 @@ func (r *Registry) Run(ctx context.Context, interval time.Duration, onRound func
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		changes, err := r.Discover(ctx)
+		changes, err := r.discover(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -130,11 +130,11 @@ func (r *Registry) Run(ctx context.Context, interval time.Duration, onRound func
 	}
 }
 
-// Discover runs one discovery round. A vault is only removed on a definite answer: its installation or
+// discover runs one discovery round. A vault is only removed on a definite answer: its installation or
 // repository is gone, it no longer has speki.yaml, or its account isn't allowed. A failed request changes
 // nothing about the vaults it concerns. The returned error describes failed requests; Changes is valid
 // either way.
-func (r *Registry) Discover(ctx context.Context) (Changes, error) {
+func (r *Registry) discover(ctx context.Context) (Changes, error) {
 	r.round.Lock()
 	defer r.round.Unlock()
 

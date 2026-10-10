@@ -243,7 +243,7 @@ func (v *Vault) open(ctx context.Context, l *Library) error {
 	info := v.Info()
 	err := os.MkdirAll(v.dir, 0o755)
 	if err != nil {
-		return err
+		return fmt.Errorf("create vault folder: %w", err)
 	}
 	err = v.writeInfo()
 	if err != nil {
@@ -252,7 +252,7 @@ func (v *Vault) open(ctx context.Context, l *Library) error {
 	if v.index == nil {
 		v.index, err = index.Open(ctx, filepath.Join(v.dir, indexDir), l.logger.With("vault", info.Name))
 		if err != nil {
-			return err
+			return fmt.Errorf("open index: %w", err)
 		}
 	}
 	if v.mirror != nil {
@@ -260,7 +260,7 @@ func (v *Vault) open(ctx context.Context, l *Library) error {
 	}
 	m, err := l.openMirror(ctx, v, filepath.Join(v.dir, gitDir))
 	if err != nil {
-		return err
+		return fmt.Errorf("open git copy: %w", err)
 	}
 	v.gitMu.Lock()
 	v.mirror = m
@@ -350,7 +350,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 	info := v.Info()
 	id, err := l.github.RepositoryID(ctx, info.InstallationID, info.Name)
 	if err != nil {
-		return err
+		return fmt.Errorf("check repository ID: %w", err)
 	}
 	if id != info.RepoID {
 		return fmt.Errorf("%s now names repository %d, not this vault's %d: waiting for discovery to find the new name", info.Name, id, info.RepoID)
@@ -404,7 +404,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 
 	stats, err := v.index.Stats(context.WithoutCancel(ctx)) // the index caught up; say so even if ctx just ran out
 	if err != nil {
-		return err
+		return fmt.Errorf("index stats: %w", err)
 	}
 	now := time.Now()
 	v.mu.Lock()
@@ -430,7 +430,7 @@ func (l *Library) apply(ctx context.Context, v *Vault, from, to string) error {
 	defer v.gitMu.RUnlock()
 	diff, err := v.mirror.Diff(from, to)
 	if err != nil {
-		return err
+		return err // gitsync says which commits
 	}
 	changes := make([]index.Change, 0, len(diff))
 	for _, d := range diff {
@@ -438,7 +438,7 @@ func (l *Library) apply(ctx context.Context, v *Vault, from, to string) error {
 		if d.Blob != "" {
 			c.Content, err = v.mirror.Blob(d.Blob)
 			if err != nil {
-				return err
+				return fmt.Errorf("read %s: %w", d.Path, err)
 			}
 		}
 		changes = append(changes, c)
@@ -451,7 +451,7 @@ func (l *Library) build(ctx context.Context, v *Vault, commit string) error {
 	defer v.gitMu.RUnlock()
 	files, err := v.mirror.Files(commit)
 	if err != nil {
-		return err
+		return fmt.Errorf("list files at %s: %w", commit, err)
 	}
 	ctx, touch, stop := stallContext(ctx, l.opts.StallTimeout)
 	defer stop()
@@ -505,7 +505,7 @@ func (l *Library) freshClone(ctx context.Context, v *Vault, keep string) error {
 	m, err := l.openMirror(ctx, v, next)
 	if err != nil {
 		_ = os.RemoveAll(next)
-		return err
+		return fmt.Errorf("fresh clone: %w", err)
 	}
 	if keep != "" && !m.Has(keep) {
 		_ = os.RemoveAll(next)

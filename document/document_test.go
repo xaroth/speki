@@ -180,13 +180,13 @@ func TestParseUnusable(t *testing.T) {
 		raw  []byte
 	}{
 		{"not UTF-8", []byte("title \xff\xfe")},
-		{"huge frontmatter", []byte("---\nx: " + strings.Repeat("a", MaxFrontmatterSize) + "\n---\n")},
+		{"huge frontmatter", []byte("---\nx: " + strings.Repeat("a", maxFrontmatterSize) + "\n---\n")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Parse("x.md", tt.raw)
-			if !errors.Is(err, ErrUnusable) {
-				t.Errorf("err = %v, want ErrUnusable", err)
+			if !errors.Is(err, errUnusable) {
+				t.Errorf("err = %v, want errUnusable", err)
 			}
 		})
 	}

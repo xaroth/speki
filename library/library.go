@@ -23,6 +23,7 @@ import (
 	"github.com/eve-online-tools/speki/vault"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/semaphore"
 )
 
 // github is what the library needs from GitHub.
@@ -54,7 +55,7 @@ type Library struct {
 	mu     sync.RWMutex
 	vaults map[int64]*Vault
 
-	opening    chan struct{} // limits concurrent clones and builds
+	opening    *semaphore.Weighted // limits concurrent clones and builds
 	background sync.WaitGroup
 	closed     atomic.Bool
 	syncs      *prometheus.CounterVec
@@ -73,7 +74,7 @@ func New(github github, opts Options, logger *slog.Logger) *Library {
 		opts:    opts,
 		logger:  logger,
 		vaults:  make(map[int64]*Vault),
-		opening: make(chan struct{}, opts.Opening),
+		opening: semaphore.NewWeighted(int64(opts.Opening)),
 		syncs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "speki_sync_total",
 			Help: "Vault syncs, by result: unchanged, applied, rebuilt, deferred (a rebuild left to the poller) or failed.",
@@ -244,12 +245,10 @@ func (l *Library) vaultDir(id int64) string {
 
 // initialise clones and indexes a new vault, a few at a time.
 func (l *Library) initialise(ctx context.Context, v *Vault) {
-	select {
-	case l.opening <- struct{}{}:
-		defer func() { <-l.opening }()
-	case <-ctx.Done():
+	if l.opening.Acquire(ctx, 1) != nil {
 		return
 	}
+	defer l.opening.Release(1)
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
 	if v.removed {
@@ -279,12 +278,10 @@ func (l *Library) reclone(ctx context.Context, v *Vault) {
 		return
 	}
 	// The opening slot before the sync lock, as everywhere: the other order could deadlock.
-	select {
-	case l.opening <- struct{}{}:
-		defer func() { <-l.opening }()
-	case <-ctx.Done():
+	if l.opening.Acquire(ctx, 1) != nil {
 		return
 	}
+	defer l.opening.Release(1)
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
 	if v.removed {

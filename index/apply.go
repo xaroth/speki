@@ -104,10 +104,7 @@ func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "DELETE FROM documents WHERE path = ?", c.Path)
-	if err == nil && c.Version != "" {
-		err = insert(ctx, tx, r)
-	}
+	err = replaceDocument(ctx, tx, c.Path, c.Version != "", r)
 	if err != nil {
 		_, _ = tx.ExecContext(ctx, "ROLLBACK TO change")
 		_, _ = tx.ExecContext(ctx, "RELEASE change")
@@ -115,6 +112,18 @@ func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
 	}
 	_, err = tx.ExecContext(ctx, "RELEASE change")
 	return err
+}
+
+// replaceDocument deletes the document at path, and inserts r in its place if add is set.
+func replaceDocument(ctx context.Context, tx *sql.Tx, path string, add bool, r row) error {
+	_, err := tx.ExecContext(ctx, "DELETE FROM documents WHERE path = ?", path)
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", path, err)
+	}
+	if !add {
+		return nil
+	}
+	return insert(ctx, tx, r)
 }
 
 // Build creates a new generation from every file at commit and makes it current. Files are parsed in
@@ -133,7 +142,7 @@ func (x *Index) Build(ctx context.Context, commit string, files iter.Seq2[Change
 	removeGeneration(x.dir, n) // leftovers of an interrupted build
 	g, err := connect(ctx, x.dir, n)
 	if err != nil {
-		return err
+		return fmt.Errorf("build: new generation %d: %w", n, err)
 	}
 	count, err := fill(ctx, g.writer, commit, files, x.logger)
 	if err != nil {
@@ -141,7 +150,10 @@ func (x *Index) Build(ctx context.Context, commit string, files iter.Seq2[Change
 		return err
 	}
 	g.commit.Store(commit)
-	x.swap(g)
+	err = x.swap(g)
+	if err != nil {
+		return err
+	}
 	x.reloadVocabulary()
 	x.logger.Info("index built", "commit", commit, "documents", count, "took", time.Since(start).Round(time.Millisecond))
 	return nil
@@ -158,16 +170,16 @@ func fill(
 ) (int, error) {
 	_, err := db.ExecContext(ctx, "PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("build: turn the journal off: %w", err)
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("build: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	err = initSchema(ctx, tx)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("build: create the schema: %w", err)
 	}
 
 	readCtx, stop := context.WithCancel(ctx) // stops reading and parsing once an insert fails
@@ -242,7 +254,7 @@ func fill(
 	// recorded commit is discarded by Open.
 	err = recordCommit(ctx, tx, commit)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("build: record the commit: %w", err)
 	}
 	err = tx.Commit()
 	if err != nil {

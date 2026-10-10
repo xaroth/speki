@@ -44,11 +44,9 @@ func (f *fakeGitHub) UserRepositories(_ context.Context, token string) ([]gh.Rep
 	return f.repos[token], nil
 }
 
-var (
-	kb    = vault.Vault{RepoID: 100, Name: "ours/kb"}
-	infra = vault.Vault{RepoID: 101, Name: "ours/infra"}
-	other = vault.Vault{RepoID: 102, Name: "ours/other"}
-)
+var kb = vault.Vault{RepoID: 100, Name: "ours/kb"}
+var infra = vault.Vault{RepoID: 101, Name: "ours/infra"}
+var other = vault.Vault{RepoID: 102, Name: "ours/other"}
 
 func setup() (*fakeGitHub, *Resolver) {
 	f := &fakeGitHub{

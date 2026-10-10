@@ -17,7 +17,7 @@ import (
 // Limits on what speki accepts.
 const (
 	MaxSize            = 1 << 20  // a whole document
-	MaxFrontmatterSize = 64 << 10 // the frontmatter block
+	maxFrontmatterSize = 64 << 10 // the frontmatter block
 )
 
 // Status says whether a document is current.
@@ -87,8 +87,8 @@ type Document struct {
 	titleFromName bool
 }
 
-// ErrUnusable is returned by Parse for files speki can't index at all.
-var ErrUnusable = errors.New("unusable document")
+// errUnusable is returned by Parse for files speki can't index at all.
+var errUnusable = errors.New("unusable document")
 
 // ErrTooLarge is returned by Check and Touch for a document or frontmatter over its size limit.
 var ErrTooLarge = errors.New("too large")
@@ -100,7 +100,7 @@ var ErrUnstable = errors.New("frontmatter comments can't be kept in place")
 // frontmatter block is too large. Every other problem ends up in Warnings.
 func Parse(docPath string, raw []byte) (*Document, error) {
 	if !utf8.Valid(raw) {
-		return nil, fmt.Errorf("%w: not UTF-8", ErrUnusable)
+		return nil, fmt.Errorf("%w: not UTF-8", errUnusable)
 	}
 	front, bodyOff, err := splitFrontmatter(raw)
 	if err != nil {

@@ -95,8 +95,8 @@ func New(cfg Config, keys *seal.Keyring, github githubAPI, st stateStore, logger
 // Collector returns the sign-in metrics, for registering.
 func (s *Server) Collector() prometheus.Collector { return s.signIns }
 
-// Resource is the URL of the MCP endpoint, which tokens are issued for.
-func (s *Server) Resource() string { return s.cfg.Issuer + "/mcp" }
+// resource is the URL of the MCP endpoint, which tokens are issued for.
+func (s *Server) resource() string { return s.cfg.Issuer + "/mcp" }
 
 func (s *Server) resourceMetadataURL() string {
 	return s.cfg.Issuer + "/.well-known/oauth-protected-resource/mcp"
@@ -108,7 +108,7 @@ func (s *Server) callbackURL() string { return s.cfg.Issuer + "/oauth/github/cal
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	prm := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
-		Resource:               s.Resource(),
+		Resource:               s.resource(),
 		AuthorizationServers:   []string{s.cfg.Issuer},
 		ScopesSupported:        []string{ScopeRead, ScopeWrite},
 		BearerMethodsSupported: []string{"header"},

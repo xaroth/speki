@@ -35,12 +35,15 @@ const (
 	sandboxConns    = 4
 )
 
-// Why a query failed. Each wraps a message that is safe to show the agent.
-var (
-	ErrBadQuery      = errors.New("bad query")
-	ErrQueryTimeout  = errors.New("query timed out")
-	ErrQueryTooLarge = errors.New("query needs too much")
-)
+// ErrBadQuery means the query isn't valid or isn't allowed. Like the other query errors, it wraps a
+// message that is safe to show the agent.
+var ErrBadQuery = errors.New("bad query")
+
+// ErrQueryTimeout means the query ran longer than allowed.
+var ErrQueryTimeout = errors.New("query timed out")
+
+// ErrQueryTooLarge means the query needed more memory or produced more than allowed.
+var ErrQueryTooLarge = errors.New("query needs too much")
 
 // Rows is a query's result.
 type Rows struct {

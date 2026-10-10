@@ -258,11 +258,9 @@ func (v *fakeVaults) Sync(_ context.Context, id int64) error {
 	return nil
 }
 
-var (
-	ours   = vault.Vault{RepoID: 1, Name: "ours/kb", DefaultBranch: "main", Config: vault.Config{Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service."}}
-	shared = vault.Vault{RepoID: 2, Name: "ours/shared", DefaultBranch: "main"}
-	secret = vault.Vault{RepoID: 3, Name: "ours/secret", DefaultBranch: "main"}
-)
+var ours = vault.Vault{RepoID: 1, Name: "ours/kb", DefaultBranch: "main", Config: vault.Config{Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service."}}
+var shared = vault.Vault{RepoID: 2, Name: "ours/shared", DefaultBranch: "main"}
+var secret = vault.Vault{RepoID: 3, Name: "ours/secret", DefaultBranch: "main"}
 
 // fixture serves three vaults. The test user may read ours and shared, and write ours; secret holds a
 // document only others may read.

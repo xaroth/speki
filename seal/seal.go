@@ -33,11 +33,11 @@ const (
 	Cache       Purpose = "cache" // values parked in a shared store
 )
 
-// Errors from Open.
-var (
-	ErrInvalid = errors.New("invalid sealed value")
-	ErrExpired = errors.New("sealed value expired")
-)
+// ErrInvalid is returned by Open for a value that isn't a sealed value of that purpose from this keyring.
+var ErrInvalid = errors.New("invalid sealed value")
+
+// ErrExpired is returned by Open for a sealed value past its expiry.
+var ErrExpired = errors.New("sealed value expired")
 
 // clockSkew is how far past its expiry a value is still accepted, for instances whose clocks drift.
 const clockSkew = time.Minute

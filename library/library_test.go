@@ -815,3 +815,16 @@ func TestCompactionKeepsTheIndexCommit(t *testing.T) {
 		t.Error("index behind after the sync")
 	}
 }
+
+// stop can be called more than once, and returns after the watcher has ended.
+func TestStallContextStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, touch, stop := stallContext(t.Context(), time.Nanosecond)
+		touch()
+		stop()
+		stop()
+		if ctx.Err() == nil {
+			t.Error("the context is still live after stop")
+		}
+	})
+}

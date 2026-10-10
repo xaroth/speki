@@ -14,16 +14,15 @@ import (
 	"github.com/google/go-github/v88/github"
 )
 
-// Errors from the user side of GitHub.
-var (
-	// ErrUnauthorized means GitHub rejected the user's token: it expired or was revoked.
-	ErrUnauthorized = errors.New("GitHub rejected the user's token")
-	// ErrBadGrant means GitHub refused a code or refresh token: used, expired or revoked.
-	ErrBadGrant = errors.New("GitHub refused the code or refresh token")
-	// ErrAppConfig means GitHub refused the app's own OAuth settings: the client ID or secret, or the
-	// callback URL. Every sign-in and refresh fails until the operator fixes them.
-	ErrAppConfig = errors.New("GitHub refused the app's OAuth settings: check github.client_id, github.client_secret and the app's callback URL")
-)
+// ErrUnauthorized means GitHub rejected the user's token: it expired or was revoked.
+var ErrUnauthorized = errors.New("GitHub rejected the user's token")
+
+// ErrBadGrant means GitHub refused a code or refresh token: used, expired or revoked.
+var ErrBadGrant = errors.New("GitHub refused the code or refresh token")
+
+// ErrAppConfig means GitHub refused the app's own OAuth settings: the client ID or secret, or the
+// callback URL. Every sign-in and refresh fails until the operator fixes them.
+var ErrAppConfig = errors.New("GitHub refused the app's OAuth settings: check github.client_id, github.client_secret and the app's callback URL")
 
 // DefaultOAuthURL is where GitHub's OAuth endpoints live.
 const DefaultOAuthURL = "https://github.com"

@@ -68,7 +68,7 @@ func (s *Server) verify(_ context.Context, token string, _ *http.Request) (*auth
 	if err != nil {
 		return nil, fmt.Errorf("%w: not a speki token", auth.ErrInvalidToken)
 	}
-	if a.Audience != s.Resource() {
+	if a.Audience != s.resource() {
 		return nil, fmt.Errorf("%w: issued for another server", auth.ErrInvalidToken)
 	}
 	return &auth.TokenInfo{

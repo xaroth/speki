@@ -88,14 +88,14 @@ func (s *Server) codeGrant(w http.ResponseWriter, r *http.Request) {
 		// Required when authorize was given one (RFC 6749 4.1.3), and must match whenever it's sent.
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri is missing or doesn't match")
 		return
-	case c.Resource != s.Resource():
+	case c.Resource != s.resource():
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the code was issued for another server")
 		return
 	case subtle.ConstantTimeCompare([]byte(challenge(f.Get("code_verifier"))), []byte(c.CodeChallenge)) != 1:
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the PKCE verifier doesn't match")
 		return
-	case f.Get("resource") != "" && f.Get("resource") != s.Resource():
-		oauthError(w, http.StatusBadRequest, "invalid_target", "tokens are only issued for "+s.Resource())
+	case f.Get("resource") != "" && f.Get("resource") != s.resource():
+		oauthError(w, http.StatusBadRequest, "invalid_target", "tokens are only issued for "+s.resource())
 		return
 	}
 	fresh, err := s.store.SetNX(r.Context(), "code:"+c.ID, []byte{1}, usedCodeMemory)
@@ -131,7 +131,7 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case rv.Audience != s.Resource():
+	case rv.Audience != s.resource():
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the refresh token was issued for another server")
 		return
 	case f.Get("client_id") != rv.ClientID:
@@ -315,7 +315,7 @@ func (s *Server) issue(
 		Token:    tokens.AccessToken,
 		Scopes:   scopes,
 		Client:   client,
-		Audience: s.Resource(),
+		Audience: s.resource(),
 	}, accessExpires)
 	if err != nil {
 		return tokenResponse{}, err
@@ -327,7 +327,7 @@ func (s *Server) issue(
 		Scopes:   scopes,
 		ClientID: clientID,
 		Client:   client,
-		Audience: s.Resource(),
+		Audience: s.resource(),
 		SignedIn: signedIn,
 	}, minTime(signedIn.Add(signInLifetime), tokens.RefreshExpires))
 	if err != nil {
