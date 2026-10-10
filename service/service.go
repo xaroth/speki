@@ -64,6 +64,12 @@ type Service struct {
 	shutdownTimeout time.Duration
 }
 
+// closeComponents closes the library, the sandbox and the store.
+func (s *Service) closeComponents() error {
+	s.library.Close()
+	return errors.Join(s.sandbox.Close(), s.store.Close())
+}
+
 // markReady marks the service ready, unless it's already stopping.
 func (s *Service) markReady() {
 	s.readyMu.Lock()
@@ -140,6 +146,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 
 	sandbox, err := index.NewSandbox()
 	if err != nil {
+		_ = shared.Close()
 		return nil, err
 	}
 	kb := knowledge.New(libraryVaults{lib}, github, sandbox, shared, logger)
@@ -182,11 +189,13 @@ func (s *Service) Run(ctx context.Context) error {
 	var lc net.ListenConfig
 	public, err := lc.Listen(ctx, "tcp", s.cfg.Listen)
 	if err != nil {
+		_ = s.closeComponents()
 		return fmt.Errorf("listen: %w", err)
 	}
 	internal, err := lc.Listen(ctx, "tcp", s.cfg.MetricsListen)
 	if err != nil {
 		_ = public.Close()
+		_ = s.closeComponents()
 		return fmt.Errorf("metrics_listen: %w", err)
 	}
 	s.publicAddr = public.Addr()
@@ -243,8 +252,7 @@ func (s *Service) Run(ctx context.Context) error {
 				s.logger.Warn("stopping a server failed", "err", err)
 			}
 		}
-		s.library.Close()
-		return errors.Join(s.sandbox.Close(), s.store.Close())
+		return s.closeComponents()
 	})
 
 	err = g.Wait()
@@ -334,7 +342,7 @@ func (s *Service) followNotices(ctx context.Context) {
 		state[repoID] = "running"
 		syncs.Go(func() {
 			for {
-				err := s.library.Sync(ctx, v)
+				err := s.library.SyncAfterNotice(ctx, v)
 				if err != nil && ctx.Err() == nil {
 					s.logger.Warn("sync after a change notice failed", "vault", v.Info().Name, "err", err)
 				}
