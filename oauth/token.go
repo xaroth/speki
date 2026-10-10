@@ -320,14 +320,20 @@ func (s *Server) issue(
 	}, nil
 }
 
-// narrow returns the scopes asked for, which must be a subset of granted and include speki:read. An empty
-// request keeps all.
+// narrow returns the scopes asked for, which must be a subset of granted; speki:read is always kept.
+// Scopes speki doesn't know are ignored, as at authorize. A request naming none of speki's keeps all.
 func narrow(granted []string, requested string) ([]string, bool) {
-	if strings.TrimSpace(requested) == "" {
+	var asked []string
+	for _, s := range strings.Fields(requested) {
+		if s == ScopeRead || s == ScopeWrite {
+			asked = append(asked, s)
+		}
+	}
+	if len(asked) == 0 {
 		return granted, true
 	}
 	out := []string{ScopeRead}
-	for _, s := range strings.Fields(requested) {
+	for _, s := range asked {
 		if !slices.Contains(granted, s) {
 			return nil, false
 		}

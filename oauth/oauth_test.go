@@ -14,8 +14,10 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -340,9 +342,12 @@ func TestConcurrentRefreshesBothSucceed(t *testing.T) {
 		resp, rec := h.tokens(form)
 		results <- result{resp, rec.Code}
 	}
+	contended := make(chan struct{}, 10)
+	h.s.store = watchedStore{Memory: store.NewMemory(), contended: contended}
 	go refresh()
 	<-h.github.entered // the first holds the lock and waits on GitHub
-	go refresh()       // so the second has to wait for its result
+	go refresh()
+	<-contended // the second found the lock taken, and waits for the first's result
 	close(h.github.slow)
 	a, b := <-results, <-results
 	if a.code != http.StatusOK || b.code != http.StatusOK || a.resp.AccessToken != b.resp.AccessToken {
@@ -821,11 +826,11 @@ func TestExpiredValues(t *testing.T) {
 	}
 }
 
-// A fetch that fails for reasons outside the document, such as a client that hung up, isn't remembered:
-// the next sign-in fetches again.
-func TestMetadataNetworkFailuresAreNotCached(t *testing.T) {
+// A client that hangs up doesn't fail the fetch for others, and a network failure is only remembered for
+// a few seconds.
+func TestMetadataFetchFailures(t *testing.T) {
 	h := newHarness(t)
-	fail := true
+	fail := false
 	h.s.clients.fetch = func(ctx context.Context, u string) ([]byte, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -839,11 +844,60 @@ func TestMetadataNetworkFailuresAreNotCached(t *testing.T) {
 	cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/oauth/authorize?client_id=https://claude.ai/c.json", nil)
 	h.handler.ServeHTTP(httptest.NewRecorder(), req)
-	h.authorizeTo("https://claude.ai/c.json", nil) // connection reset
-	fail = false
 	page := h.do(http.MethodGet, authorizeURL("https://claude.ai/c.json", "https://claude.ai/cb", nil), nil)
 	if page.Code != http.StatusOK {
-		t.Errorf("after a network failure: %d", page.Code)
+		t.Errorf("after a cancelled request: %d", page.Code)
+	}
+
+	fail = true
+	h.authorizeTo("https://claude.ai/d.json", nil)
+	f, ok := h.s.clients.failed["https://claude.ai/d.json"]
+	if !ok || time.Until(f.expires) > metadataRetryTime {
+		t.Errorf("network failure remembered until %v", f.expires)
+	}
+}
+
+// Requests for one document share a fetch, and wait briefly for a free slot instead of failing.
+func TestMetadataFetchesAreShared(t *testing.T) {
+	h := newHarness(t)
+	release := make(chan struct{})
+	var fetches atomic.Int32
+	h.s.clients.fetch = func(_ context.Context, u string) ([]byte, error) {
+		fetches.Add(1)
+		<-release
+		return json.Marshal(map[string]any{"client_id": u, "client_name": "Claude", "redirect_uris": []string{"https://claude.ai/cb"}})
+	}
+	var wg sync.WaitGroup
+	codes := make(chan int, 8)
+	for range 8 {
+		wg.Go(func() {
+			codes <- h.do(http.MethodGet, authorizeURL("https://claude.ai/shared.json", "https://claude.ai/cb", nil), nil).Code
+		})
+	}
+	for fetches.Load() == 0 {
+		runtime.Gosched()
+	}
+	close(release)
+	wg.Wait()
+	close(codes)
+	for c := range codes {
+		if c != http.StatusOK {
+			t.Errorf("a sign-in got %d", c)
+		}
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("%d fetches for one document", n)
+	}
+}
+
+// Scopes speki doesn't know are ignored on refresh too, so a client resending its original scope string
+// keeps working.
+func TestRefreshIgnoresUnknownScopes(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	resp, rec := h.tokens(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}, "scope": {"offline_access speki:read"}})
+	if rec.Code != http.StatusOK || resp.Scope != ScopeRead {
+		t.Errorf("refresh with an unknown scope: %d %s", rec.Code, rec.Body)
 	}
 }
 
@@ -924,4 +978,21 @@ func TestRefreshKeepsTheLockWhenTheResultIsLost(t *testing.T) {
 	if _, held, _ := mem.Get(t.Context(), "refresh-lock:"+hash(first.RefreshToken)); !held {
 		t.Error("the lock was released although the result wasn't kept")
 	}
+}
+
+// watchedStore says when a SetNX finds its key taken: someone is waiting on a lock.
+type watchedStore struct {
+	*store.Memory
+	contended chan<- struct{}
+}
+
+func (w watchedStore) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	ok, err := w.Memory.SetNX(ctx, key, value, ttl)
+	if err == nil && !ok {
+		select {
+		case w.contended <- struct{}{}:
+		default:
+		}
+	}
+	return ok, err
 }
