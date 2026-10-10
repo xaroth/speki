@@ -37,7 +37,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | `secret_detected` | GitHub's push protection found a secret in the content. Remove it and tell the user |
 | `too_large` | Over a limit. Says which one and how to stay under it |
 | `timeout` | A query ran longer than 3 seconds |
-| `rate_limited` | Too many requests. Says how long to wait |
+| `rate_limited` | GitHub asked speki to slow down during a write. Says how long to wait. Speki's own per-user limit answers with HTTP 429 instead, before any tool runs |
 | `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, or the vault is rebuilding its index. Says which, with a request ID for the operator |
 
 A user who isn't allowed in at all (not in a required organisation, or no vaults) doesn't get as far as a

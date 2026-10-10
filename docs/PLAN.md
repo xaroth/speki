@@ -79,7 +79,7 @@ Build:
 - `gh`: app JWT and installation tokens (ghinstallation), listing installations and repositories, fetching
   `speki.yaml`, conditional ref lookups, rate limit metrics. Tested against recorded responses.
 - `vault`: `speki.yaml` parsing with limits, the registry, the discovery loop with its removal rules.
-- `gitsync`: open or clone, fetch, diff, files, blob, lookup, eligibility rules, broken-mirror detection.
+- `gitsync`: open or clone, fetch, diff, files, blob, eligibility rules, broken-mirror detection.
   Tested against local bare repositories.
 
 Done when: pointed at a test organisation (manually) or at fakes (in CI), speki discovers vaults, clones
@@ -93,7 +93,7 @@ Build:
 - `index`: schema, `Open` with generations and cleanup, `Build`, `Apply` with per-file error handling,
   vocabulary loading, `Search` with query parsing, correction, prefix and substring hits, `List`,
   `Document`, `LinkedFrom`.
-- `library`: per-vault copy, sync and write locks, sync from the index's commit, the poll loop, the status
+- `library`: per-vault copy, sync lock, sync from the index's commit, the poll loop, the status
   data behind `/status`.
 - A fixture corpus generator: realistic markdown with frontmatter, 10,000 and 50,000 documents.
 
@@ -150,9 +150,9 @@ path that tries).
 Build:
 
 - `gh.Commit` with the API chosen in milestone 0, and the error mapping.
-- `knowledge`: write, edit, move, delete, with version checks, the existence and collision check against
-  the mirror, the retry on a moved head, message sanitising, the post-write sync and `index_pending`,
-  `linked_from`.
+- `knowledge`: write, edit, move, delete, with version checks, the per-vault write lock, the existence and
+  collision check against the mirror (with `gitsync` `Paths`), the retry on a moved head, message
+  sanitising, the post-write sync and `index_pending`, `linked_from`.
 - Change notices: the call site after a commit, with a no-op on the in-memory store. (Built with the
   Redis store in milestone 8, call site included.)
 

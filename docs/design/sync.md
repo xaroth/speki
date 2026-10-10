@@ -30,9 +30,10 @@ type Vault struct {
 ```
 
 A vault is only removed on a definite answer: GitHub says the installation or repository is gone, the
-repository no longer has `speki.yaml`, or the account isn't allowed anymore. A failed request changes
-nothing. A `speki.yaml` that stops parsing keeps the vault running on its last good configuration, and the
-problem is logged and shown on the status page (see [operations.md](operations.md)). A new vault with a
+repository no longer has `speki.yaml`, the account isn't allowed anymore, or the installation is
+suspended. A removed vault's copy and index are deleted, so unsuspending an installation means cloning and
+indexing its vaults again. A failed request changes nothing. A `speki.yaml` that stops parsing keeps the
+vault running on its last good configuration, and the problem is logged and shown on the status page (see [operations.md](operations.md)). A new vault with a
 bad `speki.yaml` is not added.
 
 ## Git copies
@@ -87,8 +88,9 @@ bare repository.
 
 A mirror counts as broken when walking the tree at its head fails. A broken mirror is deleted and cloned
 again. Depth-1 fetches leave a new pack file behind each time. When a mirror has more than 50 pack files,
-`library` clones it fresh in the background and swaps it in. That's simpler and safer than repacking a
-shallow repository.
+`library` clones it fresh next to the old copy and swaps it in, at most once an hour. That's simpler and
+safer than repacking a shallow repository. The fresh clone runs under the vault's sync lock, either at the
+end of a full sync or as a background job when the poller finds the vault current.
 
 ## Keeping copies current
 
@@ -96,14 +98,21 @@ shallow repository.
 
 ```go
 type Vault struct {
-	vault  vault.Vault
+	mu     sync.Mutex // guards the vault's details and status
+	info   vault.Vault
+	status Status
+
+	syncMu syncLock     // one open, sync, fresh clone or removal at a time
+	gitMu  sync.RWMutex // fetches and swapping in a fresh clone exclude reads of the git copy
 	mirror *gitsync.Mirror
 	index  *index.Index
-
-	syncMu  sync.Mutex // one sync at a time
-	writeMu sync.Mutex // one write at a time, on this instance
 }
 ```
+
+`syncLock` is a mutex a caller can stop waiting for. Reads of the git copy (`Blob`, `Paths`) take `gitMu`
+for reading, so a `read` never waits for a whole sync, only for a fetch. Locks are taken in the order:
+`library`'s opening slot (the limit of four clones or builds at a time), `syncMu`, `gitMu`, `mu`. The write
+lock is not here: `knowledge` keeps one per vault, and takes it before anything in `library`.
 
 A sync:
 

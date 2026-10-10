@@ -58,12 +58,12 @@ sits at the top level, named after what it does. No `internal/`, no `util`, no l
 | `gh` | GitHub API: app JWT, installation tokens, user OAuth, user and installation lookups, commits, history | |
 | `document` | Parsing and writing documents: frontmatter, core fields, validation, links, headings, path rules | |
 | `vault` | The `Vault` type, `speki.yaml` parsing, the registry of current vaults and its discovery loop | `gh` |
-| `gitsync` | A shallow git copy of one repository: clone, fetch, tree diff, blobs | |
+| `gitsync` | A shallow git copy of one repository: clone, fetch, tree diff, blobs | `document` |
 | `index` | One SQLite index file: schema, build, apply changes, search, listing, and the query sandbox over several index files | `document` |
-| `library` | The local copy of every vault (a `gitsync` mirror plus an `index`), keeping them in step with GitHub: the poll loop, sync and write locks, change notices | `vault`, `gitsync`, `index`, `document` |
+| `library` | The local copy of every vault (a `gitsync` mirror plus an `index`), keeping them in step with GitHub: the poll loop, sync locks, syncing after change notices | `vault`, `gitsync`, `index`, `gh` |
 | `access` | Turning a signed-in user into a `Grant`: org gate, readable and writable vaults, caching | `gh`, `vault` |
 | `oauth` | Authorization server endpoints, consent page, speki tokens, bearer token check | `gh`, `seal` |
-| `knowledge` | What the tools do: list, search, read, write, edit, move, delete, history, query. Enforces the `Grant` | `access`, `document`, `library`, `vault` |
+| `knowledge` | What the tools do: list, search, read, write, edit, move, delete, history, query. Enforces the `Grant`. Reaches the vaults' copies through interfaces that `service` fills with `library` | `access`, `document`, `gh`, `index`, `vault` |
 | `mcpserver` | The `/mcp` HTTP stack, tool definitions, instructions text, mapping results and errors | `knowledge`, `access`, `oauth` |
 
 `gitsync` and `index` know nothing about vaults or users. Each works on one repository or one database
@@ -104,11 +104,11 @@ read doesn't resolve, and the answer is the same `not_found` as for a vault that
 Vaults are keyed by repository ID internally, so a renamed or transferred repository keeps its grant,
 its cache entries and its files. People and agents use the `owner/repo` name.
 
-`knowledge` is the only package that calls `library`'s read methods, and every one of its functions takes
-a `*access.Grant` and checks it before touching a vault. `library` and `index` take repository IDs and trust
-their caller. Two review rules keep this honest:
+`knowledge` is the only package that reads the vaults' copies, through interfaces `service` fills with
+`library`, and every one of its functions takes a `*access.Grant` and checks it before touching a vault.
+`library` and `index` take repository IDs and trust their caller. Two review rules keep this honest:
 
-- Only `knowledge` and `service` import `library`.
+- Only `service` imports `library`.
 - Every exported `knowledge` function that touches a vault takes a `*access.Grant`.
 
 The user's GitHub token is reachable only through `Grant.User()`, so the one place where speki acts as the
@@ -220,10 +220,11 @@ dependency for a fake happens through `Config`, not through globals or build tag
 3. Start the HTTP servers. `/healthz` answers right away. `/readyz` and `/mcp` answer 503 until step 5.
 4. Remove leftovers of interrupted index builds. Open every vault that already has a usable copy and
    index on disk, so it can be served as is.
-5. Run discovery once. Mark ready. A vault that isn't on disk yet is cloned and indexed in the background
-   (4 at a time). It shows up in tools once it's done. A clone or build that makes no progress for
-   5 minutes is cancelled and retried later, so a hung connection can't hold a slot forever. Large vaults
-   that are still making progress are left to finish.
+5. Run discovery once, successful or not. Mark ready. Without `allowed_accounts`, discovery first looks
+   up the app's owner; if that fails, speki marks ready anyway and keeps retrying. A vault that isn't on
+   disk yet is cloned and indexed in the background (4 at a time). It shows up in tools once it's done. A
+   clone or build that makes no progress for 5 minutes is cancelled and retried later, so a hung
+   connection can't hold a slot forever. Large vaults that are still making progress are left to finish.
 6. Start the discovery loop, the poll loop, and the change subscription.
 
 So an instance with a persistent data directory serves from disk within seconds, even if GitHub is down.

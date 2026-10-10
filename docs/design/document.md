@@ -43,18 +43,19 @@ and `Warnings` says what's wrong. A core field with the wrong type is ignored on
 ## Frontmatter
 
 The block starts when the file's first line is exactly `---` and ends at the next line that is `---` or
-`...`. Line endings may be `\n` or `\r\n`. Anything else means there's no frontmatter, and the whole file
-is the body.
+`...`. A UTF-8 byte order mark before the `---` is allowed, and `Touch` keeps it. Line endings may be `\n`
+or `\r\n`. Anything else means there's no frontmatter, and the whole file is the body.
 
 The block is decoded into a `yaml.Node` with `go.yaml.in/yaml/v3`, which doesn't expand aliases. Speki
 walks the node tree and treats the frontmatter as broken if it contains an anchor or alias. The top level
-must be a mapping, and the block must hold exactly one YAML document. That last rule catches a closing
-line with a trailing space: the block then runs on to the next `---` in the body, and the text in between
-would otherwise disappear without a warning.
+must be a mapping whose keys are plain scalars, each appearing once, and the block must hold exactly one
+YAML document. That last rule catches a closing line with a trailing space: the block then runs on to the
+next `---` in the body, and the text in between would otherwise disappear without a warning.
 
 Core fields are read from the node tree with type checks. `tags` accepts a list of strings. A single string
 is accepted when read (Obsidian allows it) but rejected on write. Tags lose a leading `#` and are
-lowercased. Dates accept RFC 3339 and Obsidian's `2026-10-09` and `2026-10-09T10:30:00` (taken as UTC).
+lowercased. Dates accept RFC 3339 and Obsidian's `2026-10-09`, `2026-10-09T10:30:00` and
+`2026-10-09 10:30:00` (taken as UTC).
 
 ## Changing a document
 
@@ -94,12 +95,14 @@ the result. So agents can edit frontmatter with `edit` too, and speki still chec
 
 ## Markdown
 
-goldmark parses the body with the GFM table and strikethrough extensions and a small wikilink parser of our
-own (goldmark has none built in that we want to depend on). Speki walks the AST once to collect:
+goldmark parses the body with the GFM table, strikethrough and linkify extensions and a small wikilink
+parser of our own (goldmark has none built in that we want to depend on). Speki walks the AST once to
+collect:
 
 - headings, with their line numbers counted from the top of the file (body offset plus the line within the
   body)
-- links: markdown links and wikilinks, with their text
+- links: markdown links and wikilinks, with their text. Linkify makes bare URLs, `www.example.com` and
+  email addresses links too, so they're recorded like any other link to the web.
 
 Speki never renders HTML, so goldmark's renderer and its past XSS problems don't matter here, but the version
 is kept current anyway.
@@ -110,7 +113,9 @@ Link candidates:
   `path.Clean`. If the result escapes the vault root, or the target has a scheme (`https:`), the candidate is
   empty.
 - Wikilink `[[fleet-roles#Crew|crew]]`: the candidate is the name part, lowercased, without `.md`.
-- `related` entries: resolved like markdown links.
+- `related` entries: resolved like markdown links, with kind `related`. An entry written as a wikilink
+  (`[[fleet-roles]]`, which is how Obsidian stores links in properties) is treated as one and gets kind
+  `wikilink`.
 
 ## Paths
 

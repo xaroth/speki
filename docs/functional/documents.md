@@ -87,8 +87,9 @@ They render on GitHub, and Obsidian follows them when it's set to relative path 
 and links: "Use [[Wikilinks]]" off, "New link format" relative path).
 
 Speki also understands wikilinks (`[[fleet-roles]]`, `[[fleet-roles#Logistics|logi]]`) written by people.
-Both kinds, plus the `related` field, end up in the `links` table for `query`. Links to other vaults or
-to the web are recorded but not resolved.
+Both kinds, plus the `related` field, end up in the `links` table for `query`. A `related` entry written
+as a wikilink (`[[fleet-roles]]`) counts as a wikilink there. Links to other vaults or to the web are
+recorded but not resolved.
 
 ## Size
 

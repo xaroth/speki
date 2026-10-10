@@ -3,14 +3,14 @@
 Package: `index`. Driver: `github.com/mattn/go-sqlite3`, built with `-tags sqlite_fts5,sqlite_omit_load_extension`.
 [The search engine research](../research/search-engine.md) explains both choices.
 
-`index` works on SQLite files. It knows nothing about vaults, users or git. `library` gives it changes and
-says which files to search, and `knowledge` decides who may see what.
+`index` works on SQLite files. It knows nothing about vaults, users or git. `library` gives it changes,
+and `knowledge` decides who may see what and which indexes to search.
 
 ## Files
 
-One index per vault, under `<data_dir>/<repo id>/`, in WAL mode. Each full build writes a new generation
-(`index-1.db`, `index-2.db`, ...), and the newest complete one is the live one. Incremental changes are
-applied to the live generation in place.
+One index per vault, under `<data_dir>/<repo id>/index/`, in WAL mode. Each full build writes a new
+generation (`index-1.db`, `index-2.db`, ...), and the newest complete one is the live one. Incremental
+changes are applied to the live generation in place.
 
 ```go
 type Index struct {
@@ -144,8 +144,9 @@ type Change struct {
 	Content []byte
 }
 
-// Open opens the newest usable generation in dir. Commit() is empty when there is none.
-func Open(dir string) (*Index, error)
+// Open opens the newest usable generation in dir, creating dir if needed. Commit() is empty when there
+// is none.
+func Open(ctx context.Context, dir string, logger *slog.Logger) (*Index, error)
 func (x *Index) Commit() string
 func (x *Index) Apply(ctx context.Context, commit string, changes []Change) error
 func (x *Index) Build(ctx context.Context, commit string, files iter.Seq2[Change, error]) error
@@ -173,11 +174,18 @@ or whose frontmatter block is over 64 KiB is skipped.
 ## Search
 
 ```go
-func (x *Index) Search(ctx context.Context, q Query) ([]Hit, error)
+type Source struct {
+	Name  string // the vault's name, which hits carry
+	Index *Index
+}
+
+func Search(ctx context.Context, sources []Source, text string, opt Options) (Results, error)
 ```
 
-`index` searches one vault. `knowledge` calls it for each vault the user may read (through `library`,
-8 at a time) and merges the results.
+`Search` is a package function over several indexes. `knowledge` passes one `Source` per vault to search,
+each checked against the `Grant`, and `index` searches them in parallel (8 at a time) and merges the
+results itself. It needs all of them at once anyway, because typo correction looks at every searched
+vault's vocabulary.
 
 1. Parse the query string: words, quoted phrases, `-excluded` words. Lowercase and NFC-normalise.
 2. Correct words. For each word, ask `words_vocab` whether it exists, in the same read transaction as the
@@ -205,8 +213,8 @@ func (x *Index) Search(ctx context.Context, q Query) ([]Hit, error)
 
    plus a query on `names` (titles, aliases and file names, not folders) for substring hits on the raw
    words. Those rank below every full-text hit in their vault.
-5. `knowledge` merges per vault, then across vaults by score (bm25 is negative, lower is better; the result
-   shows its absolute value), and keeps the top `limit`.
+5. Merge the hits of every vault by score (bm25 is negative, lower is better; the result shows its
+   absolute value), and keep the top `limit`.
 6. If there are no results and the query had more than one word, it runs again with `OR` and marks the
    result as relaxed.
 

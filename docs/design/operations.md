@@ -22,6 +22,10 @@ type Config struct {
 }
 ```
 
+`github.api_url`, `github.git_url` and `github.oauth_url` say where GitHub's REST API, git and OAuth
+endpoints are. They default to GitHub's own addresses and exist for the tests, which point them at a fake
+GitHub.
+
 `redis.url` is a secret (`redis://` or `rediss://`, password included), so it can come from
 `redis.url_file`. Without it, the store and change notices are in memory. With it, `service.New` connects
 and fails at startup when Redis doesn't answer.
@@ -96,11 +100,12 @@ Vault labels are fine at 20 vaults. User logins are never labels.
 
 ## Status page
 
-`GET /status` on the metrics port returns a JSON list of vaults with their name, state (serving,
-building, failed), index commit, document count and size, a warning when it's larger than speki is built
-for, last successful sync, and last error. It's the first
-place to look when someone says "my vault isn't showing up". Like `/metrics`, it's for operators only and
-shouldn't be exposed publicly.
+`GET /status` on the metrics port returns a JSON object with three fields. `ready` is what `/readyz`
+reports. `vaults` lists the vaults with their name, state (serving, building, failed), index commit,
+document count and size, a warning when it's larger than speki is built for, last successful sync, when
+the index was last confirmed current, and last error. `problems` lists the repositories whose
+`speki.yaml` couldn't be used, with the reason. It's the first place to look when someone says "my vault
+isn't showing up". Like `/metrics`, it's for operators only and shouldn't be exposed publicly.
 
 ## Tracing
 
