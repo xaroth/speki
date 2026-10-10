@@ -192,8 +192,11 @@ it's there, the change is reported as a success with that commit, so an agent do
 that would then apply twice. A definite refusal from GitHub is never looked for. An agent that hung up before speki could check can still retry; passing
 `version` to `edit` turns such a retry into a `conflict`.
 
-Syncs started for a write give up waiting for the vault's sync lock when the request's time is up, and
-only apply changes. A full rebuild or a fresh clone is left to the poller: after a commit, the write
+Syncs started for a write, before or after the commit, wait at most 10 seconds, and only apply changes.
+GitHub's own timeout answers ("This may be the result of a timeout", with HTTP 200) count as a lost
+answer, and the lookup is tried a second time after two seconds, in case GitHub is still finishing the
+commit. Writes add a pack file each without the poller needing to sync, so the poller also compacts a
+copy whose head check found nothing new. A full rebuild or a fresh clone is left to the poller: after a commit, the write
 answers with `index_pending`; before one, it answers `unavailable` ("rebuilding its index"). The sync after a commit carries on if the client goes away, for at most 10 seconds.
 
 After a successful commit, `knowledge`:

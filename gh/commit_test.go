@@ -74,6 +74,8 @@ func fakeGraphQL(t *testing.T) *Client {
 			_, _ = w.Write([]byte(`{"data":{"createCommitOnBranch":{"commit":{"oid":"c3"}}}}`))
 		case "stale-secrets":
 			fail("STALE_DATA", `Expected branch to point to "x" while committing secrets.md`)
+		case "timeout":
+			fail("", "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.")
 		case "limited":
 			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{
 				map[string]any{"type": "UNPROCESSABLE", "message": "something"},
@@ -131,6 +133,10 @@ func TestCommit(t *testing.T) {
 	var rerr *RateLimitError
 	if !errors.As(err, &rerr) || rerr.RetryAfter.Seconds() != 30 {
 		t.Errorf("rate limit: %v", err)
+	}
+	_, err = c.Commit(t.Context(), "ghu_good", req("timeout"))
+	if err == nil || errors.Is(err, ErrRefused) {
+		t.Errorf("GitHub timeout: %v, want an unknown outcome, not a refusal", err)
 	}
 	_, err = c.Commit(t.Context(), "ghu_good", req("limited"))
 	if !errors.As(err, &rerr) {

@@ -28,6 +28,8 @@ const (
 	maxHeadline = 200
 	// noticeTimeout bounds telling other instances about a commit.
 	noticeTimeout = 3 * time.Second
+	// lookupRetry is how long speki waits before looking for a lost commit a second time.
+	lookupRetry = 2 * time.Second
 )
 
 // Result is what a change did.
@@ -465,7 +467,9 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			// A stale version, or a version or tree the copy no longer has: the copy may be behind
 			// GitHub, or was just replaced. Sync once and look again.
 			synced = true
-			serr := b.vaults.Sync(ctx, v.RepoID)
+			sctx, cancel := context.WithTimeout(ctx, syncWait) // a write waits for a sync this long at most
+			serr := b.vaults.Sync(sctx, v.RepoID)
+			cancel()
 			if errors.Is(serr, ErrRebuilding) {
 				return Result{}, rebuilding(v.Name)
 			}
@@ -496,7 +500,9 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 				}
 				return Result{}, b.keptChanging(ctx, v, about)
 			}
-			err = b.vaults.Sync(ctx, v.RepoID)
+			sctx, cancel := context.WithTimeout(ctx, syncWait)
+			err = b.vaults.Sync(sctx, v.RepoID)
+			cancel()
 			if errors.Is(err, ErrRebuilding) {
 				return Result{}, rebuilding(v.Name)
 			}
@@ -546,13 +552,22 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 func (b *Base) findCommit(ctx context.Context, g *access.Grant, v vault.Vault, path, requestID string) (string, bool) {
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncWait)
 	defer cancel()
-	commits, err := b.github.Commits(fctx, g.User().Token, v.Name, v.DefaultBranch, path, 5)
-	if err != nil {
-		return "", false
-	}
-	for _, c := range commits {
-		if trailer(c.Message, requestTrailer) == requestID {
-			return c.SHA, true
+	for attempt := range 2 {
+		if attempt > 0 { // GitHub may still be finishing the commit, or its listing may lag
+			select {
+			case <-fctx.Done():
+				return "", false
+			case <-time.After(lookupRetry):
+			}
+		}
+		commits, err := b.github.Commits(fctx, g.User().Token, v.Name, v.DefaultBranch, path, 5)
+		if err != nil {
+			continue
+		}
+		for _, c := range commits {
+			if trailer(c.Message, requestTrailer) == requestID {
+				return c.SHA, true
+			}
 		}
 	}
 	return "", false

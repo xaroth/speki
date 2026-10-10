@@ -492,3 +492,29 @@ func TestSyncAfterNoticeBacksOff(t *testing.T) {
 		t.Error("synced while backing off")
 	}
 }
+
+// On the instance that writes, each write's quick sync adds a pack without ever compacting. The poller
+// compacts once its head check finds nothing new.
+func TestPollerCompactsPacksFromWrites(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+
+	for i := range maxPacks + 1 {
+		r.push(map[string]string{"a.md": "# A\n\nwrite " + strings.Repeat("x", i) + "\n"})
+		err := l.SyncChanges(t.Context(), v)
+		if err != nil {
+			t.Fatalf("sync %d: %v", i, err)
+		}
+	}
+	if n := v.mirror.Packs(); n <= maxPacks {
+		t.Fatalf("only %d packs; the test needs more than %d", n, maxPacks)
+	}
+	l.Poll(t.Context()) // learns the head, which the index already has
+	l.Poll(t.Context())
+	if n := v.mirror.Packs(); n > maxPacks {
+		t.Errorf("%d packs after polling", n)
+	}
+}

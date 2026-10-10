@@ -13,7 +13,9 @@ git blob SHA, 40 hex characters). Tools that change a document use it to make su
 change they haven't seen:
 
 - `write` replacing a document, `move` and `delete` require the version.
-- `edit` takes it optionally. Without it, the rule that `old_text` must match exactly once is the guard.
+- `edit` takes it optionally. Without it, the rule that `old_text` must match exactly once is the guard,
+  but that doesn't stop a retried edit from applying twice when its `new_text` still contains `old_text`
+  and the first attempt's answer was lost. Passing `version` does.
 - When the version doesn't match, the tool fails with `conflict` and gives the current version. Read the
   document again and redo the change.
 
@@ -36,7 +38,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | `too_large` | Over a limit. Says which one and how to stay under it |
 | `timeout` | A query ran longer than 3 seconds |
 | `rate_limited` | Too many requests. Says how long to wait |
-| `unavailable` | Something went wrong on speki's side or GitHub's. Includes a request ID for the operator |
+| `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, or the vault is rebuilding its index. Says which, with a request ID for the operator |
 
 A user who isn't allowed in at all (not in a required organisation, or no vaults) doesn't get as far as a
 tool. Their client gets an HTTP 403 with the reason.
@@ -191,8 +193,9 @@ Speki checks the frontmatter, sets `created` (new documents) and `updated`, and 
 { "version": "...", "commit": "...", "index_pending": false }
 ```
 
-`index_pending` is true in the rare case that the commit succeeded but speki's index hadn't caught up after
-10 seconds. Searches may miss the change for a little while.
+`index_pending` is true when the commit succeeded but speki's index hadn't caught up: within 10 seconds,
+or because the vault's index needs a full rebuild, which speki does in the background. Searches may miss
+the change for a little while.
 
 ## edit
 

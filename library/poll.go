@@ -77,6 +77,7 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 		v.mu.Lock()
 		v.status.Fresh = time.Now()
 		v.mu.Unlock()
+		l.compact(ctx, v) // writes add packs without the poller ever syncing them
 		return
 	}
 	err = l.Sync(ctx, v)
@@ -140,4 +141,22 @@ func (l *Library) SyncAfterNotice(ctx context.Context, v *Vault) error {
 		v.recordFailure(err)
 	}
 	return err
+}
+
+// compact clones a vault's copy afresh when fetches have piled up too many pack files. A sync does this
+// too, but on the instance that writes to a vault the poller never needs to sync: each write's own sync
+// already brought the index up to date.
+func (l *Library) compact(ctx context.Context, v *Vault) {
+	if v.syncMu.LockContext(ctx) != nil {
+		return
+	}
+	defer v.syncMu.Unlock()
+	if v.removed || v.mirror == nil || v.mirror.Packs() <= maxPacks || time.Since(v.freshCloneAt) < time.Hour {
+		return
+	}
+	v.freshCloneAt = time.Now()
+	err := l.freshClone(ctx, v)
+	if err != nil {
+		l.logger.Warn("fresh clone failed", "vault", v.Info().Name, "err", err)
+	}
 }
