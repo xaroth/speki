@@ -386,6 +386,23 @@ func TestQueryErrorsKeepTheirSlashes(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "<file>") {
 		t.Errorf("a lone slash read as a file path: %v", err)
 	}
+	_, err = runQuery(t, sb, sources, "SELECT * FROM 'x/y'")
+	if err == nil || !strings.Contains(err.Error(), "x/y") {
+		t.Errorf("a name with a slash read as a file path: %v", err)
+	}
+}
+
+// The forms schema.md gives for aggregating matches work.
+func TestMatchWithAggregates(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	for _, q := range []string{
+		"SELECT count(*) FROM (SELECT path FROM fts WHERE body MATCH 'cache' LIMIT 500)",
+		"WITH m AS MATERIALIZED (SELECT vault, path FROM fts WHERE body MATCH 'cache') SELECT vault, count(*) FROM m GROUP BY vault",
+	} {
+		if _, err := runQuery(t, sb, sources, q); err != nil {
+			t.Errorf("%s: %v", q, err)
+		}
+	}
 }
 
 func TestCancelledQueryIsNotATimeout(t *testing.T) {

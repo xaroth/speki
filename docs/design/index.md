@@ -239,8 +239,9 @@ generation's file.
    6. Register the authorizer (below).
 3. Before any of that, reject the SQL unless its first word is `SELECT`, `WITH` or `VALUES`, and if
    anything but whitespace and comments follows the first statement. The first-word rule also covers
-   statements the authorizer never sees, such as `VACUUM` and `EXPLAIN`. This check is speki's own scanner (strings, quoted names, both comment styles), because
-   go-sqlite3 runs every `;`-separated statement and returns the last one's rows.
+   statements the authorizer never sees, such as `VACUUM` and `EXPLAIN`. This check is speki's own
+   scanner (strings, quoted names, both comment styles), because go-sqlite3 runs every `;`-separated
+   statement and returns the last one's rows.
 4. Run it with a context that ends at the 3-second limit. The driver interrupts SQLite when the context ends.
    This is the only bound on running time: SQLite has no limit on instructions executed.
 5. Read at most 500 rows and 1 MiB, then stop and mark `truncated`. The 1 MiB is counted as the values
@@ -262,7 +263,10 @@ The hard limit is what stops one query from growing the process: in-memory sorts
 don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes within the time limit. A
 query that hits it fails with `too_large`. Both limits are for the whole process. Index builds stay far
 below them on their own (about 40 MB at 50,000 documents), but a build that allocates while a query has
-just used up the shared budget fails with `SQLITE_NOMEM`, and the vault is synced again at the next poll. The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
+just used up the shared budget fails with `SQLITE_NOMEM`. The build or apply then fails as a whole, the
+index stays at its commit, and the vault is synced again at the next poll: only a file that's unusable
+in itself is skipped.
+The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
 result check sees it.
 
 Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,
