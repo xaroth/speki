@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -31,8 +32,9 @@ type Change struct {
 }
 
 // Apply brings the current generation from its commit to commit. It runs in one transaction, so readers
-// see the index before or after, never halfway. A file that can't be indexed is skipped and logged, so
-// one bad file can't stop a vault from updating.
+// see the index before or after, never halfway. A file that's unusable is skipped and logged, so one bad
+// file can't stop a vault from updating. Any other failure (out of memory, a full disk, a cancelled
+// context) aborts: the commit doesn't move, and the next sync tries again.
 func (x *Index) Apply(ctx context.Context, commit string, changes []Change) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "index.Apply", trace.WithAttributes(attribute.Int("speki.changes", len(changes))))
 	defer span.End()
@@ -50,8 +52,12 @@ func (x *Index) Apply(ctx context.Context, commit string, changes []Change) erro
 
 	for _, c := range changes {
 		err = applyOne(ctx, tx, c)
-		if err != nil {
+		if errors.Is(err, errBadFile) {
 			x.logger.Warn("skipping file", "path", c.Path, "err", err)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("apply %s: %w", c.Path, err)
 		}
 	}
 	_, err = tx.ExecContext(ctx, "UPDATE meta SET value = ? WHERE key = 'commit'", commit)
@@ -67,6 +73,9 @@ func (x *Index) Apply(ctx context.Context, commit string, changes []Change) erro
 	return nil
 }
 
+// errBadFile marks a file that can't be indexed because of its content, which retrying won't change.
+var errBadFile = errors.New("unusable file")
+
 // applyOne replaces one document inside a savepoint, so a failure leaves nothing half-written: the old
 // document stays when the new one can't be indexed.
 func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
@@ -75,7 +84,7 @@ func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
 		var err error
 		r, err = parse(c)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errBadFile, err)
 		}
 	}
 	_, err := tx.ExecContext(ctx, "SAVEPOINT change")
@@ -170,7 +179,7 @@ func fill(
 		parsers.Go(func() error {
 			for c := range in {
 				r, err := parse(c)
-				if err != nil {
+				if err != nil { // the file itself is unusable
 					logger.Warn("skipping file", "path", c.Path, "err", err)
 					continue
 				}
@@ -189,10 +198,14 @@ func fill(
 	})
 
 	count := 0
+	var insertErr error
 	for r := range out {
-		err := insert(ctx, tx, r)
-		if err != nil {
-			logger.Warn("skipping file", "path", r.path, "err", err)
+		if insertErr != nil {
+			continue // drain, so the parsers can finish
+		}
+		insertErr = insert(ctx, tx, r)
+		if insertErr != nil {
+			insertErr = fmt.Errorf("build: insert %s: %w", r.path, insertErr)
 			continue
 		}
 		count++
@@ -200,6 +213,9 @@ func fill(
 	err = g.Wait()
 	if err != nil {
 		return 0, fmt.Errorf("build: %w", err)
+	}
+	if insertErr != nil { // not the file's fault: the whole build fails, and is tried again
+		return 0, insertErr
 	}
 	_, err = tx.ExecContext(ctx, rebuildFullText)
 	if err != nil {

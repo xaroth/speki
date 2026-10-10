@@ -426,7 +426,8 @@ func encodedSize(s string) int {
 }
 
 // paths matches file paths in SQLite messages.
-var paths = regexp.MustCompile(`(?:file:)?(?:/[^\s'"/]+)+/?`) // a lone slash, as in "SELECT / 1", isn't one
+// A path has at least two segments, so a lone slash ("SELECT / 1") or a name with one ('x/y') isn't one.
+var paths = regexp.MustCompile(`(?:file:)?(?:/[^\s'"/]+){2,}/?`)
 
 // aliases matches the names vaults are attached under, where they qualify a table or column.
 var aliases = regexp.MustCompile(`\bv(\d+)\.`)

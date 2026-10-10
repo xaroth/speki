@@ -33,6 +33,14 @@ fts: the full-text index: `vault`, `path`, `title`, `aliases`, `tags`, `descript
 Match against a column with FTS5 syntax: `WHERE body MATCH 'cache AND invalidation'`. Stemming applies,
 and `cach*` matches as a prefix; typo correction and ranking don't. Those are what `search` is for.
 
+`MATCH` can't be pushed through the view when the query aggregates or groups the matches, which fails with
+"unable to use function MATCH in the requested context". Match in a subquery or a materialized CTE first:
+
+    SELECT count(*) FROM (SELECT path FROM fts WHERE body MATCH 'cache' LIMIT 500);
+
+    WITH m AS MATERIALIZED (SELECT vault, path FROM fts WHERE body MATCH 'cache')
+    SELECT vault, count(*) FROM m GROUP BY vault;
+
 Query these views. The tables behind them can be read too, but they're speki's internals and change
 without notice.
 

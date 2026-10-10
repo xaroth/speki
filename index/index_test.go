@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -588,4 +589,20 @@ func TestSearchExamples(t *testing.T) {
 			t.Errorf("snippet = %q", res.Hits[0].Snippet)
 		}
 	})
+}
+
+// A failure that isn't the file's (here a cancelled context) leaves the commit where it was, so the next
+// sync tries again instead of losing the change.
+func TestApplyFailureKeepsTheCommit(t *testing.T) {
+	x := newIndex(t, fleet)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	content := "# README\n\nNew text.\n"
+	err := x.Apply(ctx, "c2", []Change{{Path: "README.md", Version: version(content), Content: []byte(content)}})
+	if err == nil {
+		t.Fatal("Apply succeeded with a cancelled context")
+	}
+	if x.Commit() != "c1" {
+		t.Errorf("commit moved to %s", x.Commit())
+	}
 }
