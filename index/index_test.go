@@ -9,9 +9,11 @@ import (
 	"iter"
 	"log/slog"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -428,29 +430,32 @@ func TestClosedIndex(t *testing.T) {
 func TestSearchWhileBuilding(t *testing.T) {
 	x := newIndex(t, corpus())
 	src := []Source{{"kb", x}}
+	errs := make(chan error, 6) // the builder's errors, reported from the test's goroutine
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := range 3 {
-			err := x.Build(t.Context(), fmt.Sprint("c", i), changes(corpus()))
-			if err != nil {
-				t.Error(err)
-			}
-			err = x.Apply(t.Context(), fmt.Sprint("a", i), []Change{{Path: "notes/cache.md"}})
-			if err != nil {
-				t.Error(err)
-			}
+			errs <- x.Build(t.Context(), fmt.Sprint("c", i), changes(corpus()))
+			errs <- x.Apply(t.Context(), fmt.Sprint("a", i), []Change{{Path: "notes/cache.md"}})
 		}
 	}()
-	for {
+	searching := true
+	for searching {
 		select {
 		case <-done:
-			return
+			searching = false
 		default:
+			_, err := Search(t.Context(), src, "fleet", Options{})
+			if err != nil {
+				<-done
+				t.Fatal(err)
+			}
 		}
-		_, err := Search(t.Context(), src, "fleet", Options{})
+	}
+	close(errs)
+	for err := range errs {
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 	}
 }
@@ -517,4 +522,70 @@ func TestVocabulary(t *testing.T) {
 	if d := distance("abcdef", "xyz", 2); d != 3 {
 		t.Errorf("distance beyond limit = %d, want 3", d)
 	}
+}
+
+// The examples in docs/functional/search-and-query.md that TestSearch doesn't cover.
+func TestSearchExamples(t *testing.T) {
+	files := corpus()
+	maps.Copy(files, map[string]string{
+		"phrase/adjacent.md": "# Adjacent\n\nOur caching invalidations are slow.\n",
+		"phrase/apart.md":    "# Apart\n\nThe cache is warm, and invalidation happens nightly.\n",
+		"weights/title.md":   "---\ntitle: Zeppelin hangar\n---\nWhere the big ones park.\n",
+		"weights/tags.md":    "---\ntitle: Parking\ntags: [zeppelin]\n---\nWhere the big ones park.\n",
+		"weights/body.md":    "---\ntitle: Parking lots\n---\nWhere the big ones park, a zeppelin among them.\n",
+		"status/active.md":   "---\ntitle: Dirigible notes\n---\nAll about the dirigible fleet.\n",
+		"status/draft.md":    "---\ntitle: Dirigible notes\nstatus: draft\n---\nAll about the dirigible fleet.\n",
+		"status/old.md":      "---\ntitle: Dirigible notes\nstatus: deprecated\n---\nAll about the dirigible fleet.\n",
+		"snippet/long.md":    "# Long\n\n" + strings.Repeat("filler words go here ", 40) + "the blimp is here " + strings.Repeat("more filler text now ", 40) + "\n",
+		"snippet/title.md":   "---\ntitle: Airship\ndescription: Lighter than air.\n---\nSome **bold** text about nothing in particular.\n",
+	})
+	src := []Source{{Name: "kb", Index: newIndex(t, files)}}
+	score := func(res Results, path string) float64 {
+		for _, h := range res.Hits {
+			if h.Path == path {
+				return h.Score
+			}
+		}
+		t.Fatalf("%s not found in %v", path, hitPaths(res))
+		return 0
+	}
+
+	t.Run("quoted phrases are adjacent, after stemming", func(t *testing.T) {
+		res := search(t, src, `"cache invalidation"`, Options{})
+		got := hitPaths(res)
+		if !slices.Contains(got, "phrase/adjacent.md") || slices.Contains(got, "phrase/apart.md") {
+			t.Errorf("hits = %v", got)
+		}
+	})
+	t.Run("title outranks tags outranks body", func(t *testing.T) {
+		got := hitPaths(search(t, src, "zeppelin", Options{}))
+		if strings.Join(got, ",") != "weights/title.md,weights/tags.md,weights/body.md" {
+			t.Errorf("order = %v", got)
+		}
+	})
+	t.Run("deprecated is halved, draft keeps its score", func(t *testing.T) {
+		res := search(t, src, "dirigible", Options{})
+		active, draft, old := score(res, "status/active.md"), score(res, "status/draft.md"), score(res, "status/old.md")
+		if draft != active {
+			t.Errorf("draft %v, active %v", draft, active)
+		}
+		if math.Abs(old-active/2) > 1e-9 {
+			t.Errorf("deprecated %v, active %v", old, active)
+		}
+	})
+	t.Run("snippet of at most 32 words", func(t *testing.T) {
+		res := search(t, src, "blimp", Options{})
+		if n := len(strings.Fields(res.Hits[0].Snippet)); n > 32+2 { // the ellipses
+			t.Errorf("snippet of %d words: %q", n, res.Hits[0].Snippet)
+		}
+		if !strings.Contains(res.Hits[0].Snippet, "**blimp**") {
+			t.Errorf("snippet = %q", res.Hits[0].Snippet)
+		}
+	})
+	t.Run("a match only in the title shows the description", func(t *testing.T) {
+		res := search(t, src, "airship", Options{})
+		if res.Hits[0].Snippet != "Lighter than air." {
+			t.Errorf("snippet = %q", res.Hits[0].Snippet)
+		}
+	})
 }

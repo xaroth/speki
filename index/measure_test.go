@@ -125,7 +125,9 @@ func TestMeasure(t *testing.T) {
 		return x
 	}
 
+	resetPeakRSS()
 	big := build(1, 50_000)
+	t.Logf("peak RSS while building 50,000 documents: %s", memory("VmHWM"))
 
 	start := time.Now()
 	err := big.Apply(t.Context(), "c2", []Change{{Path: "area-00/topic-000/doc-00000.md", Version: "x", Content: []byte("# Changed\n\nnew text\n")}})
@@ -162,7 +164,26 @@ func TestMeasure(t *testing.T) {
 	measure("1 vault of 50,000", []Source{{Name: "big", Index: big}})
 	measure("1 vault of 10,000", vaults[:1])
 	measure("10 vaults of 10,000", vaults)
+	runtime.GC()
+	t.Logf("RSS serving 1 vault of 50,000 and 10 of 10,000, after searching: %s", memory("VmRSS"))
 }
+
+// memory returns a line of /proc/self/status, such as VmRSS, or "unknown" where there's none.
+func memory(field string) string {
+	raw, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return "unknown"
+	}
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(line, field+":"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return "unknown"
+}
+
+// resetPeakRSS starts VmHWM over from the current RSS, where Linux allows it.
+func resetPeakRSS() { _ = os.WriteFile("/proc/self/clear_refs", []byte("5"), 0) }
 
 func fileSize(x *Index) int64 {
 	g, err := x.acquire()

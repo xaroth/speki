@@ -53,6 +53,18 @@ func TestCheckPath(t *testing.T) {
 		{path: "ops/fleet.md", wantErr: `"ops/Fleet.md"`},
 		{path: "café.md", want: "café.md"}, // same as the existing NFC path
 		{path: "CAFÉ.md", wantErr: "café.md"},
+		// Every forbidden character, and the limits exactly.
+		{path: "a#b.md", wantErr: "contain"},
+		{path: "a^b.md", wantErr: "contain"},
+		{path: "a|b.md", wantErr: "contain"},
+		{path: "a:b.md", wantErr: "contain"},
+		{path: "a*b.md", wantErr: "contain"},
+		{path: "a<b.md", wantErr: "contain"},
+		{path: "a>b.md", wantErr: "contain"},
+		{path: "a\"b.md", wantErr: "contain"},
+		{path: strings.Repeat("a/", 10) + "x.md", want: strings.Repeat("a/", 10) + "x.md"},
+		{path: strings.Repeat("a", 252) + ".md", want: strings.Repeat("a", 252) + ".md"},
+		{path: "caf\u0065\u0301.md", want: "café.md"},             // a new name is stored in NFC
 		{path: "menü/new.md", want: nfd("menü") + "/new.md"},      // the folder git stores in NFD
 		{path: nfd("menü/new.md"), want: nfd("menü") + "/new.md"}, // given in NFD too
 		{path: "menü/Brötchen.md", wantErr: "already exists"},     // an existing NFD file
