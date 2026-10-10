@@ -69,16 +69,19 @@ func (c *Client) Commit(ctx context.Context, token string, req CommitRequest) (s
 	if err != nil {
 		return "", err
 	}
-	type file struct {
+	type addition struct {
 		Path     string `json:"path"`
-		Contents string `json:"contents,omitempty"`
+		Contents string `json:"contents"` // always sent: an empty file is "" not missing
 	}
-	additions, deletions := []file{}, []file{}
+	type deletion struct {
+		Path string `json:"path"`
+	}
+	additions, deletions := []addition{}, []deletion{}
 	for _, ch := range req.Changes {
 		if ch.Content == nil {
-			deletions = append(deletions, file{Path: ch.Path})
+			deletions = append(deletions, deletion{Path: ch.Path})
 		} else {
-			additions = append(additions, file{Path: ch.Path, Contents: base64.StdEncoding.EncodeToString(ch.Content)})
+			additions = append(additions, addition{Path: ch.Path, Contents: base64.StdEncoding.EncodeToString(ch.Content)})
 		}
 	}
 	headline, body, _ := strings.Cut(req.Message, "\n")
@@ -139,19 +142,30 @@ func commitError(err error) error {
 }
 
 // graphqlErrors maps the errors createCommitOnBranch reports in its response body. GitHub documents
-// the types but not the messages, so the messages are matched loosely.
+// the types but not the messages, so types are trusted first and messages matched loosely after.
 func graphqlErrors(errs []graphqlError) error {
-	e := errs[0]
-	msg := strings.ToLower(e.Message)
-	switch {
-	case strings.Contains(msg, "secret"):
-		return &SecretError{Detail: e.Message}
-	case e.Type == "STALE_DATA" || strings.Contains(msg, "expected branch to point to"):
-		return fmt.Errorf("%w: %s", ErrHeadMoved, e.Message)
-	case strings.Contains(msg, "rule violation") || strings.Contains(msg, "protected branch"):
-		return fmt.Errorf("%w: %s", ErrBranchRules, e.Message)
-	case e.Type == "FORBIDDEN" || e.Type == "NOT_FOUND" || strings.Contains(msg, "not accessible"):
-		return fmt.Errorf("%w: %s", ErrForbidden, e.Message)
+	for _, e := range errs {
+		switch e.Type {
+		case "STALE_DATA":
+			return fmt.Errorf("%w: %s", ErrHeadMoved, e.Message)
+		case "RATE_LIMITED":
+			return &RateLimitError{RetryAfter: time.Minute}
+		case "FORBIDDEN", "NOT_FOUND":
+			return fmt.Errorf("%w: %s", ErrForbidden, e.Message)
+		}
 	}
-	return fmt.Errorf("GitHub: %s (%s)", e.Message, e.Type)
+	for _, e := range errs {
+		msg := strings.ToLower(e.Message)
+		switch {
+		case strings.Contains(msg, "expected branch to point to"):
+			return fmt.Errorf("%w: %s", ErrHeadMoved, e.Message)
+		case strings.Contains(msg, "push protection") || strings.Contains(msg, "secret scanning") || strings.Contains(msg, "cannot contain secrets"):
+			return &SecretError{Detail: e.Message}
+		case strings.Contains(msg, "rule violation") || strings.Contains(msg, "protected branch"):
+			return fmt.Errorf("%w: %s", ErrBranchRules, e.Message)
+		case strings.Contains(msg, "not accessible"):
+			return fmt.Errorf("%w: %s", ErrForbidden, e.Message)
+		}
+	}
+	return fmt.Errorf("GitHub: %s (%s)", errs[0].Message, errs[0].Type)
 }

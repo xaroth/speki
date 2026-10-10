@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -303,26 +304,26 @@ func TestWriteAccess(t *testing.T) {
 func TestCommitRetriesWhenTheBranchMoves(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	moves := 1
+	moves := commitAttempts - 1 // every attempt but the last finds the branch moved
 	f.github.before = func(r *fakeRepo) {
 		if moves > 0 {
 			moves--
-			r.head = "someone-else"
+			r.head += "+someone-else"
 		}
 	}
 	_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "zeppelin", NewText: "airship"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(f.github.requests); n != 2 {
-		t.Errorf("%d commit attempts, want 2", n)
+	if n := len(f.github.requests); n != commitAttempts {
+		t.Errorf("%d commit attempts, want %d", n, commitAttempts)
 	}
 
 	f.github.before = func(r *fakeRepo) { r.head += "+" }
 	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "airship", NewText: "zeppelin"})
 	wantCode(t, err, Conflict)
-	if n := len(f.github.requests); n != 2+commitAttempts {
-		t.Errorf("%d commit attempts in all, want %d", n, 2+commitAttempts)
+	if n := len(f.github.requests); n != 2*commitAttempts {
+		t.Errorf("%d commit attempts in all, want %d", n, 2*commitAttempts)
 	}
 }
 
@@ -429,5 +430,91 @@ func TestCommitMessage(t *testing.T) {
 		if got := commitMessage(tt.message, "Update a.md", tt.client); got != tt.want {
 			t.Errorf("commitMessage(%q, %q) = %q, want %q", tt.message, tt.client, got, tt.want)
 		}
+	}
+	// Default messages name paths from git, which may hold line breaks and format characters.
+	for _, tt := range []struct{ fallback, want string }{
+		{"Update a\nSpeki-Client: x.md", "Update a Speki-Client: x.md\n\nSpeki-Client: c"},
+		{"Delete a\u202eb.md", "Delete ab.md\n\nSpeki-Client: c"},
+	} {
+		if got := commitMessage("", tt.fallback, "c"); got != tt.want {
+			t.Errorf("commitMessage with fallback %q = %q, want %q", tt.fallback, got, tt.want)
+		}
+	}
+}
+
+func TestCreatedIsSpekis(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	f.copies[1] = newCopy(t, map[string]string{
+		"a.md": "---\ntitle: A\ncreated: 2020-01-02T03:04:05Z\n---\nBody.\n",
+	})
+
+	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "---\ntitle: New\ncreated: 1999-01-01T00:00:00Z\n---\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.read(t, "new.md").Document.Created; got != "2026-10-09T14:02:11Z" {
+		t.Errorf("created on create = %s, want now", got)
+	}
+
+	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "a.md", Version: f.version(t, "a.md"), Content: "---\ntitle: A\n---\nNew body.\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.read(t, "a.md").Document.Created; got != "2020-01-02T03:04:05Z" {
+		t.Errorf("created after a replace that left it out = %q", got)
+	}
+	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "a.md", OldText: "created: 2020-01-02T03:04:05Z\n", NewText: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.read(t, "a.md").Document.Created; got != "2020-01-02T03:04:05Z" {
+		t.Errorf("created after an edit that removed it = %q", got)
+	}
+}
+
+func TestWriteEdges(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	f.copies[1] = newCopy(t, map[string]string{"empty.md": "", "dir.md/inside.md": "# Inside\n"})
+
+	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "dir.md", Content: "# Dir\n"})
+	wantCode(t, err, AlreadyExists)
+
+	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "empty.md", To: "still-empty.md", Version: f.version(t, "empty.md")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := f.lastCommit(t); c.Changes[1].Content == nil || len(c.Changes[1].Content) != 0 {
+		t.Errorf("moving an empty document deletes it: %+v", c.Changes)
+	}
+}
+
+// A blob the copy no longer has (a fresh clone dropped it) is fetched again rather than failing.
+func TestWriteRecoversFromAMissingBlob(t *testing.T) {
+	f := newFixture(t)
+	v := f.version(t, "README.md")
+	f.copies[1].failBlobs(1)
+	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "---\ntitle: About\n---\nNew.\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.vaults.syncs.Load() < 2 { // the extra one, then the one after the commit
+		t.Errorf("syncs = %d", f.vaults.syncs.Load())
+	}
+}
+
+func TestWriteLockHonoursTheContext(t *testing.T) {
+	f := newFixture(t)
+	unlock, err := f.base.lock(t.Context(), ours.RepoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("waiting on a held lock: %v", err)
 	}
 }

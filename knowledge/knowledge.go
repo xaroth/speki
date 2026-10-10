@@ -19,6 +19,7 @@ import (
 
 // Copy is one vault's local copy.
 type Copy interface {
+	Info() vault.Vault // the vault's current name and branch
 	Index() *index.Index
 	Blob(sha string) ([]byte, error)
 	Paths(commit string) ([]string, error) // every file in the git tree at commit
@@ -45,25 +46,29 @@ type Base struct {
 	now    func() time.Time
 
 	mu    sync.Mutex
-	locks map[int64]*sync.Mutex // one write at a time per vault
+	locks map[int64]chan struct{} // one write at a time per vault: a slot taken while writing
 }
 
 // New returns a Base.
 func New(vaults Vaults, github gitHub, logger *slog.Logger) *Base {
-	return &Base{vaults: vaults, github: github, logger: logger, now: time.Now, locks: map[int64]*sync.Mutex{}}
+	return &Base{vaults: vaults, github: github, logger: logger, now: time.Now, locks: map[int64]chan struct{}{}}
 }
 
-// lock takes a vault's write lock and returns its unlock.
-func (b *Base) lock(repoID int64) func() {
+// lock takes a vault's write lock, or gives up when ctx ends, and returns its unlock.
+func (b *Base) lock(ctx context.Context, repoID int64) (func(), error) {
 	b.mu.Lock()
 	l, ok := b.locks[repoID]
 	if !ok {
-		l = &sync.Mutex{}
+		l = make(chan struct{}, 1)
 		b.locks[repoID] = l
 	}
 	b.mu.Unlock()
-	l.Lock()
-	return l.Unlock
+	select {
+	case l <- struct{}{}:
+		return func() { <-l }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // open returns a vault the user may read, by name, with its local copy.

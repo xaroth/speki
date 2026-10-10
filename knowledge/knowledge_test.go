@@ -27,16 +27,36 @@ import (
 // fakeCopy is a vault copy with a real index, and the git tree and blobs in memory.
 type fakeCopy struct {
 	mu    sync.Mutex
+	info  vault.Vault
 	idx   *index.Index
 	blobs map[string][]byte
 	tree  map[string][]byte // at the index's commit
+
+	blobFailures int
 }
 
 func (c *fakeCopy) Index() *index.Index { return c.idx }
 
+func (c *fakeCopy) Info() vault.Vault {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.info
+}
+
+// failBlobs makes the next n blob reads fail, as after a fresh clone dropped old objects.
+func (c *fakeCopy) failBlobs(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.blobFailures = n
+}
+
 func (c *fakeCopy) Blob(sha string) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.blobFailures > 0 {
+		c.blobFailures--
+		return nil, errors.New("object not found")
+	}
 	b, ok := c.blobs[sha]
 	if !ok {
 		return nil, errors.New("object not found")
@@ -185,7 +205,19 @@ type fakeVaults struct {
 
 func (v *fakeVaults) Copy(id int64) (Copy, bool) {
 	c, ok := v.f.copies[id]
-	return c, ok
+	if !ok {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.info.RepoID == 0 {
+		for _, vv := range []vault.Vault{ours, shared, secret} {
+			if vv.RepoID == id {
+				c.info = vv
+			}
+		}
+	}
+	return c, true
 }
 
 func (v *fakeVaults) Sync(_ context.Context, id int64) error {

@@ -74,7 +74,7 @@ func TestTouch(t *testing.T) {
 	tests := []struct {
 		name    string
 		raw     string
-		created bool
+		created time.Time
 		want    string
 	}{
 		{
@@ -85,14 +85,13 @@ func TestTouch(t *testing.T) {
 		{
 			name:    "adds created and updated",
 			raw:     "---\ntitle: A\n---\nBody\n",
-			created: true,
+			created: now,
 			want:    "---\ntitle: A\ncreated: 2026-10-09T14:02:11Z\nupdated: 2026-10-09T14:02:11Z\n---\nBody\n",
 		},
 		{
-			name:    "keeps existing created",
-			raw:     "---\ncreated: 2020-01-01T00:00:00Z\n---\nBody\n",
-			created: true,
-			want:    "---\ncreated: 2020-01-01T00:00:00Z\nupdated: 2026-10-09T14:02:11Z\n---\nBody\n",
+			name: "keeps existing created",
+			raw:  "---\ncreated: 2020-01-01T00:00:00Z\n---\nBody\n",
+			want: "---\ncreated: 2020-01-01T00:00:00Z\nupdated: 2026-10-09T14:02:11Z\n---\nBody\n",
 		},
 		{
 			name: "adds a block when there is none",
@@ -127,7 +126,7 @@ func TestTouch(t *testing.T) {
 		{
 			name:    "replaces an invalid created",
 			raw:     "---\ncreated: wip\n---\nBody\n",
-			created: true,
+			created: now,
 			want:    "---\ncreated: 2026-10-09T14:02:11Z\nupdated: 2026-10-09T14:02:11Z\n---\nBody\n",
 		},
 		{
@@ -149,6 +148,12 @@ func TestTouch(t *testing.T) {
 			name: "CRLF comment in a list",
 			raw:  "---\r\ntags:\r\n  - a\r\n  # about b\r\n  - b\r\n---\r\nBody\r\n",
 			want: "---\r\ntags:\r\n  - a\r\n  # about b\r\n  - b\r\nupdated: 2026-10-09T14:02:11Z\r\n---\r\nBody\r\n",
+		},
+		{
+			name:    "sets the given created over an existing one",
+			raw:     "---\ncreated: 2020-01-01T00:00:00Z\n---\nBody\n",
+			created: time.Date(2021, 5, 6, 7, 8, 9, 0, time.FixedZone("x", 3600)),
+			want:    "---\ncreated: 2021-05-06T06:08:09Z\nupdated: 2026-10-09T14:02:11Z\n---\nBody\n",
 		},
 		{
 			name: "block on the last line, ending in a lone CR",
@@ -181,7 +186,7 @@ func TestTouch(t *testing.T) {
 
 func TestTouchBrokenFrontmatter(t *testing.T) {
 	d := mustParse(t, "a.md", []byte("---\ntitle: [a\n---\n"))
-	_, err := d.Touch(now, false)
+	_, err := d.Touch(now, time.Time{})
 	if err == nil {
 		t.Fatal("Touch succeeded on broken frontmatter")
 	}
@@ -189,7 +194,7 @@ func TestTouchBrokenFrontmatter(t *testing.T) {
 
 func TestTouchKeepsMeaning(t *testing.T) {
 	d := mustParse(t, "obsidian.md", readFixture(t, "obsidian.md"))
-	out, err := d.Touch(now, false)
+	out, err := d.Touch(now, time.Time{})
 	if err != nil {
 		t.Fatalf("Touch: %v", err)
 	}
@@ -222,7 +227,7 @@ func FuzzParseTouch(f *testing.F) {
 		if err != nil {
 			return
 		}
-		once, err := d.Touch(now, true)
+		once, err := d.Touch(now, now)
 		if err != nil {
 			return
 		}
@@ -230,7 +235,7 @@ func FuzzParseTouch(f *testing.F) {
 		if err != nil {
 			t.Fatalf("touched document doesn't parse: %v\n%q", err, once)
 		}
-		twice, err := d2.Touch(now, true)
+		twice, err := d2.Touch(now, now)
 		if err != nil {
 			t.Fatalf("second Touch: %v", err)
 		}
@@ -246,7 +251,7 @@ func FuzzParseTouch(f *testing.F) {
 func TestTouchKeepsTextAfterAnOpenClosingLine(t *testing.T) {
 	raw := []byte("---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n")
 	d := mustParse(t, "a.md", raw)
-	out, err := d.Touch(now, false)
+	out, err := d.Touch(now, time.Time{})
 	if err == nil {
 		t.Errorf("Touch rewrote a block with two YAML documents:\n%s", out)
 	}
@@ -261,7 +266,7 @@ func TestTouchStaysWithinLimits(t *testing.T) {
 	if err := Check(nil, d); err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if _, err := d.Touch(now, true); !errors.Is(err, ErrTooLarge) {
+	if _, err := d.Touch(now, now); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("Touch past MaxSize: %v", err)
 	}
 	big := mustParse(t, "a.md", []byte(head+strings.Repeat("x", MaxSize)))

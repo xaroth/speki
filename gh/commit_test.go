@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -62,6 +63,22 @@ func fakeGraphQL(t *testing.T) *Client {
 			fail("UNPROCESSABLE", "Push cannot contain secrets: GitHub Personal Access Token")
 		case "forbidden":
 			fail("FORBIDDEN", "Resource not accessible by integration")
+		case "empty":
+			if a := in.FileChanges.Additions; len(a) != 1 || a[0].Contents != "" {
+				t.Errorf("empty file sent as %+v", a)
+			}
+			raw, _ := json.Marshal(req)
+			if !strings.Contains(string(raw), `"Contents":""`) {
+				t.Errorf("no contents for an empty file")
+			}
+			_, _ = w.Write([]byte(`{"data":{"createCommitOnBranch":{"commit":{"oid":"c3"}}}}`))
+		case "stale-secrets":
+			fail("STALE_DATA", `Expected branch to point to "x" while committing secrets.md`)
+		case "limited":
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{
+				map[string]any{"type": "UNPROCESSABLE", "message": "something"},
+				map[string]any{"type": "RATE_LIMITED", "message": "API rate limit exceeded"},
+			}})
 		case "abuse":
 			w.Header().Set("Retry-After", "30")
 			w.WriteHeader(http.StatusForbidden)
@@ -97,6 +114,8 @@ func TestCommit(t *testing.T) {
 		"protected": ErrBranchRules,
 		"forbidden": ErrForbidden,
 		"missing":   ErrForbidden,
+		// a path named secrets.md in a stale-head message isn't push protection
+		"stale-secrets": ErrHeadMoved,
 	} {
 		_, err := c.Commit(t.Context(), "ghu_good", req(head))
 		if !errors.Is(err, want) {
@@ -112,6 +131,15 @@ func TestCommit(t *testing.T) {
 	var rerr *RateLimitError
 	if !errors.As(err, &rerr) || rerr.RetryAfter.Seconds() != 30 {
 		t.Errorf("rate limit: %v", err)
+	}
+	_, err = c.Commit(t.Context(), "ghu_good", req("limited"))
+	if !errors.As(err, &rerr) {
+		t.Errorf("RATE_LIMITED among several errors: %v", err)
+	}
+	empty := req("empty")
+	empty.Changes = []FileChange{{Path: "e.md", Content: []byte{}}}
+	if _, err := c.Commit(t.Context(), "ghu_good", empty); err != nil {
+		t.Errorf("empty file: %v", err)
 	}
 	_, err = c.Commit(t.Context(), "ghu_revoked", req("good"))
 	if !errors.Is(err, ErrUnauthorized) {

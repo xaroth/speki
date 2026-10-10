@@ -92,11 +92,11 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 			if err != nil {
 				return plan{}, err
 			}
-			out, err := prepareDocument(newPath, nil, []byte(req.Content), b.now(), true)
+			out, err := prepareDocument(newPath, nil, []byte(req.Content), b.now())
 			if err != nil {
 				return plan{}, err
 			}
-			return plan{changes: []gh.FileChange{{Path: newPath, Content: out}}, message: "Create " + newPath, version: blobID(out)}, nil
+			return plan{changes: []gh.FileChange{{Path: newPath, Content: out}}, message: "Create " + newPath, path: newPath, version: blobID(out)}, nil
 		}
 
 		if !exists {
@@ -109,11 +109,11 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 		if err != nil {
 			return plan{}, err
 		}
-		out, err := prepareDocument(cur.Path, raw, []byte(req.Content), b.now(), false)
+		out, err := prepareDocument(cur.Path, raw, []byte(req.Content), b.now())
 		if err != nil {
 			return plan{}, err
 		}
-		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, version: blobID(out)}, nil
+		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, path: cur.Path, version: blobID(out)}, nil
 	})
 }
 
@@ -151,11 +151,11 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 			limit = -1
 		}
 		next := strings.Replace(text, req.OldText, req.NewText, limit)
-		out, err := prepareDocument(cur.Path, raw, []byte(next), b.now(), false)
+		out, err := prepareDocument(cur.Path, raw, []byte(next), b.now())
 		if err != nil {
 			return plan{}, err
 		}
-		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, version: blobID(out)}, nil
+		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, path: cur.Path, version: blobID(out)}, nil
 	})
 }
 
@@ -207,6 +207,7 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 		return plan{
 			changes:    []gh.FileChange{{Path: cur.Path}, {Path: newPath, Content: raw}},
 			message:    "Move " + cur.Path + " to " + newPath,
+			path:       newPath,
 			version:    cur.Version,
 			linkedFrom: linked,
 		}, nil
@@ -234,7 +235,7 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 		if err != nil {
 			return plan{}, err
 		}
-		return plan{changes: []gh.FileChange{{Path: cur.Path}}, message: "Delete " + cur.Path, linkedFrom: linked}, nil
+		return plan{changes: []gh.FileChange{{Path: cur.Path}}, message: "Delete " + cur.Path, path: cur.Path, linkedFrom: linked}, nil
 	})
 }
 
@@ -264,15 +265,16 @@ func (st state) newPath(path, moving string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	files := make(map[string]bool, len(paths))
+	taken := make(map[string]string, len(paths)) // path -> what it is
 	folded := make(map[string]string, len(paths))
 	for _, p := range paths {
 		if p == moving {
 			continue
 		}
-		files[p] = true
+		taken[p] = "a file"
 		folded[document.Fold(p)] = p
 		for i := strings.LastIndexByte(p, '/'); i > 0; i = strings.LastIndexByte(p[:i], '/') {
+			taken[p[:i]] = "a folder"
 			folded[document.Fold(p[:i])] = p[:i]
 		}
 	}
@@ -283,21 +285,30 @@ func (st state) newPath(path, moving string) (string, error) {
 	if err != nil {
 		return "", errorf(Invalid, "%s", err)
 	}
-	if files[checked] {
+	switch taken[checked] {
+	case "a file":
 		return "", errorf(AlreadyExists, "%s exists in the vault but isn't a document speki reads (it may be over 1 MiB). Pick another path", checked)
+	case "a folder":
+		return "", errorf(AlreadyExists, "%s is a folder in the vault. Pick another path", checked)
 	}
 	return checked, nil
 }
 
 // prepareDocument checks the new content of a document against its current content (nil for a new
-// one) and sets its dates.
-func prepareDocument(path string, current, next []byte, now time.Time, created bool) ([]byte, error) {
+// one) and sets its dates. created is speki's: now for a new document, and kept from the current one
+// when the agent's content leaves it out.
+func prepareDocument(path string, current, next []byte, now time.Time) ([]byte, error) {
 	var cur *document.Document
+	created := now
 	if current != nil {
+		created = time.Time{}
 		var err error
 		cur, err = document.Parse(path, current)
 		if err != nil {
 			cur = nil // the current file is unusable; any valid content replaces it
+		}
+		if cur != nil {
+			created = cur.Meta.Created
 		}
 	}
 	d, err := document.Parse(path, next)
@@ -340,7 +351,8 @@ func stale(cur index.Document) error {
 type plan struct {
 	changes    []gh.FileChange
 	message    string // used when the agent gave none
-	version    string
+	path       string // where the document is after the change
+	version    string // its version there; empty when it's deleted
 	linkedFrom []string
 }
 
@@ -358,43 +370,56 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 	case !g.CanWrite(v.RepoID):
 		return Result{}, errorf(NoWriteAccess, "the user can read %s but can't push to it on GitHub. An owner of the repository can give them write access", v.Name)
 	}
-	unlock := b.lock(v.RepoID)
+	unlock, err := b.lock(ctx, v.RepoID)
+	if err != nil {
+		return Result{}, err
+	}
 	defer unlock()
 
-	synced := false
-	for attempt := 1; ; attempt++ {
+	synced, moved := false, 0
+	for {
 		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
 			return Result{}, noVault(name)
 		}
-		st := state{vault: v, copy: c, head: c.Index().Commit()}
+		st := state{vault: c.Info(), copy: c, head: c.Index().Commit()} // the live name and branch
 		p, err := prepare(ctx, st)
-		var se *staleError
-		if errors.As(err, &se) {
-			if synced {
-				return Result{}, se.conflict
+		if err != nil {
+			var se *staleError
+			var kerr *Error
+			if errors.As(err, &kerr) || ctx.Err() != nil {
+				return Result{}, err
 			}
-			synced = true // the index may just be behind GitHub
-			err = b.vaults.Sync(ctx, v.RepoID)
-			if err != nil {
-				b.logger.WarnContext(ctx, "sync before a change failed", "vault", v.Name, "err", err)
-				return Result{}, se.conflict
+			if synced {
+				if errors.As(err, &se) {
+					return Result{}, se.conflict
+				}
+				return Result{}, err
+			}
+			// A stale version, or a version or tree the copy no longer has: the copy may be behind
+			// GitHub, or was just replaced. Sync once and look again.
+			synced = true
+			serr := b.vaults.Sync(ctx, v.RepoID)
+			if serr != nil {
+				b.logger.WarnContext(ctx, "sync before a change failed", "vault", v.Name, "err", serr)
+				if errors.As(err, &se) {
+					return Result{}, se.conflict
+				}
+				return Result{}, err
 			}
 			continue
 		}
-		if err != nil {
-			return Result{}, err
-		}
 
 		sha, err := b.github.Commit(ctx, g.User().Token, gh.CommitRequest{
-			Repo:         v.Name,
-			Branch:       v.DefaultBranch,
+			Repo:         st.vault.Name,
+			Branch:       st.vault.DefaultBranch,
 			ExpectedHead: st.head,
 			Message:      commitMessage(message, p.message, g.User().Client),
 			Changes:      p.changes,
 		})
 		if errors.Is(err, gh.ErrHeadMoved) {
-			if attempt == commitAttempts {
+			moved++
+			if moved == commitAttempts {
 				return Result{}, errorf(Conflict, "%s kept changing while speki tried to commit. Read the document again and redo your change", v.Name)
 			}
 			err = b.vaults.Sync(ctx, v.RepoID)
@@ -404,7 +429,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			continue
 		}
 		if err != nil {
-			return Result{}, commitError(v.Name, err)
+			return Result{}, commitError(st.vault.Name, err)
 		}
 
 		res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom}
@@ -414,10 +439,23 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		if err != nil {
 			b.logger.WarnContext(ctx, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
 		}
-		c, ok = b.vaults.Copy(v.RepoID)
-		res.IndexPending = err != nil || !ok || c.Index().Commit() != sha
+		res.IndexPending = err != nil || !b.indexed(ctx, v.RepoID, p.path, p.version)
 		return res, nil
 	}
+}
+
+// indexed reports whether the index has the document at path in version, or not at all when version is
+// empty.
+func (b *Base) indexed(ctx context.Context, repoID int64, path, version string) bool {
+	c, ok := b.vaults.Copy(repoID)
+	if !ok {
+		return false
+	}
+	d, err := c.Index().Document(ctx, path)
+	if version == "" {
+		return errors.Is(err, index.ErrNotFound)
+	}
+	return err == nil && d.Version == version
 }
 
 // commitError turns GitHub's refusal of a commit into an error the agent can act on.
@@ -442,12 +480,21 @@ func commitError(name string, err error) error {
 // commitMessage returns the commit message: the agent's first line (or fallback), cut to maxHeadline
 // bytes, and a trailer naming the client.
 func commitMessage(message, fallback, client string) string {
-	line, _, _ := strings.Cut(message, "\n")
-	line = strings.TrimSpace(oneLine(line))
-	if line == "" || strings.HasPrefix(strings.ToLower(line), strings.ToLower(clientTrailer)) {
-		line = fallback
+	clean := func(s string) string {
+		line := strings.TrimSpace(oneLine(s))
+		if strings.HasPrefix(strings.ToLower(line), strings.ToLower(clientTrailer)) {
+			return ""
+		}
+		return cutUTF8(line, maxHeadline)
 	}
-	line = cutUTF8(line, maxHeadline)
+	first, _, _ := strings.Cut(message, "\n")
+	line := clean(first)
+	if line == "" {
+		line = clean(fallback) // the whole of it: paths come from git, which allows line breaks in names
+	}
+	if line == "" {
+		line = "Update"
+	}
 	client = cutUTF8(strings.TrimSpace(oneLine(client)), maxClient)
 	if client == "" {
 		client = "unknown"
