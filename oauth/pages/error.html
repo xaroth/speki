@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>speki</title>
+<title>{{.Name}}</title>
 <style>body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; color: #222; }</style>
 </head>
 <body>
 <h1>{{.Title}}</h1>
 <p>{{.Detail}}</p>
+{{if .Login}}<p>You signed in to GitHub as <strong>@{{.Login}}</strong>. If that's the wrong account, sign in again and pick the other one on GitHub's account screen.</p>{{end}}
 </body>
 </html>
 {{end}}

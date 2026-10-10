@@ -127,7 +127,7 @@ func TestExchangeAndRefresh(t *testing.T) {
 	}
 
 	u := o.AuthorizeURL("https://speki/cb", "st", "ch")
-	if u != o.URL+"/login/oauth/authorize?client_id=id&code_challenge=ch&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fspeki%2Fcb&state=st" {
+	if u != o.URL+"/login/oauth/authorize?client_id=id&code_challenge=ch&code_challenge_method=S256&prompt=select_account&redirect_uri=https%3A%2F%2Fspeki%2Fcb&state=st" {
 		t.Errorf("authorize URL = %s", u)
 	}
 }

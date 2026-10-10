@@ -129,6 +129,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	resolver := access.NewResolver(github, lib.Vaults, cfg.Access.RequiredOrgs)
 	auth := oauth.New(oauth.Config{
 		Issuer:              cfg.PublicURL,
+		Title:               cfg.Instance.Title,
 		ClientMetadataHosts: cfg.Auth.ClientMetadataHosts,
 		GitHub: gh.OAuthConfig{
 			ClientID:     cfg.GitHub.ClientID,
@@ -151,7 +152,11 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		return nil, err
 	}
 	kb := knowledge.New(libraryVaults{lib}, github, sandbox, shared, logger)
-	mcp := mcpserver.New(auth, resolver, kb, cfg.Version, logger)
+	mcp := mcpserver.New(auth, resolver, kb, mcpserver.Identity{
+		Name:        cfg.Instance.Name,
+		Title:       cfg.Instance.Title,
+		Description: cfg.Instance.Description,
+	}, cfg.Version, logger)
 	metrics.MustRegister(mcp.Collector())
 
 	return &Service{

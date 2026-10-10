@@ -43,9 +43,11 @@ type UserTokens struct {
 	RefreshExpires time.Time
 }
 
-// AuthorizeURL returns the address that sends a user to GitHub to authorize the app.
+// AuthorizeURL returns the address that sends a user to GitHub to authorize the app. GitHub always shows
+// its account picker, so someone with a personal and a work account picks the right one.
 func (o OAuthConfig) AuthorizeURL(redirectURI, state, codeChallenge string) string {
 	q := url.Values{
+		"prompt":                {"select_account"},
 		"client_id":             {o.ClientID},
 		"redirect_uri":          {redirectURI},
 		"state":                 {state},

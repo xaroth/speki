@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in to speki</title>
+<title>Sign in to {{.Name}}</title>
 <style>
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; color: #222; }
 .who { padding: .75rem 1rem; background: #f3f3f3; border-radius: .5rem; }
@@ -13,13 +13,13 @@ button { font: inherit; padding: .5rem 1.25rem; margin-right: .5rem; }
 </style>
 </head>
 <body>
-<h1>Sign in to speki</h1>
+<h1>Sign in to {{.Name}}</h1>
 {{if .Local}}
-<p class="who">A program on this computer wants access to speki. It calls itself <strong>{{.Client}}</strong>,
+<p class="who">A program on this computer wants access to {{.Name}}. It calls itself <strong>{{.Client}}</strong>,
 but programs can call themselves anything.</p>
 <p class="warn">Only continue if you just started signing in from your own tool, like Claude Code.</p>
 {{else}}
-<p class="who"><strong>{{.Host}}</strong> wants access to speki{{if .Client}} ({{.Client}}){{end}}.</p>
+<p class="who"><strong>{{.Host}}</strong> wants access to {{.Name}}{{if .Client}} ({{.Client}}){{end}}.</p>
 {{end}}
 <p>After signing in with GitHub, you'll be sent back to <strong>{{.Redirect}}</strong>.</p>
 <form method="post" action="/oauth/authorize">

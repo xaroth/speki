@@ -66,7 +66,17 @@ redis:
 telemetry:
   log_level: info
   tracing: false   # uses the standard OTEL_EXPORTER_OTLP_* variables when on
+
+instance:          # optional: what this speki is, for people who use more than one
+  name: work       # lower-case letters, digits and dashes, at most 32; the server is called speki-work
+  title: Fenris work knowledge
+  description: >   # what belongs here, at most 300 characters
+    Documentation for Fenris projects and services: architecture, runbooks and decisions.
 ```
+
+Without `instance`, speki calls itself `speki` and describes itself as the team's knowledge base. With
+it, the title shows on the sign-in page and at the top of `guide`, and the description opens the
+instructions agents get, so an agent connected to two spekis knows which to search and where to write.
 
 Every key has an environment variable: `SPEKI_` plus the path in upper case with `_` between parts.
 `github.client_secret_file` becomes `SPEKI_GITHUB_CLIENT_SECRET_FILE`. Secrets can be given directly
