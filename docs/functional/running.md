@@ -113,6 +113,10 @@ configuration: the same `public_url`, GitHub App and key file, and the same Redi
 reach Redis at startup refuses to start. If Redis goes away later, sign-in and refresh fail until it's
 back, and changes reach the other instances at their next poll.
 
+Speki's keys in Redis are small and short-lived (minutes), all prefixed `speki:`. Configure Redis not to
+evict them early (`maxmemory-policy noeviction` or `volatile-ttl`): an evicted key could let an
+authorization code be used twice. Persistence isn't needed.
+
 Every instance clones and indexes every vault itself. Plan disk and memory for that per instance
 (see below).
 

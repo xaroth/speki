@@ -144,3 +144,25 @@ func TestTraceLeavesOutQueryStrings(t *testing.T) {
 		t.Errorf("a 502 isn't an error: %v", s.Status())
 	}
 }
+
+func TestTraceKeepsFlushing(t *testing.T) {
+	flushed := false
+	h := Trace(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		f, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("no http.Flusher behind Trace")
+		}
+		f.Flush()
+		flushed = true
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mcp", nil))
+	if !flushed || !rec.Flushed {
+		t.Error("flush didn't reach the writer")
+	}
+	for path, want := range map[string]string{"/mcp": "/mcp", "/wp-admin/x.php": "other", "/.well-known/oauth-authorization-server": "/.well-known/oauth-*"} {
+		if got := route(path); got != want {
+			t.Errorf("route(%q) = %q, want %q", path, got, want)
+		}
+	}
+}

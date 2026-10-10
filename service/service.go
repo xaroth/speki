@@ -259,28 +259,64 @@ func (s *Service) allowedAccounts(ctx context.Context, giveUp func()) ([]int64, 
 }
 
 // followNotices syncs a vault when another instance says its branch moved, so a write on one instance
-// shows up on the others within seconds instead of at the next poll. The store is retried while it's
-// unreachable; polling covers the gap.
+// shows up on the others within seconds instead of at the next poll. Notices for one vault are
+// coalesced: at most one sync runs per vault, and notices that arrive meanwhile cause one more. The
+// subscription is retried with backoff while the store is unreachable; polling covers the gap.
 func (s *Service) followNotices(ctx context.Context) {
-	for ctx.Err() == nil {
-		err := s.store.Subscribe(ctx, func(repoID int64, commit string) {
-			v, ok := s.library.Vault(repoID)
-			if !ok || v.Index().Commit() == commit {
-				return
-			}
-			err := s.library.Sync(ctx, v)
-			if err != nil {
-				s.logger.Warn("sync after a change notice failed", "vault", v.Info().Name, "err", err)
+	var syncs sync.WaitGroup
+	defer syncs.Wait()
+	var mu sync.Mutex
+	state := map[int64]string{} // "running", or "again" when a notice came during the sync
+
+	onNotice := func(repoID int64, commit string) {
+		v, ok := s.library.Vault(repoID)
+		if !ok || v.Index().Commit() == commit {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if state[repoID] != "" {
+			state[repoID] = "again"
+			return
+		}
+		state[repoID] = "running"
+		syncs.Go(func() {
+			for {
+				err := s.library.Sync(ctx, v)
+				if err != nil && ctx.Err() == nil {
+					s.logger.Warn("sync after a change notice failed", "vault", v.Info().Name, "err", err)
+				}
+				mu.Lock()
+				if state[repoID] != "again" || ctx.Err() != nil {
+					delete(state, repoID)
+					mu.Unlock()
+					return
+				}
+				state[repoID] = "running"
+				mu.Unlock()
 			}
 		})
+	}
+
+	wait, failing := time.Second, false
+	for ctx.Err() == nil {
+		start := time.Now()
+		err := s.store.Subscribe(ctx, onNotice)
 		if err == nil {
 			return
 		}
-		s.logger.Warn("change notices unavailable; retrying", "err", err)
+		if time.Since(start) > time.Minute { // it worked for a while: a new outage
+			wait, failing = time.Second, false
+		}
+		if !failing { // once per outage
+			s.logger.Warn("change notices unavailable; retrying", "err", err)
+			failing = true
+		}
 		select {
 		case <-ctx.Done():
-		case <-time.After(5 * time.Second):
+		case <-time.After(wait):
 		}
+		wait = min(wait*2, time.Minute)
 	}
 }
 
@@ -376,7 +412,7 @@ type sharedStore interface {
 	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Get(ctx context.Context, key string) ([]byte, bool, error)
-	Delete(ctx context.Context, key string) error
+	Release(ctx context.Context, key string, value []byte) error
 	Publish(ctx context.Context, repoID int64, commit string) error
 	Subscribe(ctx context.Context, f func(repoID int64, commit string)) error
 	Close() error

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -48,7 +49,7 @@ func Tracer() trace.Tracer { return otel.Tracer("github.com/eve-online-tools/spe
 func Trace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-		ctx, span := Tracer().Start(ctx, r.Method+" "+r.URL.Path,
+		ctx, span := Tracer().Start(ctx, r.Method+" "+route(r.URL.Path),
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
 				semconv.HTTPRequestMethodKey.String(r.Method),
@@ -78,3 +79,24 @@ func (s *statusRecorder) WriteHeader(status int) {
 
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// Flush passes on to the underlying writer, for handlers that stream.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// route names a request's span from a fixed set, so scanners probing random paths don't create a span
+// name each.
+func route(path string) string {
+	switch path {
+	case "/mcp", "/healthz", "/readyz",
+		"/oauth/authorize", "/oauth/token", "/oauth/register", "/oauth/github/callback":
+		return path
+	}
+	if strings.HasPrefix(path, "/.well-known/oauth-") {
+		return "/.well-known/oauth-*"
+	}
+	return "other"
+}

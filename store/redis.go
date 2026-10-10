@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	neturl "net/url"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -17,6 +19,9 @@ const (
 	pingTimeout   = 5 * time.Second
 )
 
+// setLogger sets the Redis client's logger, which is global, once.
+var setLogger sync.Once
+
 // Redis is a store shared by several instances, in Redis or Valkey.
 type Redis struct {
 	client *redis.Client
@@ -25,9 +30,13 @@ type Redis struct {
 // NewRedis connects to the Redis at url (redis:// or rediss://) and checks that it answers. The Redis
 // client's own messages go to logger, which becomes the client's logger for the whole process.
 func NewRedis(ctx context.Context, url string, logger *slog.Logger) (*Redis, error) {
-	redis.SetLogger(redisLogger{logger})
+	setLogger.Do(func() { redis.SetLogger(redisLogger{logger}) })
 	opt, err := redis.ParseURL(url)
 	if err != nil {
+		var uerr *neturl.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err // the url.Error quotes the whole URL, password included
+		}
 		return nil, fmt.Errorf("redis url: %w", err)
 	}
 	r := &Redis{client: redis.NewClient(opt)}
@@ -74,6 +83,19 @@ func (r *Redis) Get(ctx context.Context, key string) ([]byte, bool, error) {
 	return v, true, nil
 }
 
+// releaseScript deletes a key only while it holds the given value.
+var releaseScript = redis.NewScript(`if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0`)
+
+// Release removes key only while it still holds value: a lock that expired and was taken by someone
+// else stays theirs.
+func (r *Redis) Release(ctx context.Context, key string, value []byte) error {
+	err := releaseScript.Run(ctx, r.client, []string{keyPrefix + key}, value).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("redis release: %w", err)
+	}
+	return nil
+}
+
 // Delete removes key.
 func (r *Redis) Delete(ctx context.Context, key string) error {
 	err := r.client.Del(ctx, keyPrefix+key).Err()
@@ -117,7 +139,10 @@ func (r *Redis) Subscribe(ctx context.Context, f func(repoID int64, commit strin
 			return nil
 		case m, ok := <-ch:
 			if !ok {
-				return nil
+				if ctx.Err() != nil {
+					return nil
+				}
+				return errors.New("redis subscription closed")
 			}
 			var n notice
 			if json.Unmarshal([]byte(m.Payload), &n) == nil && n.RepoID != 0 {

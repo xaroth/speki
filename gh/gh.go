@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-github/v88/github"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // ErrNotFound means GitHub definitely says the thing doesn't exist (or the app can't see it).
@@ -65,7 +66,8 @@ func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
 		return nil, err
 	}
 
-	base := otelhttp.NewTransport(http.DefaultTransport) // a span per GitHub request when tracing is on
+	// A span per GitHub request when tracing is on, without sending speki's trace context to GitHub.
+	base := otelhttp.NewTransport(http.DefaultTransport, otelhttp.WithPropagators(propagation.NewCompositeTextMapPropagator()))
 	appAuth, err := ghinstallation.NewAppsTransport(m.observe("app", base), cfg.AppID, cfg.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("github app key: %w", err)

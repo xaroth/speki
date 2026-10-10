@@ -4,6 +4,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -65,6 +66,16 @@ func (m *Memory) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.values, key)
+	return nil
+}
+
+// Release removes key only while it still holds value.
+func (m *Memory) Release(_ context.Context, key string, value []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e, ok := m.values[key]; ok && bytes.Equal(e.value, value) {
+		delete(m.values, key)
+	}
 	return nil
 }
 

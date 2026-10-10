@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ type kv interface {
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Get(ctx context.Context, key string) ([]byte, bool, error)
 	Delete(ctx context.Context, key string) error
+	Release(ctx context.Context, key string, value []byte) error
 }
 
 // testValues runs the same checks against a store. advance moves the store's clock.
@@ -69,6 +71,29 @@ func testValues(t *testing.T, s kv, advance func(time.Duration)) {
 	if found {
 		t.Error("deleted value still found")
 	}
+
+	// A lock is only released by its owner: after it expired and someone else took it, the first
+	// holder's release leaves it alone.
+	_, err = s.SetNX(ctx, "lock", []byte("first"), time.Second)
+	must(err)
+	advance(2 * time.Second)
+	ok, err = s.SetNX(ctx, "lock", []byte("second"), time.Minute)
+	must(err)
+	if !ok {
+		t.Fatal("expired lock not taken")
+	}
+	must(s.Release(ctx, "lock", []byte("first")))
+	v, found, err = s.Get(ctx, "lock")
+	must(err)
+	if !found || string(v) != "second" {
+		t.Errorf("someone else's release removed the lock: %q, %v", v, found)
+	}
+	must(s.Release(ctx, "lock", []byte("second")))
+	_, found, err = s.Get(ctx, "lock")
+	must(err)
+	if found {
+		t.Error("the owner's release left the lock")
+	}
 }
 
 func TestRedis(t *testing.T) {
@@ -90,6 +115,10 @@ func TestRedis(t *testing.T) {
 	_, err = NewRedis(t.Context(), "http://x", discard())
 	if err == nil {
 		t.Error("accepted a URL that isn't redis")
+	}
+	_, err = NewRedis(t.Context(), "redis://user:hunter2@host:notaport/0", discard())
+	if err == nil || strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("bad URL error shows the password: %v", err)
 	}
 }
 
