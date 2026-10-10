@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -9,6 +10,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -38,13 +42,17 @@ type fakeGitHub struct {
 
 func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
-	write := func(v any) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-RateLimit-Remaining", "4999")
-		_ = json.NewEncoder(w).Encode(v)
-	}
 	app := strings.HasPrefix(auth, "Bearer ") && strings.Count(auth, ".") == 2 // a JWT
 	install := auth == "token ghs_inst1" || auth == "Bearer ghs_inst1"
+	write := func(v any) {
+		w.Header().Set("Content-Type", "application/json")
+		if install { // each credential has its own budget
+			w.Header().Set("X-RateLimit-Remaining", "3000")
+		} else {
+			w.Header().Set("X-RateLimit-Remaining", "4999")
+		}
+		_ = json.NewEncoder(w).Encode(v)
+	}
 
 	switch {
 	case r.URL.Path == "/app" && app:
@@ -261,6 +269,103 @@ func TestMetrics(t *testing.T) {
 	if err != nil || n == 0 {
 		t.Errorf("metric not registered: %d, %v", n, err)
 	}
+}
+
+// An installation call counts once, as installation, and its token request as app; the app's budget
+// isn't overwritten by the installation's.
+func TestMetricsByKind(t *testing.T) {
+	c, _, _ := newTestClient(t)
+	_, err := c.RepositoryID(t.Context(), 1, "eve-online-tools/kb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := c.metrics
+	for _, tt := range []struct {
+		kind, status string
+		want         float64
+	}{{"app", "201", 1}, {"app", "200", 0}, {"installation", "200", 1}} {
+		if got := testutil.ToFloat64(m.requests.WithLabelValues(tt.kind, tt.status)); got != tt.want {
+			t.Errorf("%s %s requests = %v, want %v", tt.kind, tt.status, got, tt.want)
+		}
+	}
+	if got := testutil.ToFloat64(m.remaining.WithLabelValues("app")); got == 3000 {
+		t.Error("the app's budget shows the installation's")
+	}
+	if got := testutil.ToFloat64(m.remaining.WithLabelValues("installation")); got != 3000 {
+		t.Errorf("installation remaining = %v, want 3000", got)
+	}
+}
+
+// The installation gauge shows the lowest recent budget, and a budget below 10% is warned about once.
+func TestRateBudget(t *testing.T) {
+	var logged bytes.Buffer
+	m, err := newMetrics(prometheus.NewRegistry(), slog.New(slog.NewTextHandler(&logged, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := func(remaining string) http.Header {
+		return http.Header{"X-Ratelimit-Remaining": {remaining}, "X-Ratelimit-Limit": {"5000"}}
+	}
+	m.record("installation", 1, header("100"))
+	m.record("installation", 2, header("4000"))
+	if got := testutil.ToFloat64(m.remaining.WithLabelValues("installation")); got != 100 {
+		t.Errorf("installation remaining = %v, want the lowest, 100", got)
+	}
+	m.record("installation", 1, header("50"))
+	if n := strings.Count(logged.String(), "budget is low"); n != 1 || !strings.Contains(logged.String(), "installation=1") {
+		t.Errorf("%d warnings:\n%s", n, logged.String())
+	}
+	m.record("installation", 2, header("20"))
+	if n := strings.Count(logged.String(), "budget is low"); n != 2 || !strings.Contains(logged.String(), "installation=2") {
+		t.Errorf("each installation is warned about once; got %d warnings:\n%s", n, logged.String())
+	}
+
+	m.mu.Lock()
+	m.installs[1] = reading{remaining: 50, at: time.Now().Add(-budgetWindow - time.Second)}
+	m.installs[2] = reading{remaining: 20, at: time.Now(), reset: time.Now().Add(-time.Second)}
+	m.mu.Unlock()
+	m.record("installation", 3, header("3900"))
+	if got := testutil.ToFloat64(m.remaining.WithLabelValues("installation")); got != 3900 {
+		t.Errorf("installation remaining = %v after the low readings aged out or were refilled, want 3900", got)
+	}
+}
+
+// A failed installation token request counts as the app's, not as an installation call, and its
+// response body is closed.
+func TestTokenFailureCounts(t *testing.T) {
+	c, _, _ := newTestClient(t)
+	_, err := c.RepositoryID(t.Context(), 8, "eve-online-tools/kb")
+	if err == nil {
+		t.Fatal("RepositoryID succeeded without a token")
+	}
+	m := c.metrics
+	if got := testutil.ToFloat64(m.requests.WithLabelValues("app", "403")); got != 1 {
+		t.Errorf("app 403 requests = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.requests.WithLabelValues("installation", "error")); got != 0 {
+		t.Errorf("installation errors = %v, want 0", got)
+	}
+	body := &closeCounter{Reader: strings.NewReader("{}")}
+	err = &ghinstallation.HTTPError{Response: &http.Response{StatusCode: http.StatusForbidden, Body: body}}
+	closeTokenError(err)
+	closeTokenError(fmt.Errorf("wrapped: %w", err))
+	closeTokenError(&ghinstallation.HTTPError{Response: &http.Response{}}) // no body: no panic
+	if body.closed == 0 {
+		t.Error("the token error's body wasn't closed")
+	}
+	if signedByApp(&http.Request{Header: http.Header{"Authorization": {"Bearer ghu_user"}}}) {
+		t.Error("a user token counted as the app's JWT")
+	}
+}
+
+type closeCounter struct {
+	io.Reader
+	closed int
+}
+
+func (c *closeCounter) Close() error {
+	c.closed++
+	return nil
 }
 
 func TestFileTooLarge(t *testing.T) {

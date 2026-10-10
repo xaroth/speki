@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -32,6 +33,8 @@ type Config struct {
 	PrivateKey []byte // PEM
 	// APIURL is the REST API base URL. Empty means DefaultAPIURL. Tests point it at a fake.
 	APIURL string
+	// Logger gets a warning when a rate limit budget runs low. Nil means none.
+	Logger *slog.Logger
 }
 
 // Client talks to GitHub as the app and as its installations.
@@ -67,14 +70,18 @@ func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
 	if !strings.HasSuffix(apiURL, "/") {
 		apiURL += "/"
 	}
-	m, err := newMetrics(reg)
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	m, err := newMetrics(reg, logger)
 	if err != nil {
 		return nil, err
 	}
 
 	// A span per GitHub request when tracing is on, without sending speki's trace context to GitHub.
 	base := otelhttp.NewTransport(http.DefaultTransport, otelhttp.WithPropagators(propagation.NewCompositeTextMapPropagator()))
-	appAuth, err := ghinstallation.NewAppsTransport(m.observe("app", base), cfg.AppID, cfg.PrivateKey)
+	appAuth, err := ghinstallation.NewAppsTransport(m.observeApp(base), cfg.AppID, cfg.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("github app key: %w", err)
 	}
@@ -118,7 +125,7 @@ func (c *Client) installation(id int64) (*installation, error) {
 	}
 	auth := ghinstallation.NewFromAppsTransport(c.appAuth, id)
 	auth.BaseURL = c.appAuth.BaseURL
-	client, err := newGitHub(c.apiURL, c.metrics.observe("installation", auth))
+	client, err := newGitHub(c.apiURL, c.metrics.observeInstallation(id, auth))
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +151,7 @@ func notFound(err error) error {
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
 	var terr *ghinstallation.HTTPError
+	closeTokenError(err) // for token requests made outside an installation's transport, for git
 	if errors.As(err, &terr) && terr.Response != nil && terr.Response.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
