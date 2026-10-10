@@ -12,6 +12,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/vault"
 )
@@ -638,5 +639,26 @@ func TestMoveConflictCarriesTheSourceVersion(t *testing.T) {
 	var kerr *Error
 	if !errors.As(err, &kerr) || kerr.Code != Conflict || kerr.Version != v {
 		t.Errorf("conflict = %+v, want the version of README.md", err)
+	}
+}
+
+// A document that already has an over-long title can still be edited; a new one can't be written with
+// one.
+func TestLongTitles(t *testing.T) {
+	f := newFixture(t)
+	long := strings.Repeat("t", document.MaxTitle+1)
+	f.copies[1] = newCopy(t, map[string]string{"long.md": "---\ntitle: " + long + "\n---\nBody text.\n"})
+	_, err := f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "long.md", OldText: "Body", NewText: "New"})
+	if err != nil {
+		t.Errorf("editing a document with a long title: %v", err)
+	}
+	_, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "---\ntitle: " + long + "\n---\nBody.\n"})
+	wantCode(t, err, Invalid)
+	if err != nil && !strings.Contains(err.Error(), "longer than") {
+		t.Errorf("refused for another reason: %v", err)
+	}
+	_, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "ok.md", Content: "---\ntitle: " + long[1:] + "\n---\nBody.\n"})
+	if err != nil {
+		t.Errorf("writing a title of exactly %d bytes: %v", document.MaxTitle, err)
 	}
 }

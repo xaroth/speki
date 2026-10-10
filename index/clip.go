@@ -13,13 +13,13 @@ const (
 	maxDescription = document.MaxDescription
 )
 
-// clip returns s if it's at most n bytes, or its start with "…" added, n bytes in all, without
-// splitting a character.
+// clip returns s if it's at most n bytes, or its start with "…" added, n bytes in all (but never less
+// than the "…"), without splitting a character.
 func clip(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	n -= len("…")
+	n = max(n-len("…"), 0)
 	for n > 0 && !utf8.RuneStart(s[n]) {
 		n--
 	}

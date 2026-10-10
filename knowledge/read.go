@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -119,9 +120,12 @@ func outline(headings []document.Heading, warnings *[]string) []document.Heading
 	return out
 }
 
-// headingSize is roughly what a heading takes in an answer: its text, its level and line, and the
-// JSON around them.
-func headingSize(h document.Heading) int { return len(h.Text) + 32 }
+// headingSize is roughly what a heading takes in an answer: its text as JSON, its level and line, and
+// the JSON around them.
+func headingSize(h document.Heading) int {
+	raw, _ := json.Marshal(h.Text) // a string always marshals
+	return len(raw) + 32
+}
 
 func outlineSize(headings []document.Heading) int {
 	n := 0
@@ -131,12 +135,13 @@ func outlineSize(headings []document.Heading) int {
 	return n
 }
 
-// clip returns s if it's at most n bytes, or its start with "…" added, n bytes in all.
+// clip returns s if it's at most n bytes, or its start with "…" added, n bytes in all (but never less
+// than the "…").
 func clip(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return cutUTF8(s, n-len("…")) + "…"
+	return cutUTF8(s, max(n-len("…"), 0)) + "…"
 }
 
 // load returns a document's metadata and content. A sync between the two lookups can leave the index

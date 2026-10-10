@@ -241,6 +241,22 @@ type found struct {
 	id int64
 }
 
+// boldMatches turns a snippet with matches between \x01 and \x02 into markdown with the matches in
+// bold, at most maxDescription bytes. A cut inside a match closes it.
+func boldMatches(s string) string {
+	head := s[:min(len(s), maxDescription)]
+	markers := strings.Count(head, "\x01") + strings.Count(head, "\x02") // each grows by a byte
+	s = clip(s, maxDescription-markers-2)
+	if strings.Count(s, "\x01") > strings.Count(s, "\x02") {
+		if cut, ok := strings.CutSuffix(s, "…"); ok {
+			s = cut + "\x02…"
+		} else {
+			s += "\x02"
+		}
+	}
+	return strings.NewReplacer("\x01", "**", "\x02", "**").Replace(s)
+}
+
 // addSnippets fills in the snippets of hits.
 func addSnippets(ctx context.Context, db *sql.DB, expr string, hits []found) error {
 	if len(hits) == 0 {
@@ -279,7 +295,7 @@ func addSnippets(ctx context.Context, db *sql.DB, expr string, hits []found) err
 			hits[i].Snippet = hits[i].Description // the match wasn't in the body
 			continue
 		}
-		hits[i].Snippet = clip(strings.NewReplacer("\x01", "**", "\x02", "**").Replace(s), maxDescription)
+		hits[i].Snippet = boldMatches(s)
 	}
 	return nil
 }

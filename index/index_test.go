@@ -701,6 +701,23 @@ func TestLongTitlesAreCut(t *testing.T) {
 	}
 }
 
+// A snippet cut inside a match still closes the bold span, and stays within the limit.
+func TestBoldMatches(t *testing.T) {
+	for _, s := range []string{
+		strings.Repeat("a", 490) + "\x01" + strings.Repeat("b", 30) + "\x02 c",
+		"\x01" + strings.Repeat("é", 400) + "\x02",
+		"short \x01match\x02 here",
+	} {
+		got := boldMatches(s)
+		if len(got) > maxDescription || strings.Count(got, "**")%2 != 0 || !utf8.ValidString(got) {
+			t.Errorf("boldMatches = %d bytes, %d markers: %q", len(got), strings.Count(got, "**"), got)
+		}
+	}
+	if got := boldMatches("short \x01match\x02 here"); got != "short **match** here" {
+		t.Errorf("short snippet: %q", got)
+	}
+}
+
 // Only errors that mean a generation is unusable for good get it discarded; anything else, such as a
 // cancelled context or too many open files, keeps the file for the next try.
 func TestUnusableErrors(t *testing.T) {

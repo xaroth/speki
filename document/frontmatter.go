@@ -149,7 +149,8 @@ const (
 )
 
 // The longest title and description that answers show whole, in bytes. Longer ones are kept, with a
-// warning, so a change can't add one.
+// warning, so a change can't add one. The warnings' text mustn't vary with the length: a change may keep
+// a problem the document already had, and that's found by comparing the text.
 const (
 	MaxTitle       = 200
 	MaxDescription = 500

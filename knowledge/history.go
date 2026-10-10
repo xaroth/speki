@@ -17,12 +17,10 @@ const clientTrailer = "Speki-Client:"
 // GitHub's answer is lost.
 const requestTrailer = "Speki-Request:"
 
-// maxClient is the longest client name history shows, in bytes. Speki writes shorter ones; commits
-// made elsewhere may carry anything.
-const maxClient = 64
-
-// How much of a commit's author name and subject history shows, in bytes.
+// How much of a commit history shows, in bytes. Speki writes short client names; commits made elsewhere
+// may carry anything.
 const (
+	maxClient  = 64
 	maxAuthor  = 100
 	maxSubject = 300
 )
