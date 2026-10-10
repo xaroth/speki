@@ -20,6 +20,10 @@ var version = "dev"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop() // a second signal during the drain ends the process at once
+	}()
 	err := run(ctx, os.Args[1:], os.Environ(), os.Stdout, os.Stderr)
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {

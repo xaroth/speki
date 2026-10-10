@@ -30,6 +30,8 @@ type fakeGitHub struct {
 	repo   *git.Repository
 	dir    string
 
+	block chan struct{} // when set, the installation list waits for it to close
+
 	mu        sync.Mutex      // commits, and refresh tokens, arrive from several instances at once
 	refreshed map[string]bool // GitHub refresh tokens work once
 	refreshes int
@@ -131,6 +133,12 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	case "/app":
 		write(map[string]any{"id": 1, "owner": map[string]any{"id": 42}})
 	case "/app/installations":
+		if f.block != nil {
+			select {
+			case <-f.block:
+			case <-r.Context().Done():
+			}
+		}
 		write([]any{map[string]any{"id": 1, "account": map[string]any{"id": 42}}})
 	case "/app/installations/1/access_tokens":
 		w.WriteHeader(http.StatusCreated)

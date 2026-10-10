@@ -227,10 +227,18 @@ dependency for a fake happens through `Config`, not through globals or build tag
 So an instance with a persistent data directory serves from disk within seconds, even if GitHub is down.
 An instance on an empty disk is ready quickly but has no vaults until the first ones finish indexing.
 
-When `Run`'s context ends: mark not ready, stop accepting new requests, let running requests finish (up to 25 seconds),
-stop the loops, close indexes and the store, and return from `Run`. Every goroutine is started from
-`service` or `library` with a context it watches, and its starter waits for it to end. `cmd/speki` turns
-`SIGTERM` into a cancelled context. `service` never looks at signals itself.
+When `Run`'s context ends, within 25 seconds in all:
+
+1. Mark not ready, for good: `/readyz` and `/mcp` answer 503 from now on.
+2. Stop the background loops and wait for them, so requests still running see open vaults.
+3. Stop accepting requests and let running ones finish. When the 25 seconds are up, close their
+   connections. That's logged, not an error: a routine stop exits 0.
+4. Close indexes, the sandbox and the store, and return from `Run`.
+
+`/mcp` also answers 503 with `Retry-After` before the first discovery round, like `/readyz`. Every
+goroutine is started from `service` or `library` with a context it watches, and its starter waits for
+it to end. `cmd/speki` turns `SIGTERM` into a cancelled context, and a second signal during the drain
+ends the process at once. `service` never looks at signals itself.
 
 ## Errors
 
