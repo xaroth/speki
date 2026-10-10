@@ -44,7 +44,7 @@ type Commit struct {
 // History returns the newest commits on the vault's default branch, as GitHub shows them to the user.
 func (b *Base) History(ctx context.Context, g *access.Grant, req HistoryRequest) ([]Commit, error) {
 	if req.Limit < 0 || req.Limit > 50 {
-		return nil, errorf(Invalid, "limit must be between 1 and 50")
+		return nil, errorf(CodeInvalid, "limit must be between 1 and 50")
 	}
 	limit := req.Limit
 	if limit == 0 {
@@ -60,7 +60,7 @@ func (b *Base) History(ctx context.Context, g *access.Grant, req HistoryRequest)
 		return nil, noVault(v.Name)
 	}
 	if errors.Is(err, gh.ErrUnauthorized) {
-		return nil, errorf(Unavailable, "GitHub no longer accepts your sign-in. Ask the user to reconnect speki")
+		return nil, errorf(CodeUnavailable, "GitHub no longer accepts your sign-in. Ask the user to reconnect speki")
 	}
 	if err != nil {
 		return nil, err

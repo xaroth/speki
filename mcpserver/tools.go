@@ -186,14 +186,14 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 		case err == nil:
 		case errors.As(err, &kerr):
 			outcome = string(kerr.Code)
-			err = kerr                              // without any context wrapped around it
-			if kerr.Code == knowledge.Unavailable { // every unavailable carries the request ID
+			err = kerr                                  // without any context wrapped around it
+			if kerr.Code == knowledge.CodeUnavailable { // every unavailable carries the request ID
 				err = fmt.Errorf("%w. Request ID: %s", kerr, telemetry.RequestIDFrom(ctx))
 			}
 		case ctx.Err() != nil: // the client went away or gave up
 			outcome = "canceled"
 		default:
-			outcome = string(knowledge.Unavailable)
+			outcome = string(knowledge.CodeUnavailable)
 			s.logger.ErrorContext(ctx, "tool failed", "tool", name, "login", g.User().Login, "err", err)
 			err = fmt.Errorf("unavailable: something went wrong on speki's side or GitHub's. Try again; if it keeps failing, give the operator request ID %s", telemetry.RequestIDFrom(ctx))
 		}

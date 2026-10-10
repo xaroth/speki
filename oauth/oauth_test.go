@@ -435,7 +435,7 @@ func TestRefreshRejects(t *testing.T) {
 	h := newHarness(t)
 	clientID, first := h.signedIn()
 
-	foreign, err := h.s.keys.Seal(seal.Refresh, refreshValue{ClientID: clientID, Audience: "https://other.example/mcp", Scopes: []string{ScopeRead}}, time.Now().Add(time.Hour))
+	foreign, err := h.s.keys.Seal(seal.PurposeRefresh, refreshValue{ClientID: clientID, Audience: "https://other.example/mcp", Scopes: []string{ScopeRead}}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +620,7 @@ func TestExpiredCode(t *testing.T) {
 
 func TestMiddlewareRejects(t *testing.T) {
 	h := newHarness(t)
-	foreign, err := h.s.keys.Seal(seal.Access, accessValue{UserID: 1, Audience: "https://other.example/mcp"}, time.Now().Add(time.Hour))
+	foreign, err := h.s.keys.Seal(seal.PurposeAccess, accessValue{UserID: 1, Audience: "https://other.example/mcp"}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,20 +876,20 @@ func TestExpiredValues(t *testing.T) {
 	past := time.Now().Add(-time.Hour)
 	clientID, _ := h.signedIn()
 
-	access, _ := h.s.keys.Seal(seal.Access, accessValue{UserID: 7, Login: "octocat", Token: "ghu_1", Audience: issuer + "/mcp"}, past)
+	access, _ := h.s.keys.Seal(seal.PurposeAccess, accessValue{UserID: 7, Login: "octocat", Token: "ghu_1", Audience: issuer + "/mcp"}, past)
 	if _, status := h.identity(access); status != http.StatusUnauthorized {
 		t.Errorf("expired access token: %d", status)
 	}
-	refresh, _ := h.s.keys.Seal(seal.Refresh, refreshValue{UserID: 7, Refresh: "ghr_x", ClientID: clientID, Audience: issuer + "/mcp"}, past)
+	refresh, _ := h.s.keys.Seal(seal.PurposeRefresh, refreshValue{UserID: 7, Refresh: "ghr_x", ClientID: clientID, Audience: issuer + "/mcp"}, past)
 	if _, rec := h.tokens(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); rec.Code != http.StatusBadRequest {
 		t.Errorf("expired refresh token: %d", rec.Code)
 	}
-	consent, _ := h.s.keys.Seal(seal.Consent, consentValue{CookieHash: hash("c")}, past)
+	consent, _ := h.s.keys.Seal(seal.PurposeConsent, consentValue{CookieHash: hash("c")}, past)
 	rec := h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent}, "decision": {"allow"}}.Encode()), &http.Cookie{Name: consentCookie, Value: "c"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expired consent: %d", rec.Code)
 	}
-	tx, _ := h.s.keys.Seal(seal.Transaction, transaction{Nonce: "n"}, past)
+	tx, _ := h.s.keys.Seal(seal.PurposeTransaction, transaction{Nonce: "n"}, past)
 	rec = h.do(http.MethodGet, "/oauth/github/callback?code=good&state=n", nil, &http.Cookie{Name: txCookie + "n", Value: tx})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expired transaction: %d", rec.Code)

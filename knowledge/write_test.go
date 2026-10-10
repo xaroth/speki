@@ -78,19 +78,19 @@ func TestWriteRefusesTakenPaths(t *testing.T) {
 	content := "# New\n"
 
 	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Content: content})
-	wantCode(t, err, AlreadyExists)
+	wantCode(t, err, CodeAlreadyExists)
 	var kerr *Error
 	if errors.As(err, &kerr); kerr.Version != f.version(t, "README.md") {
 		t.Errorf("already_exists without the current version: %+v", kerr)
 	}
 	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "huge.md", Content: content})
-	wantCode(t, err, AlreadyExists)
+	wantCode(t, err, CodeAlreadyExists)
 	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "readme.md", Content: content})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "Services/new.md", Content: content})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "notes.txt", Content: content})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	if len(f.github.requests) != 0 {
 		t.Errorf("committed %d times", len(f.github.requests))
 	}
@@ -113,13 +113,13 @@ func TestWriteReplaces(t *testing.T) {
 	}
 
 	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "# Stale\n"})
-	wantCode(t, err, Conflict)
+	wantCode(t, err, CodeConflict)
 	var kerr *Error
 	if errors.As(err, &kerr); kerr.Version != res.Version {
 		t.Errorf("conflict without the current version: %+v", kerr)
 	}
 	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "gone.md", Version: v, Content: "# Gone\n"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 }
 
 func TestWriteChecksContent(t *testing.T) {
@@ -129,12 +129,12 @@ func TestWriteChecksContent(t *testing.T) {
 		content string
 		code    Code
 	}{
-		"bad status":       {"---\ntitle: A\nstatus: wip\n---\n", Invalid},
-		"no title":         {"just text\n", Invalid},
-		"broken yaml":      {"---\ntitle: [\n---\n# A\n", Invalid},
-		"too large":        {"# A\n" + strings.Repeat("x", 1<<20), TooLarge},
-		"not UTF-8":        {"# A\n\xff\n", Invalid},
-		"tags as a string": {"---\ntitle: A\ntags: a, b\n---\n", Invalid},
+		"bad status":       {"---\ntitle: A\nstatus: wip\n---\n", CodeInvalid},
+		"no title":         {"just text\n", CodeInvalid},
+		"broken yaml":      {"---\ntitle: [\n---\n# A\n", CodeInvalid},
+		"too large":        {"# A\n" + strings.Repeat("x", 1<<20), CodeTooLarge},
+		"not UTF-8":        {"# A\n\xff\n", CodeInvalid},
+		"tags as a string": {"---\ntitle: A\ntags: a, b\n---\n", CodeInvalid},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: tt.content})
@@ -179,9 +179,9 @@ func TestEdit(t *testing.T) {
 	}
 
 	_, err = edit(EditRequest{OldText: "not there", NewText: "x"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = edit(EditRequest{OldText: "ESI proxy", NewText: "Proxy"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	if !strings.Contains(err.Error(), "2 times") {
 		t.Errorf("count missing from %v", err)
 	}
@@ -193,13 +193,13 @@ func TestEdit(t *testing.T) {
 		t.Errorf("replace_all: %s", got.Content)
 	}
 	_, err = edit(EditRequest{OldText: "tags: [esi]", NewText: "status: wip"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = edit(EditRequest{OldText: "Postgres", NewText: "PG", Version: res.Version, Path: "services/db/pg.md"})
-	wantCode(t, err, Conflict)
+	wantCode(t, err, CodeConflict)
 	_, err = edit(EditRequest{OldText: "", NewText: "x"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = edit(EditRequest{OldText: "x", NewText: "y", Path: "gone.md"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 }
 
 // A document whose frontmatter was broken outside speki can be fixed, but not changed while broken.
@@ -215,7 +215,7 @@ func TestEditExistingProblems(t *testing.T) {
 		t.Errorf("edit keeping an old problem: %v", err)
 	}
 	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "Body text.", NewText: "Better text."})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "title: [", NewText: "title: Fixed"})
 	if err != nil {
 		t.Errorf("edit fixing the block: %v", err)
@@ -234,11 +234,11 @@ func TestMoveAndDelete(t *testing.T) {
 	v := f.version(t, "a.md")
 
 	_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "z.md"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "taken.md", Version: v})
-	wantCode(t, err, AlreadyExists)
+	wantCode(t, err, CodeAlreadyExists)
 	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "z.md", Version: "0000"})
-	wantCode(t, err, Conflict)
+	wantCode(t, err, CodeConflict)
 
 	res, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "archive/a.md", Version: v})
 	if err != nil {
@@ -259,7 +259,7 @@ func TestMoveAndDelete(t *testing.T) {
 	}
 
 	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: "b.md"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	res, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: "archive/a.md", Version: v})
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestMoveAndDelete(t *testing.T) {
 		t.Errorf("delete = %+v", res)
 	}
 	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "archive/a.md"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 }
 
 func TestWriteAccess(t *testing.T) {
@@ -278,11 +278,11 @@ func TestWriteAccess(t *testing.T) {
 
 	readOnly := access.NewGrant(access.User{Login: "octocat", Token: "ghu_x"}, []vault.Vault{ours, shared}, []int64{1})
 	_, err := f.base.Write(ctx, readOnly, req)
-	wantCode(t, err, ReadOnlySession)
+	wantCode(t, err, CodeReadOnlySession)
 
 	req.Vault = "ours/shared"
 	_, err = f.base.Write(ctx, f.grant, req)
-	wantCode(t, err, NoWriteAccess)
+	wantCode(t, err, CodeNoWriteAccess)
 	for _, err := range []error{
 		func() error {
 			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/secret", Path: "x.md", Content: "# X\n"})
@@ -301,7 +301,7 @@ func TestWriteAccess(t *testing.T) {
 			return err
 		}(),
 	} {
-		wantCode(t, err, NotFound)
+		wantCode(t, err, CodeNotFound)
 	}
 	if len(f.github.requests) != 0 {
 		t.Errorf("committed %d times", len(f.github.requests))
@@ -328,7 +328,7 @@ func TestCommitRetriesWhenTheBranchMoves(t *testing.T) {
 
 	f.github.before = func(r *fakeRepo) { r.head += "+" }
 	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "airship", NewText: "zeppelin"})
-	wantCode(t, err, Conflict)
+	wantCode(t, err, CodeConflict)
 	var kerr *Error
 	if errors.As(err, &kerr); kerr.Version == "" || !strings.Contains(kerr.Message, kerr.Version) {
 		t.Errorf("conflict without the current version: %+v", kerr)
@@ -344,11 +344,11 @@ func TestCommitErrors(t *testing.T) {
 		err  error
 		code Code
 	}{
-		{&gh.SecretError{Detail: "GitHub Personal Access Token"}, SecretDetected},
-		{gh.ErrBranchRules, VaultReadOnly},
-		{gh.ErrForbidden, NoWriteAccess},
-		{&gh.RateLimitError{RetryAfter: 30 * time.Second}, RateLimited},
-		{gh.ErrUnauthorized, Unavailable},
+		{&gh.SecretError{Detail: "GitHub Personal Access Token"}, CodeSecretDetected},
+		{gh.ErrBranchRules, CodeVaultReadOnly},
+		{gh.ErrForbidden, CodeNoWriteAccess},
+		{&gh.RateLimitError{RetryAfter: 30 * time.Second}, CodeRateLimited},
+		{gh.ErrUnauthorized, CodeUnavailable},
 	} {
 		f.github.err = tt.err
 		_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
@@ -419,7 +419,7 @@ func TestConcurrentEdits(t *testing.T) {
 		switch {
 		case err == nil:
 			ok++
-		case errors.As(err, &kerr) && kerr.Code == Conflict:
+		case errors.As(err, &kerr) && kerr.Code == CodeConflict:
 			conflicts++
 		default:
 			t.Error(err)
@@ -490,7 +490,7 @@ func TestWriteEdges(t *testing.T) {
 	f.copies[1] = newCopy(t, map[string]string{"empty.md": "", "dir.md/inside.md": "# Inside\n"})
 
 	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "dir.md", Content: "# Dir\n"})
-	wantCode(t, err, AlreadyExists)
+	wantCode(t, err, CodeAlreadyExists)
 
 	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "empty.md", To: "still-empty.md", Version: f.version(t, "empty.md")})
 	if err != nil {
@@ -545,7 +545,7 @@ func TestWriteNormalisation(t *testing.T) {
 		t.Errorf("new document at %q, not in the existing NFD folder", got)
 	}
 	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "menü/brötchen.md", Content: "# Copy\n"})
-	wantCode(t, err, AlreadyExists)
+	wantCode(t, err, CodeAlreadyExists)
 }
 
 // The grant is checked before the request itself, so a read-only session always hears so.
@@ -554,11 +554,11 @@ func TestGrantIsCheckedFirst(t *testing.T) {
 	readOnly := access.NewGrant(access.User{Login: "octocat"}, []vault.Vault{ours}, []int64{1})
 	ctx := t.Context()
 	_, err := f.base.Move(ctx, readOnly, MoveRequest{Vault: "ours/kb", From: "a.md", To: "a.md"})
-	wantCode(t, err, ReadOnlySession)
+	wantCode(t, err, CodeReadOnlySession)
 	_, err = f.base.Delete(ctx, readOnly, DeleteRequest{Vault: "ours/kb", Path: "a.md"})
-	wantCode(t, err, ReadOnlySession)
+	wantCode(t, err, CodeReadOnlySession)
 	_, err = f.base.Edit(ctx, readOnly, EditRequest{Vault: "ours/kb", Path: "a.md"})
-	wantCode(t, err, ReadOnlySession)
+	wantCode(t, err, CodeReadOnlySession)
 }
 
 func TestWritePathChecks(t *testing.T) {
@@ -569,18 +569,18 @@ func TestWritePathChecks(t *testing.T) {
 	// Nothing goes under a file.
 	for _, p := range []string{"README.md/x.md", "notes.txt/a.md"} {
 		_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: p, Content: "# X\n"})
-		wantCode(t, err, AlreadyExists)
+		wantCode(t, err, CodeAlreadyExists)
 	}
 	_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "café.md", To: "README.md/café.md", Version: f.version(t, "café.md")})
-	wantCode(t, err, AlreadyExists)
+	wantCode(t, err, CodeAlreadyExists)
 
 	// A move to the same path in another normalisation isn't a move.
 	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "café.md", To: norm.NFD.String("café.md"), Version: f.version(t, "café.md")})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 
 	// Overlapping matches count: "ab ab" appears twice in "ab ab ab".
 	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "body.md", OldText: "ab ab", NewText: "x"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	if len(f.github.requests) != 0 {
 		t.Errorf("committed %d times", len(f.github.requests))
 	}
@@ -625,7 +625,7 @@ func TestWriteDuringARebuild(t *testing.T) {
 	f.github.push("ours/kb", "README.md", []byte("# Changed\n"))
 	f.vaults.syncErr = ErrRebuilding
 	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "# Mine\n"})
-	wantCode(t, err, Unavailable)
+	wantCode(t, err, CodeUnavailable)
 	if !strings.Contains(err.Error(), "rebuilding") {
 		t.Errorf("error = %v", err)
 	}
@@ -637,7 +637,7 @@ func TestMoveConflictCarriesTheSourceVersion(t *testing.T) {
 	f.github.before = func(r *fakeRepo) { r.head += "+" }
 	_, err := f.base.Move(t.Context(), f.grant, MoveRequest{Vault: "ours/kb", From: "README.md", To: "about.md", Version: v})
 	var kerr *Error
-	if !errors.As(err, &kerr) || kerr.Code != Conflict || kerr.Version != v {
+	if !errors.As(err, &kerr) || kerr.Code != CodeConflict || kerr.Version != v {
 		t.Errorf("conflict = %+v, want the version of README.md", err)
 	}
 }
@@ -653,7 +653,7 @@ func TestLongTitles(t *testing.T) {
 		t.Errorf("editing a document with a long title: %v", err)
 	}
 	_, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "---\ntitle: " + long + "\n---\nBody.\n"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	if err != nil && !strings.Contains(err.Error(), "longer than") {
 		t.Errorf("refused for another reason: %v", err)
 	}

@@ -47,7 +47,7 @@ type Page struct {
 // Read returns a document's raw text, or the lines asked for, up to 1,000 lines and 64 KiB.
 func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page, error) {
 	if req.FromLine < 0 || req.LineCount < 0 {
-		return Page{}, errorf(Invalid, "from_line and line_count can't be negative")
+		return Page{}, errorf(CodeInvalid, "from_line and line_count can't be negative")
 	}
 	v, c, err := b.open(g, req.Vault)
 	if err != nil {
@@ -56,7 +56,7 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	path := strings.TrimPrefix(req.Path, "/")
 	doc, raw, err := b.load(ctx, c, path)
 	if errors.Is(err, index.ErrNotFound) {
-		return Page{}, errorf(NotFound, "%s has no document %s. Use search or list to find it", v.Name, path)
+		return Page{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", v.Name, path)
 	}
 	if err != nil {
 		return Page{}, indexError(v.Name, err)
@@ -65,7 +65,7 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	lines := splitLines(string(raw))
 	from := max(req.FromLine, 1)
 	if from > max(len(lines), 1) { // an empty document can still be read from line 1
-		return Page{}, errorf(Invalid, "%s has %d lines, so from_line %d is past the end", path, len(lines), from)
+		return Page{}, errorf(CodeInvalid, "%s has %d lines, so from_line %d is past the end", path, len(lines), from)
 	}
 	want := req.LineCount
 	if want == 0 || want > maxReadLines {

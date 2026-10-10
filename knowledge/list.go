@@ -73,14 +73,14 @@ func (b *Base) List(ctx context.Context, g *access.Grant, req ListRequest) (List
 		folder += "/"
 	}
 	if req.Cursor != "" && !strings.HasPrefix(req.Cursor, folder) {
-		return Listing{}, errorf(Invalid, "the cursor belongs to another listing. Leave it out to start from the beginning")
+		return Listing{}, errorf(CodeInvalid, "the cursor belongs to another listing. Leave it out to start from the beginning")
 	}
 	entries, err := c.Index().List(ctx, folder, req.Recursive, req.Cursor, listLimit+1)
 	if err != nil {
 		return Listing{}, indexError(v.Name, err)
 	}
 	if len(entries) == 0 && folder != "" && req.Cursor == "" {
-		return Listing{}, errorf(NotFound, "%s has no documents under %s. Call list on the vault root to see its folders", v.Name, folder)
+		return Listing{}, errorf(CodeNotFound, "%s has no documents under %s. Call list on the vault root to see its folders", v.Name, folder)
 	}
 
 	var out Listing

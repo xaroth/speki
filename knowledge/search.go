@@ -22,10 +22,10 @@ type SearchRequest struct {
 // Search runs a full-text search across vaults, best match first. Hits carry the vault name as Source.
 func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (index.Results, error) {
 	if req.Limit < 0 || req.Limit > 50 {
-		return index.Results{}, errorf(Invalid, "limit must be between 1 and 50")
+		return index.Results{}, errorf(CodeInvalid, "limit must be between 1 and 50")
 	}
 	if strings.TrimSpace(req.Query) == "" {
-		return index.Results{}, errorf(Invalid, "the query is empty. Give one or more words to search for")
+		return index.Results{}, errorf(CodeInvalid, "the query is empty. Give one or more words to search for")
 	}
 
 	var sources []index.Source
@@ -62,11 +62,11 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	})
 	switch {
 	case errors.Is(err, index.ErrEmptyQuery):
-		return index.Results{}, errorf(Invalid, "the query has no words to search for, only exclusions. Add a word")
+		return index.Results{}, errorf(CodeInvalid, "the query has no words to search for, only exclusions. Add a word")
 	case errors.Is(err, index.ErrTooManyWords):
-		return index.Results{}, errorf(Invalid, "%s. Search for the few words that matter most", err)
+		return index.Results{}, errorf(CodeInvalid, "%s. Search for the few words that matter most", err)
 	case errors.Is(err, index.ErrClosed):
-		return index.Results{}, errorf(NotFound, "a vault was removed during the search. Search again")
+		return index.Results{}, errorf(CodeNotFound, "a vault was removed during the search. Search again")
 	case err != nil:
 		return index.Results{}, err
 	}

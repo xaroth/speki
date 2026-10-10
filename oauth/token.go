@@ -75,7 +75,7 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 func (s *Server) codeGrant(w http.ResponseWriter, r *http.Request) {
 	f := r.PostForm
 	var c codeValue
-	err := s.keys.Open(seal.Code, f.Get("code"), &c)
+	err := s.keys.Open(seal.PurposeCode, f.Get("code"), &c)
 	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the code is invalid or expired")
 		return
@@ -125,7 +125,7 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 	f := r.PostForm
 	old := f.Get("refresh_token")
 	var rv refreshValue
-	err := s.keys.Open(seal.Refresh, old, &rv)
+	err := s.keys.Open(seal.PurposeRefresh, old, &rv)
 	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the refresh token is invalid or expired")
 		return
@@ -309,7 +309,7 @@ func (s *Server) issue(
 ) (tokenResponse, error) {
 	now := s.now()
 	accessExpires := minTime(now.Add(accessLifetime), tokens.AccessExpires)
-	access, err := s.keys.Seal(seal.Access, accessValue{
+	access, err := s.keys.Seal(seal.PurposeAccess, accessValue{
 		UserID:   user.ID,
 		Login:    user.Login,
 		Token:    tokens.AccessToken,
@@ -320,7 +320,7 @@ func (s *Server) issue(
 	if err != nil {
 		return tokenResponse{}, err
 	}
-	refresh, err := s.keys.Seal(seal.Refresh, refreshValue{
+	refresh, err := s.keys.Seal(seal.PurposeRefresh, refreshValue{
 		UserID:   user.ID,
 		Login:    user.Login,
 		Refresh:  tokens.RefreshToken,

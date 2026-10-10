@@ -110,7 +110,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cookie := randomToken()
-	consent, err := s.keys.Seal(seal.Consent, consentValue{Request: req, CookieHash: hash(cookie)}, s.now().Add(consentLifetime))
+	consent, err := s.keys.Seal(seal.PurposeConsent, consentValue{Request: req, CookieHash: hash(cookie)}, s.now().Add(consentLifetime))
 	if err != nil {
 		s.serverError(w, r, err)
 		return
@@ -154,7 +154,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var cv consentValue
-	err = s.keys.Open(seal.Consent, r.PostForm.Get("consent"), &cv)
+	err = s.keys.Open(seal.PurposeConsent, r.PostForm.Get("consent"), &cv)
 	cookie, cerr := r.Cookie(consentCookie)
 	if err != nil || cerr != nil || subtle.ConstantTimeCompare([]byte(hash(cookie.Value)), []byte(cv.CookieHash)) != 1 {
 		s.errorPage(w, r, http.StatusBadRequest, "This sign-in expired.", "Start signing in again from your program.")
@@ -176,7 +176,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		Verifier: verifier,
 		Nonce:    nonce,
 	}
-	sealed, err := s.keys.Seal(seal.Transaction, tx, s.now().Add(consentLifetime))
+	sealed, err := s.keys.Seal(seal.PurposeTransaction, tx, s.now().Add(consentLifetime))
 	if err != nil {
 		s.serverError(w, r, err)
 		return
@@ -214,7 +214,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(txCookie + nonce)
 	var tx transaction
 	if err == nil {
-		err = s.keys.Open(seal.Transaction, cookie.Value, &tx)
+		err = s.keys.Open(seal.PurposeTransaction, cookie.Value, &tx)
 	}
 	if nonce == "" || err != nil || subtle.ConstantTimeCompare([]byte(tx.Nonce), []byte(nonce)) != 1 {
 		s.errorPage(w, r, http.StatusBadRequest, "This sign-in expired.", "Start signing in again from your program.")
@@ -270,7 +270,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	if tx.Write {
 		scopes = append(scopes, ScopeWrite)
 	}
-	code, err := s.keys.Seal(seal.Code, codeValue{
+	code, err := s.keys.Seal(seal.PurposeCode, codeValue{
 		ID:            randomToken(),
 		User:          user,
 		Tokens:        tokens,

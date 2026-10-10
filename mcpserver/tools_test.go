@@ -284,7 +284,7 @@ func TestToolResults(t *testing.T) {
 }
 
 func TestToolErrors(t *testing.T) {
-	kb := &fakeKB{err: &knowledge.Error{Code: knowledge.NotFound, Message: "no such document"}}
+	kb := &fakeKB{err: &knowledge.Error{Code: knowledge.CodeNotFound, Message: "no such document"}}
 	cs := connect(t, kb)
 
 	res, text := call(t, cs, "read", map[string]any{"vault": "ours/kb", "path": "a.md"})
@@ -371,11 +371,11 @@ func TestHandleErrors(t *testing.T) {
 	telemetry.RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		reqCtx = context.WithValue(r.Context(), grantKey{}, g)
 	})).ServeHTTP(httptest.NewRecorder(), withID)
-	if err := run(reqCtx, &knowledge.Error{Code: knowledge.Unavailable, Message: "reconnect"}); err == nil || !strings.Contains(err.Error(), "Request ID: test-id") {
+	if err := run(reqCtx, &knowledge.Error{Code: knowledge.CodeUnavailable, Message: "reconnect"}); err == nil || !strings.Contains(err.Error(), "Request ID: test-id") {
 		t.Errorf("unavailable without a request ID: %v", err)
 	}
 
-	wrapped := fmt.Errorf("vault x: %w", &knowledge.Error{Code: knowledge.Invalid, Message: "bad"})
+	wrapped := fmt.Errorf("vault x: %w", &knowledge.Error{Code: knowledge.CodeInvalid, Message: "bad"})
 	if err := run(ctx, wrapped); err == nil || err.Error() != "invalid: bad" {
 		t.Errorf("wrapped knowledge error = %v", err)
 	}

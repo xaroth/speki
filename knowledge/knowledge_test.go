@@ -382,9 +382,9 @@ func TestList(t *testing.T) {
 	}
 
 	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb", Path: "nothing"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb", Path: "services", Cursor: "README.md"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 }
 
 func TestListPages(t *testing.T) {
@@ -448,7 +448,7 @@ func TestSearch(t *testing.T) {
 	} {
 		_, err := f.base.Search(ctx, f.grant, req)
 		var kerr *Error
-		if !errors.As(err, &kerr) || kerr.Code != Invalid {
+		if !errors.As(err, &kerr) || kerr.Code != CodeInvalid {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -482,9 +482,9 @@ func TestRead(t *testing.T) {
 	}
 
 	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", FromLine: 12})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "nope.md"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 }
 
 func TestReadCaps(t *testing.T) {
@@ -552,9 +552,9 @@ func TestHistory(t *testing.T) {
 
 	f.github.historyErr = gh.ErrNotFound
 	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb", Limit: 51})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 }
 
 // TestOtherVaultsStayHidden tries every read path on a vault the user can't read, which has a document
@@ -584,15 +584,15 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 		}
 	}
 	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: hidden, Vaults: []string{secret.Name}})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: hidden, Vaults: []string{"ours/kb", secret.Name}})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: secret.Name})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: secret.Name, Path: "services/esi-proxy.md"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.History(ctx, f.grant, HistoryRequest{Vault: secret.Name})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	if f.github.repo != "" {
 		t.Error("asked GitHub about the secret vault")
 	}
@@ -604,15 +604,15 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 	}
 	// Names match without regard to case, which doesn't open the secret vault either.
 	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "OURS/SECRET", Path: "services/esi-proxy.md"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 
 	// Filters aimed at the secret vault don't get past the vault check.
 	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: secret.Name, Path: "services"})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: hidden, Vaults: []string{secret.Name}, Path: "services", Tags: []string{"x"}})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 	_, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{secret.Name}})
-	wantCode(t, err, NotFound)
+	wantCode(t, err, CodeNotFound)
 
 	// The answer for a vault the user can't read is the answer for one that doesn't exist.
 	_, errSecret := f.base.Read(ctx, f.grant, ReadRequest{Vault: secret.Name, Path: "x.md"})
@@ -723,5 +723,5 @@ func TestHistoryEdges(t *testing.T) {
 	}
 	f.github.historyErr = fmt.Errorf("commits: %w", gh.ErrUnauthorized)
 	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
-	wantCode(t, err, Unavailable)
+	wantCode(t, err, CodeUnavailable)
 }

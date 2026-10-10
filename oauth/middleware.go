@@ -61,7 +61,7 @@ func (s *Server) Unauthorized(w http.ResponseWriter, reason string) {
 
 func (s *Server) verify(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 	var a accessValue
-	err := s.keys.Open(seal.Access, token, &a)
+	err := s.keys.Open(seal.PurposeAccess, token, &a)
 	if errors.Is(err, seal.ErrExpired) {
 		return nil, fmt.Errorf("%w: expired", auth.ErrInvalidToken)
 	}
