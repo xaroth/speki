@@ -4,7 +4,7 @@ silent: true
 
 vars:
   BIN_DIR: bin
-  # sqlite_fts5 and sqlite_omit_load_extension are needed once the index lands; harmless before.
+  # The search index needs FTS5; loading extensions is compiled out.
   TAGS: sqlite_fts5,sqlite_omit_load_extension
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
@@ -24,6 +24,32 @@ tasks:
     summary: Run golangci-lint
     cmds:
       - golangci-lint run --build-tags '{{.TAGS}}' ./...
+
+  vet:
+    summary: Run go vet
+    cmds:
+      - CGO_ENABLED=1 go vet -tags '{{.TAGS}}' ./...
+
+  vuln:
+    summary: Check dependencies and code for known vulnerabilities
+    cmds:
+      - go run golang.org/x/vuln/cmd/govulncheck@latest -tags '{{.TAGS}}' ./...
+
+  fuzz:
+    summary: Fuzz Parse and Touch for a short while
+    vars:
+      FUZZTIME: '{{.FUZZTIME | default "30s"}}'
+    cmds:
+      - go test -run '^$' -fuzz FuzzParseTouch -fuzztime {{.FUZZTIME}} ./document
+
+  ci:
+    summary: Everything CI runs, apart from the image build
+    cmds:
+      - task: vet
+      - task: lint
+      - task: test
+      - task: fuzz
+      - task: vuln
 
   run:
     summary: Build and run speki with ./config.yaml

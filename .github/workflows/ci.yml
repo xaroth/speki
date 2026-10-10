@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CGO_ENABLED: "1"
+  TAGS: sqlite_fts5,sqlite_omit_load_extension
+
+jobs:
+  test:
+    name: Vet, test and fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task vet
+      - run: task test
+      - run: task fuzz
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+
+  vuln:
+    name: Known vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task vuln
+
+  image:
+    name: Image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build --build-arg VERSION=${{ github.sha }} -t speki:ci .
