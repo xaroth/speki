@@ -30,9 +30,6 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 			return index.Rows{}, errorf(Invalid, "you can read %d vaults, and a query covers at most %d. Name the ones to query in vaults", len(sources), index.MaxQuerySources)
 		}
 	}
-	if len(req.Vaults) > index.MaxQuerySources {
-		return index.Rows{}, errorf(Invalid, "a query covers at most %d vaults", index.MaxQuerySources)
-	}
 	seen := map[int64]bool{}
 	for _, name := range req.Vaults {
 		v, c, err := b.open(g, name)
@@ -46,6 +43,9 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 		sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
 	}
 
+	if len(sources) > index.MaxQuerySources { // counted after repeats are dropped
+		return index.Rows{}, errorf(Invalid, "a query covers at most %d vaults", index.MaxQuerySources)
+	}
 	ctx, cancel := context.WithTimeout(ctx, index.QueryTimeout)
 	defer cancel()
 	done, err := b.queryTurn(ctx, g.User().ID)

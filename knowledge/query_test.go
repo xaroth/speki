@@ -81,3 +81,14 @@ func TestOneQueryPerUser(t *testing.T) {
 		t.Errorf("after the first query ended: %v", err)
 	}
 }
+
+func TestQueryCountsVaultsAfterRepeats(t *testing.T) {
+	f := newFixture(t)
+	names := make([]string, 12)
+	for i := range names {
+		names[i] = "ours/kb"
+	}
+	if _, err := f.base.Query(t.Context(), f.grant, QueryRequest{SQL: "SELECT 1", Vaults: names}); err != nil {
+		t.Errorf("one vault named twelve times: %v", err)
+	}
+}

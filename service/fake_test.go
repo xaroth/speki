@@ -179,6 +179,9 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	case "/repos/" + hiddenRepo + "/contents/speki.yaml":
 		write(map[string]any{"type": "file", "encoding": "base64",
 			"content": base64.StdEncoding.EncodeToString([]byte("title: Secret\ndescription: Not for this user.\n"))})
+	case "/repos/" + hiddenRepo + "/commits": // only reached if speki asked GitHub about it, which it mustn't
+		write([]any{map[string]any{"sha": "c9", "commit": map[string]any{"message": "launch codes",
+			"author": map[string]any{"name": "x", "date": "2026-10-09T14:02:11Z"}}}})
 	case "/repos/" + hiddenRepo:
 		write(map[string]any{"id": 101, "full_name": hiddenRepo})
 	case "/repos/" + hiddenRepo + "/git/ref/heads/master":

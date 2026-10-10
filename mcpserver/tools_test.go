@@ -414,7 +414,7 @@ func TestToolCallsAreLogged(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = cs.Close() }()
-	call(t, cs, "read", map[string]any{"vault": "ours/kb", "path": "a.md"})
+	call(t, cs, "read", map[string]any{"vault": "OURS/KB", "path": "a.md"}) // logged by GitHub's spelling
 
 	var line map[string]any
 	for l := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {

@@ -165,3 +165,13 @@ func TestNoRequiredOrgs(t *testing.T) {
 		t.Errorf("without required orgs: %v", err)
 	}
 }
+
+func TestVaultNamesFoldASCIIOnly(t *testing.T) {
+	g := NewGrant(User{}, []vault.Vault{{RepoID: 1, Name: "ours/kb"}}, nil)
+	if v, ok := g.Vault("Ours/KB"); !ok || v.Name != "ours/kb" {
+		t.Errorf("Ours/KB = %+v, %v", v, ok)
+	}
+	if _, ok := g.Vault("ours/\u212ab"); ok { // a Kelvin sign
+		t.Error("a Kelvin sign matched a k")
+	}
+}

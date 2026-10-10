@@ -26,7 +26,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | Code | Meaning |
 |---|---|
 | `not_found` | No such vault or document, or the user can't see it. Use `search` or `list` to find it |
-| `conflict` | The document changed since the given version. Includes the current version |
+| `conflict` | The document changed since the given version. Includes the current version (none when creating a document the vault keeps changing under) |
 | `already_exists` | `write` without a version, or `move` onto a path that's taken. Includes the current version when the path is a document; a file speki doesn't index, a folder, or the same name in another Unicode normalisation has none |
 | `invalid` | Bad path, bad frontmatter, `old_text` not found or not unique, bad SQL. Says what and where |
 | `no_write_access` | The user can read this vault but not push to it on GitHub |

@@ -220,6 +220,7 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 			changes:    []gh.FileChange{{Path: cur.Path}, {Path: newPath, Content: raw}},
 			message:    "Move " + cur.Path + " to " + newPath,
 			path:       newPath,
+			source:     cur.Path,
 			version:    cur.Version,
 			linkedFrom: linked,
 		}, nil
@@ -321,7 +322,7 @@ func (st state) newPath(path, moving string) (string, error) {
 		return p, ok
 	})
 	if errors.Is(err, document.ErrExists) {
-		return "", errorf(AlreadyExists, "%s. Pick another path", err)
+		return "", errorf(AlreadyExists, "%s (stored with a different Unicode encoding of the same name). Pick another path", err)
 	}
 	if err != nil {
 		return "", errorf(Invalid, "%s", err)
@@ -421,6 +422,7 @@ type plan struct {
 	changes    []gh.FileChange
 	message    string // used when the agent gave none
 	path       string // where the document is after the change
+	source     string // for a move, where it was: the document a conflict is about
 	version    string // its version there; empty when it's deleted
 	linkedFrom []string
 }
@@ -488,7 +490,11 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		if errors.Is(err, gh.ErrHeadMoved) {
 			moved++
 			if moved == commitAttempts {
-				return Result{}, b.keptChanging(ctx, v, p.path)
+				about := p.path
+				if p.source != "" {
+					about = p.source
+				}
+				return Result{}, b.keptChanging(ctx, v, about)
 			}
 			err = b.vaults.Sync(ctx, v.RepoID)
 			if errors.Is(err, ErrRebuilding) {
