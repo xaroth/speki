@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -183,6 +184,11 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokens, err := s.github.Exchange(r.Context(), s.cfg.GitHub, q.Get("code"), tx.Verifier, s.callbackURL())
+	if errors.Is(err, gh.ErrAppConfig) {
+		s.logger.ErrorContext(r.Context(), "GitHub code exchange failed", "err", err)
+		s.errorPage(w, r, http.StatusBadGateway, "Speki can't sign you in right now.", "Its GitHub app is misconfigured. Tell the person who runs speki.")
+		return
+	}
 	if err != nil {
 		s.logger.WarnContext(r.Context(), "GitHub code exchange failed", "err", err)
 		s.errorPage(w, r, http.StatusBadGateway, "GitHub didn't accept the sign-in.", "Try again from your program.")
