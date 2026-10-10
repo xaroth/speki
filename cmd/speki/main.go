@@ -57,6 +57,7 @@ func run(ctx context.Context, args, environ []string, stdout, stderr io.Writer) 
 	}
 	logger := telemetry.NewLogger(stderr, level)
 
+	cfg.Version = version
 	svc, err := service.New(cfg, logger)
 	if err != nil {
 		return err

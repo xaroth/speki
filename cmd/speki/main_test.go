@@ -212,8 +212,12 @@ func TestRunConfigFile(t *testing.T) {
 	environ := []string{
 		"SPEKI_LISTEN=127.0.0.1:0",
 		"SPEKI_METRICS_LISTEN=127.0.0.1:0",
+		"SPEKI_PUBLIC_URL=https://speki.example.com",
 		"SPEKI_GITHUB_APP_ID=1",
 		"SPEKI_GITHUB_PRIVATE_KEY_FILE=" + keyFile,
+		"SPEKI_GITHUB_CLIENT_ID=Iv1",
+		"SPEKI_GITHUB_CLIENT_SECRET=secret",
+		"SPEKI_AUTH_KEYS=keys: [{id: a, secret: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=, primary: true}]",
 		"SPEKI_GITHUB_ALLOWED_ACCOUNTS=42",
 		"SPEKI_GITHUB_API_URL=http://127.0.0.1:1", // nothing listens: the run is cancelled straight away
 		"SPEKI_SYNC_DATA_DIR=" + t.TempDir(),

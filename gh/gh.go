@@ -35,6 +35,7 @@ type Config struct {
 // Client talks to GitHub as the app and as its installations.
 type Client struct {
 	apiURL  string
+	web     *http.Client // GitHub's OAuth endpoints, which aren't part of the REST API
 	appAuth *ghinstallation.AppsTransport
 	app     *github.Client
 	metrics *metrics
@@ -75,6 +76,7 @@ func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
 	}
 	return &Client{
 		apiURL:   apiURL,
+		web:      &http.Client{Transport: m.observe("oauth", base), Timeout: requestTimeout},
 		appAuth:  appAuth,
 		app:      app,
 		metrics:  m,

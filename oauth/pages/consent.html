@@ -1,0 +1,37 @@
+{{define "consent.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in to speki</title>
+<style>
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; color: #222; }
+.who { padding: .75rem 1rem; background: #f3f3f3; border-radius: .5rem; }
+.warn { padding: .75rem 1rem; background: #fff4d6; border-radius: .5rem; }
+label { display: block; margin: .5rem 0; }
+button { font: inherit; padding: .5rem 1.25rem; margin-right: .5rem; }
+</style>
+</head>
+<body>
+<h1>Sign in to speki</h1>
+{{if .Local}}
+<p class="who">A program on this computer wants access to speki. It calls itself <strong>{{.Client}}</strong>,
+but programs can call themselves anything.</p>
+<p class="warn">Only continue if you just started signing in from your own tool, like Claude Code.</p>
+{{else}}
+<p class="who"><strong>{{.Host}}</strong> wants access to speki{{if .Client}} ({{.Client}}){{end}}.</p>
+{{end}}
+<p>After signing in with GitHub, you'll be sent back to <strong>{{.Redirect}}</strong>.</p>
+<form method="post" action="/oauth/authorize">
+<input type="hidden" name="consent" value="{{.Consent}}">
+<label><input type="radio" name="access" value="write" checked> Read and write: search, read and change
+knowledge in the vaults you can push to</label>
+<label><input type="radio" name="access" value="read"> Read only: search and read, never change anything</label>
+<p>
+<button type="submit" name="decision" value="allow">Continue to GitHub</button>
+<button type="submit" name="decision" value="deny">Cancel</button>
+</p>
+</form>
+</body>
+</html>
+{{end}}

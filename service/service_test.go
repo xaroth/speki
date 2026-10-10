@@ -26,8 +26,23 @@ func newTestService(t *testing.T) *Service {
 	return s
 }
 
+// validConfig has every required setting, and nothing else.
+func validConfig(t *testing.T) Config {
+	t.Helper()
+	return Config{
+		PublicURL: "https://speki.example.com",
+		GitHub:    GitHub{AppID: 1, PrivateKey: testKey(t), ClientID: "Iv1", ClientSecret: "s"},
+		Auth:      Auth{Keys: testKeys()},
+	}
+}
+
 func TestNewRejectsBadConfig(t *testing.T) {
-	app := GitHub{AppID: 1, PrivateKey: testKey(t)}
+	base := validConfig(t)
+	with := func(change func(*Config)) Config {
+		c := base
+		change(&c)
+		return c
+	}
 	tests := []struct {
 		name string
 		cfg  Config
@@ -35,28 +50,38 @@ func TestNewRejectsBadConfig(t *testing.T) {
 	}{
 		{
 			name: "same address",
-			cfg:  Config{Listen: ":8080", MetricsListen: ":8080", GitHub: app},
+			cfg:  with(func(c *Config) { c.Listen, c.MetricsListen = ":8080", ":8080" }),
 			want: []string{"metrics_listen"},
 		},
 		{
 			name: "same address by default",
-			cfg:  Config{Listen: ":9090", GitHub: app},
+			cfg:  with(func(c *Config) { c.Listen = ":9090" }),
 			want: []string{"metrics_listen"},
 		},
 		{
 			name: "bad log level",
-			cfg:  Config{Telemetry: Telemetry{LogLevel: "loud"}, GitHub: app},
+			cfg:  with(func(c *Config) { c.Telemetry.LogLevel = "loud" }),
 			want: []string{"log_level"},
 		},
 		{
 			name: "every problem at once",
 			cfg:  Config{Listen: ":1", MetricsListen: ":1", Telemetry: Telemetry{LogLevel: "loud"}},
-			want: []string{"metrics_listen", "log_level", "app_id", "private_key"},
+			want: []string{"metrics_listen", "log_level", "app_id", "private_key", "client_id", "public_url", "auth.keys"},
 		},
 		{
 			name: "bad private key",
-			cfg:  Config{GitHub: GitHub{AppID: 1, PrivateKey: "not a key"}},
+			cfg:  with(func(c *Config) { c.GitHub.PrivateKey = "not a key" }),
 			want: []string{"github app key"},
+		},
+		{
+			name: "plain http public URL",
+			cfg:  with(func(c *Config) { c.PublicURL = "http://speki.example.com" }),
+			want: []string{"https"},
+		},
+		{
+			name: "bad key file",
+			cfg:  with(func(c *Config) { c.Auth.Keys = "keys: []" }),
+			want: []string{"auth.keys"},
 		},
 	}
 	for _, tt := range tests {
@@ -75,14 +100,15 @@ func TestNewRejectsBadConfig(t *testing.T) {
 }
 
 func TestNewDefaults(t *testing.T) {
-	s, err := New(Config{GitHub: GitHub{AppID: 1, PrivateKey: testKey(t)}}, discardLogger())
+	s, err := New(validConfig(t), discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	c := s.cfg
 	if c.Listen != ":8080" || c.MetricsListen != ":9090" || c.Telemetry.LogLevel != "info" ||
 		c.GitHub.GitURL != "https://github.com" || c.Sync.DataDir != "data" ||
-		c.Sync.PollInterval != time.Minute || c.Sync.DiscoveryInterval != 5*time.Minute {
+		c.Sync.PollInterval != time.Minute || c.Sync.DiscoveryInterval != 5*time.Minute ||
+		c.GitHub.OAuthURL != "https://github.com" || c.Auth.ClientMetadataHosts[0] != "claude.ai" {
 		t.Errorf("defaults not applied: %+v", c)
 	}
 }
@@ -100,6 +126,10 @@ func TestEndpointsAreSeparated(t *testing.T) {
 		want   int
 	}{
 		{public, "/healthz", http.StatusOK},
+		{public, "/.well-known/oauth-authorization-server", http.StatusOK},
+		{public, "/.well-known/oauth-protected-resource/mcp", http.StatusOK},
+		{public, "/mcp", http.StatusUnauthorized},
+		{internal, "/mcp", http.StatusNotFound},
 		{public, "/metrics", http.StatusNotFound},
 		{public, "/status", http.StatusNotFound},
 		{internal, "/metrics", http.StatusOK},
