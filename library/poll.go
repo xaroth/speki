@@ -80,7 +80,7 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 
 	if remote != "" && remote == v.index.Commit() && !v.broken.Load() {
 		v.mu.Lock()
-		v.status.Fresh = time.Now()
+		v.status.Fresh = v.now()
 		v.recordLocked(nil) // current again: an earlier failed check no longer counts
 		v.mu.Unlock()
 		l.inBackground(ctx, v, l.compact) // writes add packs without the poller ever syncing them

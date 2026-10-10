@@ -50,6 +50,7 @@ type Library struct {
 	github githubAPI
 	opts   Options
 	logger *slog.Logger
+	now    func() time.Time
 
 	mu     sync.RWMutex
 	vaults map[int64]*Vault
@@ -72,6 +73,7 @@ func New(github githubAPI, opts Options, logger *slog.Logger) *Library {
 		github:  github,
 		opts:    opts,
 		logger:  logger,
+		now:     time.Now,
 		vaults:  make(map[int64]*Vault),
 		opening: semaphore.NewWeighted(int64(opts.Opening)),
 	}
@@ -111,33 +113,34 @@ func (l *Library) restore(ctx context.Context, id int64) (*Vault, error) {
 	dir := l.vaultDir(id)
 	raw, err := os.ReadFile(filepath.Join(dir, infoFile))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read vault details: %w", err)
 	}
 	var info vault.Vault
 	err = json.Unmarshal(raw, &info)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse vault details: %w", err)
 	}
 	// Only a copy that's usable without the network: a restart serves from disk within seconds, and
 	// discovery clones the rest in the background.
 	if !gitsync.Usable(filepath.Join(dir, gitDir), info.DefaultBranch) {
 		return nil, errors.New("no usable git copy; it's cloned again once discovery finds the vault")
 	}
-	v := newVault(info, dir)
+	v := newVault(info, dir, l.now)
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
 	err = v.open(ctx, l)
-	if err == nil && v.index.Commit() == "" {
-		err = errors.New("index is empty")
-	}
 	if err != nil {
 		v.close()
-		return nil, err
+		return nil, err // open says which step failed
+	}
+	if v.index.Commit() == "" {
+		v.close()
+		return nil, errors.New("index is empty")
 	}
 	stats, err := v.index.Stats(ctx)
 	if err != nil {
 		v.close()
-		return nil, err
+		return nil, fmt.Errorf("index stats: %w", err)
 	}
 	v.mu.Lock()
 	v.status = Status{
@@ -165,7 +168,7 @@ func (l *Library) Update(ctx context.Context, changes vault.Changes) {
 			}
 			continue
 		}
-		v = newVault(info, l.vaultDir(info.RepoID))
+		v = newVault(info, l.vaultDir(info.RepoID), l.now)
 		l.mu.Lock()
 		l.vaults[info.RepoID] = v
 		l.mu.Unlock()

@@ -235,9 +235,10 @@ func generationsIn(dir string) ([]int, error) {
 			continue // -wal and -shm files belong to their database
 		}
 		n, err := strconv.Atoi(name)
-		if err == nil {
-			gens = append(gens, n)
+		if err != nil {
+			continue // not a generation of ours
 		}
+		gens = append(gens, n)
 	}
 	slices.Sort(gens)
 	return gens, nil

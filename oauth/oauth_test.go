@@ -16,10 +16,12 @@ import (
 	"net/url"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/eve-online-tools/speki/gh"
@@ -349,6 +351,40 @@ func TestConcurrentRefreshesBothSucceed(t *testing.T) {
 	}
 }
 
+// A refresh that finds the lock taken waits for it. When the lock runs out it refreshes itself; when the
+// lock outlasts the wait, it tells the client to try again.
+func TestRefreshWaitsForTheLock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		clientID, first := h.signedIn()
+		form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
+		mem := store.NewMemory()
+		h.s.store = mem
+		lock := "refresh-lock:" + hash(first.RefreshToken)
+
+		_, _ = mem.SetNX(t.Context(), lock, []byte("other"), time.Minute)
+		start := time.Now()
+		_, rec := h.tokens(form)
+		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+			t.Errorf("lock held throughout: %d %s", rec.Code, rec.Body)
+		}
+		if waited := time.Since(start); waited < refreshLockTime || waited > refreshLockTime+time.Second {
+			t.Errorf("gave up after %v, want %v", waited, refreshLockTime)
+		}
+
+		_ = mem.Release(t.Context(), lock, []byte("other"))
+		_, _ = mem.SetNX(t.Context(), lock, []byte("other"), 3*time.Second)
+		start = time.Now()
+		resp, rec := h.tokens(form)
+		if rec.Code != http.StatusOK || resp.AccessToken == "" {
+			t.Errorf("after the lock ran out: %d %s", rec.Code, rec.Body)
+		}
+		if waited := time.Since(start); waited < 3*time.Second || waited > 4*time.Second {
+			t.Errorf("refreshed after %v, want 3s", waited)
+		}
+	})
+}
+
 // A client that disconnects while speki waits for GitHub retries with the same token. GitHub has spent
 // the old refresh token by then, so the retry only works if speki finished the refresh anyway.
 func TestRefreshSurvivesADroppedConnection(t *testing.T) {
@@ -584,23 +620,24 @@ func TestExpiredCode(t *testing.T) {
 
 func TestMiddlewareRejects(t *testing.T) {
 	h := newHarness(t)
-	for name, token := range map[string]string{
-		"none":    "",
-		"garbage": "abc",
-	} {
-		_, status := h.identity(token)
-		if status != http.StatusUnauthorized {
-			t.Errorf("%s: %d", name, status)
-		}
-	}
-
-	// A speki token issued for another server.
 	foreign, err := h.s.keys.Seal(seal.Access, accessValue{UserID: 1, Audience: "https://other.example/mcp"}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, status := h.identity(foreign); status != http.StatusUnauthorized {
-		t.Errorf("foreign audience: %d", status)
+	tests := []struct {
+		name  string
+		token string
+	}{
+		{"none", ""},
+		{"garbage", "abc"},
+		{"foreign audience", foreign}, // a speki token issued for another server
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, status := h.identity(tt.token); status != http.StatusUnauthorized {
+				t.Errorf("status %d", status)
+			}
+		})
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
@@ -613,17 +650,23 @@ func TestMiddlewareRejects(t *testing.T) {
 
 func TestRegisterRejects(t *testing.T) {
 	h := newHarness(t)
-	for name, body := range map[string]string{
-		"https redirect": `{"client_name":"x","redirect_uris":["https://evil.example/cb"]}`,
-		"no redirects":   `{"client_name":"x","redirect_uris":[]}`,
-		"not json":       `{`,
-	} {
-		req := httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(body))
-		rec := httptest.NewRecorder()
-		h.handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
-		}
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"https redirect", `{"client_name":"x","redirect_uris":["https://evil.example/cb"]}`},
+		{"no redirects", `{"client_name":"x","redirect_uris":[]}`},
+		{"not json", `{`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			h.handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("%d %s", rec.Code, rec.Body)
+			}
+		})
 	}
 }
 
@@ -642,17 +685,40 @@ func TestMetadata(t *testing.T) {
 }
 
 func TestPublicAddr(t *testing.T) {
-	for addr, want := range map[string]bool{
-		"93.184.216.34": true, "2606:4700::1111": true,
-		"127.0.0.1": false, "10.0.0.1": false, "192.168.1.1": false, "169.254.169.254": false,
-		"100.64.0.1": false, "0.0.0.0": false, "::1": false, "::": false, "fe80::1": false,
-		"::ffff:127.0.0.1": false, "64:ff9b::7f00:1": false, "fd00::1": false,
-		"0.1.2.3": false, "192.0.0.1": false, "198.18.0.1": false, "240.0.0.1": false, "::127.0.0.1": false,
-		"2002:7f00:1::": false, "64:ff9b:1::1": false, "100::1": false, "2001:db8::1": false,
-	} {
-		if got := publicAddr(netip.MustParseAddr(addr)); got != want {
-			t.Errorf("publicAddr(%s) = %v", addr, got)
-		}
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"93.184.216.34", true},
+		{"2606:4700::1111", true},
+		{"127.0.0.1", false},
+		{"10.0.0.1", false},
+		{"192.168.1.1", false},
+		{"169.254.169.254", false},
+		{"100.64.0.1", false},
+		{"0.0.0.0", false},
+		{"::1", false},
+		{"::", false},
+		{"fe80::1", false},
+		{"::ffff:127.0.0.1", false},
+		{"64:ff9b::7f00:1", false},
+		{"fd00::1", false},
+		{"0.1.2.3", false},
+		{"192.0.0.1", false},
+		{"198.18.0.1", false},
+		{"240.0.0.1", false},
+		{"::127.0.0.1", false},
+		{"2002:7f00:1::", false},
+		{"64:ff9b:1::1", false},
+		{"100::1", false},
+		{"2001:db8::1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			if got := publicAddr(netip.MustParseAddr(tt.addr)); got != tt.want {
+				t.Errorf("publicAddr(%s) = %v", tt.addr, got)
+			}
+		})
 	}
 }
 
@@ -853,11 +919,21 @@ func TestMetadataFetchFailures(t *testing.T) {
 		t.Errorf("after a cancelled request: %d", page.Code)
 	}
 
+	now := time.Now()
+	h.s.clients.now = func() time.Time { return now }
 	fail = true
 	h.authorizeTo("https://claude.ai/d.json", nil)
 	f, ok := h.s.clients.failed["https://claude.ai/d.json"]
-	if !ok || time.Until(f.expires) > metadataRetryTime {
+	if !ok || f.expires.Sub(now) > metadataRetryTime {
 		t.Errorf("network failure remembered until %v", f.expires)
+	}
+	fail = false
+	if page := h.authorizeTo("https://claude.ai/d.json", nil); page.Code == http.StatusOK {
+		t.Error("the failure wasn't remembered")
+	}
+	now = now.Add(metadataRetryTime)
+	if page := h.do(http.MethodGet, authorizeURL("https://claude.ai/d.json", "https://claude.ai/cb", nil), nil); page.Code != http.StatusOK {
+		t.Errorf("after the failure ran out: %d", page.Code)
 	}
 }
 
@@ -965,11 +1041,24 @@ func TestMetadataKnownClients(t *testing.T) {
 
 // Only a 404 or 410 says a metadata document is gone; other refusals are blips.
 func TestMetadataStatuses(t *testing.T) {
-	for code, gone := range map[int]bool{404: true, 410: true, 403: false, 401: false, 302: false, 503: false} {
-		err := statusError(&http.Response{StatusCode: code, Status: http.StatusText(code)})
-		if err == nil || errors.Is(err, errNoDocument) != gone {
-			t.Errorf("%d: %v", code, err)
-		}
+	tests := []struct {
+		code int
+		gone bool
+	}{
+		{404, true},
+		{410, true},
+		{403, false},
+		{401, false},
+		{302, false},
+		{503, false},
+	}
+	for _, tt := range tests {
+		t.Run(strconv.Itoa(tt.code), func(t *testing.T) {
+			err := statusError(&http.Response{StatusCode: tt.code, Status: http.StatusText(tt.code)})
+			if err == nil || errors.Is(err, errNoDocument) != tt.gone {
+				t.Errorf("statusError = %v", err)
+			}
+		})
 	}
 	if err := statusError(&http.Response{StatusCode: http.StatusOK}); err != nil {
 		t.Errorf("200: %v", err)

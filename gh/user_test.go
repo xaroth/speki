@@ -91,14 +91,22 @@ func newUserTestClient(t *testing.T) (*Client, OAuthConfig) {
 
 func TestExchangeAndRefresh(t *testing.T) {
 	c, o := newUserTestClient(t)
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
 	ctx := t.Context()
 
 	tok, err := c.Exchange(ctx, o, "good", "verifier", "https://speki/cb")
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	if tok.AccessToken != "ghu_good" || tok.RefreshToken != "ghr_1" || tok.AccessExpires.IsZero() || tok.RefreshExpires.IsZero() {
-		t.Errorf("tokens = %+v", tok)
+	want := UserTokens{
+		AccessToken:    "ghu_good",
+		AccessExpires:  now.Add(8 * time.Hour),
+		RefreshToken:   "ghr_1",
+		RefreshExpires: now.Add(184 * 24 * time.Hour),
+	}
+	if diff := cmp.Diff(want, tok); diff != "" {
+		t.Errorf("tokens (-want +got):\n%s", diff)
 	}
 
 	_, err = c.Exchange(ctx, o, "bad", "verifier", "https://speki/cb")

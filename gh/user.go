@@ -124,7 +124,7 @@ func (c *Client) tokenRequest(ctx context.Context, o OAuthConfig, form url.Value
 	if body.ExpiresIn == 0 || body.RefreshToken == "" {
 		return UserTokens{}, errors.New(`GitHub returned a token that doesn't expire: turn on "Expire user authorization tokens" for the app`)
 	}
-	now := time.Now()
+	now := c.now()
 	t := UserTokens{
 		AccessToken:   body.AccessToken,
 		AccessExpires: now.Add(time.Duration(body.ExpiresIn) * time.Second),

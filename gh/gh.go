@@ -44,6 +44,7 @@ type Client struct {
 	appAuth *ghinstallation.AppsTransport
 	app     *github.Client
 	metrics *metrics
+	now     func() time.Time
 
 	mu       sync.Mutex
 	installs map[int64]*installation
@@ -94,6 +95,7 @@ func New(cfg Config) (*Client, error) {
 		appAuth:  appAuth,
 		app:      app,
 		metrics:  m,
+		now:      time.Now,
 		installs: make(map[int64]*installation),
 	}, nil
 }

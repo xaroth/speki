@@ -61,9 +61,11 @@ func TestSealAndOpen(t *testing.T) {
 	}
 
 	for _, bad := range []string{"", "v1", "v1.a", "v2.a.xyz", "v1.b.xyz", "v1.a.!!!", "v1.a.AAAA"} {
-		if err := k.Open(Access, bad, &got); !errors.Is(err, ErrInvalid) {
-			t.Errorf("Open(%q) = %v", bad, err)
-		}
+		t.Run(fmt.Sprintf("%q", bad), func(t *testing.T) {
+			if err := k.Open(Access, bad, &got); !errors.Is(err, ErrInvalid) {
+				t.Errorf("Open(%q) = %v", bad, err)
+			}
+		})
 	}
 }
 

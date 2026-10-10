@@ -51,6 +51,7 @@ type Service struct {
 	stopping bool // guarded by readyMu: once set, the service never turns ready again
 	vaultsMu sync.Mutex
 	vaults   *vault.Registry // nil until the allowed accounts are known
+	ran      atomic.Bool     // Run was called: it closes the components, so a service runs once
 
 	// started is closed once both listeners are bound; publicAddr and internalAddr are set by then.
 	started      chan struct{}
@@ -192,8 +193,11 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 }
 
 // Run serves vaults already on disk straight away, keeps the vaults in step with GitHub, and serves HTTP.
-// It blocks until ctx ends and shutdown is done.
+// It blocks until ctx ends and shutdown is done. A service runs once: a second Run returns an error.
 func (s *Service) Run(ctx context.Context) error {
+	if !s.ran.CompareAndSwap(false, true) {
+		return errors.New("the service has already run")
+	}
 	stopTracing, err := telemetry.StartTracing(ctx, s.cfg.Telemetry.Tracing, s.cfg.Version)
 	if err != nil {
 		return err

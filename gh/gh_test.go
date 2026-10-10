@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -281,10 +282,13 @@ func TestMetricsByKind(t *testing.T) {
 	}
 }
 
-// The installation gauge shows the lowest recent budget, and a budget below 10% is warned about once.
+// The installation gauge shows the lowest recent budget, and a budget below 10% is warned about at most
+// every warnEvery.
 func TestRateBudget(t *testing.T) {
 	var logged bytes.Buffer
 	m := newMetrics(slog.New(slog.NewTextHandler(&logged, nil)))
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
 	githubRemaining.Reset() // shared by the whole test binary
 	header := func(remaining string) http.Header {
 		return http.Header{"X-Ratelimit-Remaining": {remaining}, "X-Ratelimit-Limit": {"5000"}}
@@ -303,13 +307,28 @@ func TestRateBudget(t *testing.T) {
 		t.Errorf("each installation is warned about once; got %d warnings:\n%s", n, logged.String())
 	}
 
-	m.mu.Lock()
-	m.installs[1] = reading{remaining: 50, at: time.Now().Add(-budgetWindow - time.Second)}
-	m.installs[2] = reading{remaining: 20, at: time.Now(), reset: time.Now().Add(-time.Second)}
-	m.mu.Unlock()
+	// Installation 1's reading ages out; installation 2's budget is refilled at its reset.
+	m.record("installation", 2, http.Header{
+		"X-Ratelimit-Remaining": {"20"},
+		"X-Ratelimit-Limit":     {"5000"},
+		"X-Ratelimit-Reset":     {strconv.FormatInt(now.Add(time.Minute).Unix(), 10)},
+	})
+	start := now
+	now = now.Add(2 * time.Minute)
+	m.record("installation", 3, header("3900"))
+	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 50 {
+		t.Errorf("installation remaining = %v after installation 2's refill, want installation 1's 50", got)
+	}
+	now = start.Add(budgetWindow + time.Second)
 	m.record("installation", 3, header("3900"))
 	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 3900 {
-		t.Errorf("installation remaining = %v after the low readings aged out or were refilled, want 3900", got)
+		t.Errorf("installation remaining = %v after installation 1's reading aged out, want 3900", got)
+	}
+
+	now = now.Add(warnEvery)
+	m.record("installation", 1, header("40"))
+	if n := strings.Count(logged.String(), "budget is low"); n != 3 {
+		t.Errorf("a low budget is warned about again after %v; got %d warnings:\n%s", warnEvery, n, logged.String())
 	}
 }
 

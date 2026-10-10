@@ -664,7 +664,7 @@ func TestBuildStopsAtAFailedInsert(t *testing.T) {
 		}
 	}
 	err = x.Build(t.Context(), "c1", files)
-	if err == nil || !strings.Contains(err.Error(), "insert d0.md") {
+	if err == nil || !strings.Contains(err.Error(), "d0.md: insert document") {
 		t.Fatalf("Build: %v", err)
 	}
 	if read > total/2 {

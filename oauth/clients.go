@@ -41,6 +41,7 @@ type clientResolver struct {
 	keys  *seal.Keyring
 	hosts []string
 	fetch func(ctx context.Context, url string) ([]byte, error)
+	now   func() time.Time
 
 	fetching chan struct{}      // a slot per metadata fetch in progress
 	known    chan struct{}      // slots kept for refetching documents that were fetched before
@@ -79,6 +80,7 @@ func newClientResolver(keys *seal.Keyring, hosts []string) *clientResolver {
 		keys:     keys,
 		hosts:    hosts,
 		fetch:    newMetadataFetcher(hosts),
+		now:      time.Now,
 		fetching: make(chan struct{}, metadataFetches),
 		known:    make(chan struct{}, metadataKnown),
 		cache:    make(map[string]cachedClient),
@@ -107,7 +109,7 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 	if err != nil || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" || !slices.Contains(r.hosts, u.Hostname()) {
 		return client{}, fmt.Errorf("%w: metadata documents are only accepted from %s, without a query", errUnknownClient, strings.Join(r.hosts, ", "))
 	}
-	now := time.Now()
+	now := r.now()
 	r.mu.Lock()
 	cached, known := r.cache[clientID]
 	if known {
@@ -155,7 +157,7 @@ func (r *clientResolver) refetch(ctx context.Context, u *url.URL, clientID strin
 // remember caches a fetched client, or a failure for as long as its kind deserves. Failures have their
 // own small cache, so a stream of made-up URLs can't push real clients out.
 func (r *clientResolver) remember(clientID string, cl client, failure failureKind, err error) {
-	now := time.Now()
+	now := r.now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err != nil {
