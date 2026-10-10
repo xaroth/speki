@@ -17,6 +17,9 @@ const (
 	keyPrefix     = "speki:"
 	noticeChannel = keyPrefix + "vault-head"
 	pingTimeout   = 5 * time.Second
+	// confirmTimeout is how long Subscribe waits for Redis to confirm the subscription before trying
+	// again.
+	confirmTimeout = 10 * time.Second
 )
 
 // setLogger sets the Redis client's logger, which is global, once.
@@ -128,7 +131,13 @@ func (r *Redis) Publish(ctx context.Context, repoID int64, commit string) error 
 func (r *Redis) Subscribe(ctx context.Context, f func(repoID int64, commit string)) error {
 	sub := r.client.Subscribe(ctx, noticeChannel)
 	defer func() { _ = sub.Close() }()
-	_, err := sub.Receive(ctx) // the subscription confirmation
+	// go-redis reads only give up on a context with a deadline. Closing the subscription when ctx ends
+	// unblocks every read, so a stalled connection can't hold up a shutdown.
+	stop := context.AfterFunc(ctx, func() { _ = sub.Close() })
+	defer stop()
+	confirmCtx, cancel := context.WithTimeout(ctx, confirmTimeout)
+	_, err := sub.Receive(confirmCtx) // the subscription confirmation
+	cancel()
 	if err != nil {
 		return fmt.Errorf("redis subscribe: %w", err)
 	}

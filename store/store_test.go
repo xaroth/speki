@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -189,3 +191,63 @@ func TestMemory(t *testing.T) {
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// stallingProxy forwards to addr, but swallows the SUBSCRIBE commands a client sends, as a half-open
+// connection or a stuck proxy would. It sends on swallowed each time.
+func stallingProxy(t *testing.T, addr string, swallowed chan<- struct{}) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			client, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			server, err := net.Dial("tcp", addr)
+			if err != nil {
+				_ = client.Close()
+				return
+			}
+			go func() { _, _ = io.Copy(client, server) }()
+			go func() {
+				buf := make([]byte, 4096)
+				for {
+					n, err := client.Read(buf)
+					if err != nil {
+						return
+					}
+					if bytes.Contains(bytes.ToUpper(buf[:n]), []byte("SUBSCRIBE")) {
+						swallowed <- struct{}{}
+						continue
+					}
+					_, _ = server.Write(buf[:n])
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+func TestSubscribeStopsWhenRedisStalls(t *testing.T) {
+	mr := miniredis.RunT(t)
+	swallowed := make(chan struct{}, 10)
+	r, err := NewRedis(t.Context(), "redis://"+stallingProxy(t, mr.Addr(), swallowed), discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- r.Subscribe(ctx, func(int64, string) {}) }()
+	<-swallowed // Subscribe now waits for a confirmation that won't come
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Subscribe didn't return after its context ended")
+	}
+}
