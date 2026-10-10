@@ -251,6 +251,7 @@ Milestone 0 check 5 and milestone 4's manual tests, against staging:
 
 Done when: every case behaves as [access.md](functional/access.md) says, and the answers are in
 [mcp-protocol.md](research/mcp-protocol.md) and [authentication.md](research/authentication.md).
+With 10.2 done as well, issue #23 closes: checks 3 and 4 are already answered.
 
 ### 10.4 Sandbox review
 
@@ -303,11 +304,13 @@ Done when: the four scenarios behave as described, and the operator finished the
 
 ### 10.8 Housekeeping
 
-- `toolchain` in `go.mod` pinned to the newest Go patch release, and `govulncheck` in pull request CI and
-  weekly, so Go security releases are noticed when they ship.
+- `toolchain` in `go.mod` pinned to the newest Go patch release. `govulncheck` runs on every pull request
+  (today only when `go.mod` or `go.sum` change) and weekly (today monthly), so Go security releases are
+  noticed when they ship.
 - The README says what speki is now.
-- Issue #25 done or closed with what's left.
+- Issue #25 done or closed with what's left. Its recorded `gh` responses are covered by 10.2.
 
-Done when: CI runs `govulncheck` and it passes.
+Done when: `go.mod` has a `toolchain` line, and the vulnerability workflow runs on every pull request and
+weekly, and passes.
 
 Done when (milestone): every step above is done, and the team has used speki for writing for a week.
