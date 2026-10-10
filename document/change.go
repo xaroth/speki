@@ -160,7 +160,12 @@ func setKey(m *yaml.Node, key, value string) {
 		if m.Content[i].Value == key {
 			v := m.Content[i+1]
 			comment := v.LineComment
-			*v = yaml.Node{Kind: yaml.ScalarNode, Tag: "!!timestamp", Value: value, LineComment: comment}
+			*v = yaml.Node{
+				Kind:        yaml.ScalarNode,
+				Tag:         "!!timestamp",
+				Value:       value,
+				LineComment: comment,
+			}
 			return
 		}
 	}

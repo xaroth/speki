@@ -72,7 +72,13 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 		want = maxReadLines
 	}
 
-	p := Page{Vault: v.Name, Document: doc, FromLine: from, TotalLines: len(lines), Warnings: slices.Clone(doc.Warnings)}
+	p := Page{
+		Vault:      v.Name,
+		Document:   doc,
+		FromLine:   from,
+		TotalLines: len(lines),
+		Warnings:   slices.Clone(doc.Warnings),
+	}
 	// The outline comes with a partial read, and counts against its 64 KiB, so it's worked out first.
 	budget := maxReadBytes
 	partial := from > 1 || want < len(lines) || len(raw) > maxReadBytes

@@ -26,7 +26,13 @@ type VaultSummary struct {
 func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummary {
 	out := make([]VaultSummary, 0, len(vaults))
 	for _, v := range vaults {
-		s := VaultSummary{Vault: v.Name, Title: v.Title, Description: v.Description, CanWrite: v.CanWrite, Documents: v.Documents}
+		s := VaultSummary{
+			Vault:       v.Name,
+			Title:       v.Title,
+			Description: v.Description,
+			CanWrite:    v.CanWrite,
+			Documents:   v.Documents,
+		}
 		if guidelines {
 			s.Guidelines = v.Guidelines
 		}
@@ -136,7 +142,12 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 		return out, b.String(), nil
 	}
 
-	l, err := s.kb.List(ctx, g, knowledge.ListRequest{Vault: in.Vault, Path: in.Path, Recursive: in.Recursive, Cursor: in.Cursor})
+	l, err := s.kb.List(ctx, g, knowledge.ListRequest{
+		Vault:     in.Vault,
+		Path:      in.Path,
+		Recursive: in.Recursive,
+		Cursor:    in.Cursor,
+	})
 	if err != nil {
 		return ListOutput{}, "", err
 	}
@@ -147,7 +158,12 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 	}
 	for _, e := range l.Documents {
 		out.Documents = append(out.Documents, DocumentSummary{
-			Path: e.Path, Title: e.Title, Description: e.Description, Status: e.Status, Updated: e.Updated, Version: e.Version,
+			Path:        e.Path,
+			Title:       e.Title,
+			Description: e.Description,
+			Status:      e.Status,
+			Updated:     e.Updated,
+			Version:     e.Version,
 		})
 		fmt.Fprintf(&b, "%s  %s  version %s\n", oneLine(e.Path), oneLine(e.Title), e.Version)
 	}
@@ -219,8 +235,16 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 	}
 	for _, h := range res.Hits {
 		out.Results = append(out.Results, SearchHit{
-			Vault: h.Source, Path: h.Path, Title: h.Title, Description: h.Description, Tags: h.Tags,
-			Status: h.Status, Updated: h.Updated, Version: h.Version, Snippet: h.Snippet, Score: h.Score,
+			Vault:       h.Source,
+			Path:        h.Path,
+			Title:       h.Title,
+			Description: h.Description,
+			Tags:        h.Tags,
+			Status:      h.Status,
+			Updated:     h.Updated,
+			Version:     h.Version,
+			Snippet:     h.Snippet,
+			Score:       h.Score,
 		})
 		status := ""
 		if h.Status != "" && h.Status != "active" {
@@ -275,7 +299,12 @@ type ReadOutput struct {
 }
 
 func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadOutput, string, error) {
-	p, err := s.kb.Read(ctx, g, knowledge.ReadRequest{Vault: in.Vault, Path: in.Path, FromLine: in.FromLine, LineCount: in.LineCount})
+	p, err := s.kb.Read(ctx, g, knowledge.ReadRequest{
+		Vault:     in.Vault,
+		Path:      in.Path,
+		FromLine:  in.FromLine,
+		LineCount: in.LineCount,
+	})
 	if err != nil {
 		return ReadOutput{}, "", err
 	}
@@ -285,8 +314,15 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 		Path:    d.Path,
 		Version: d.Version,
 		Metadata: Metadata{
-			Title: d.Title, Description: d.Description, Tags: d.Tags, Aliases: d.Aliases, Status: d.Status,
-			Related: d.Related, Created: d.Created, Updated: d.Updated, Extra: d.Extra,
+			Title:       d.Title,
+			Description: d.Description,
+			Tags:        d.Tags,
+			Aliases:     d.Aliases,
+			Status:      d.Status,
+			Related:     d.Related,
+			Created:     d.Created,
+			Updated:     d.Updated,
+			Extra:       d.Extra,
 		},
 		Content:    p.Content,
 		FromLine:   p.FromLine,
@@ -350,7 +386,13 @@ func (s *Server) history(ctx context.Context, g *access.Grant, in HistoryInput) 
 		b.WriteString("No commits found.\n")
 	}
 	for _, c := range commits {
-		cs := CommitSummary{SHA: c.SHA, Author: c.Author, Date: c.Date.UTC().Format(time.RFC3339), Message: c.Message, Client: c.Client}
+		cs := CommitSummary{
+			SHA:     c.SHA,
+			Author:  c.Author,
+			Date:    c.Date.UTC().Format(time.RFC3339),
+			Message: c.Message,
+			Client:  c.Client,
+		}
 		out.Commits = append(out.Commits, cs)
 		via := ""
 		if c.Client != "" {
@@ -370,7 +412,12 @@ type ChangeOutput struct {
 }
 
 func changeOutput(r knowledge.Result, what string) (ChangeOutput, string) {
-	out := ChangeOutput{Version: r.Version, Commit: r.Commit, IndexPending: r.IndexPending, LinkedFrom: r.LinkedFrom}
+	out := ChangeOutput{
+		Version:      r.Version,
+		Commit:       r.Commit,
+		IndexPending: r.IndexPending,
+		LinkedFrom:   r.LinkedFrom,
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s in commit %s.\n", what, r.Commit)
 	if r.Version != "" {
@@ -398,7 +445,13 @@ type WriteInput struct {
 }
 
 func (s *Server) write(ctx context.Context, g *access.Grant, in WriteInput) (ChangeOutput, string, error) {
-	r, err := s.kb.Write(ctx, g, knowledge.WriteRequest{Vault: in.Vault, Path: in.Path, Content: in.Content, Version: in.Version, Message: in.Message})
+	r, err := s.kb.Write(ctx, g, knowledge.WriteRequest{
+		Vault:   in.Vault,
+		Path:    in.Path,
+		Content: in.Content,
+		Version: in.Version,
+		Message: in.Message,
+	})
 	if err != nil {
 		return ChangeOutput{}, "", err
 	}
@@ -419,7 +472,13 @@ type EditInput struct {
 
 func (s *Server) edit(ctx context.Context, g *access.Grant, in EditInput) (ChangeOutput, string, error) {
 	r, err := s.kb.Edit(ctx, g, knowledge.EditRequest{
-		Vault: in.Vault, Path: in.Path, OldText: in.OldText, NewText: in.NewText, ReplaceAll: in.ReplaceAll, Version: in.Version, Message: in.Message,
+		Vault:      in.Vault,
+		Path:       in.Path,
+		OldText:    in.OldText,
+		NewText:    in.NewText,
+		ReplaceAll: in.ReplaceAll,
+		Version:    in.Version,
+		Message:    in.Message,
 	})
 	if err != nil {
 		return ChangeOutput{}, "", err
@@ -438,7 +497,13 @@ type MoveInput struct {
 }
 
 func (s *Server) move(ctx context.Context, g *access.Grant, in MoveInput) (ChangeOutput, string, error) {
-	r, err := s.kb.Move(ctx, g, knowledge.MoveRequest{Vault: in.Vault, From: in.From, To: in.To, Version: in.Version, Message: in.Message})
+	r, err := s.kb.Move(ctx, g, knowledge.MoveRequest{
+		Vault:   in.Vault,
+		From:    in.From,
+		To:      in.To,
+		Version: in.Version,
+		Message: in.Message,
+	})
 	if err != nil {
 		return ChangeOutput{}, "", err
 	}
@@ -455,7 +520,12 @@ type DeleteInput struct {
 }
 
 func (s *Server) delete(ctx context.Context, g *access.Grant, in DeleteInput) (ChangeOutput, string, error) {
-	r, err := s.kb.Delete(ctx, g, knowledge.DeleteRequest{Vault: in.Vault, Path: in.Path, Version: in.Version, Message: in.Message})
+	r, err := s.kb.Delete(ctx, g, knowledge.DeleteRequest{
+		Vault:   in.Vault,
+		Path:    in.Path,
+		Version: in.Version,
+		Message: in.Message,
+	})
 	if err != nil {
 		return ChangeOutput{}, "", err
 	}

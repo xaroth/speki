@@ -170,7 +170,12 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	nonce := randomToken()
 	verifier := randomToken()
 	write := r.PostForm.Get("access") == "write" && cv.Request.AllowWrite
-	tx := transaction{Request: cv.Request, Write: write, Verifier: verifier, Nonce: nonce}
+	tx := transaction{
+		Request:  cv.Request,
+		Write:    write,
+		Verifier: verifier,
+		Nonce:    nonce,
+	}
 	sealed, err := s.keys.Seal(seal.Transaction, tx, s.now().Add(consentLifetime))
 	if err != nil {
 		s.serverError(w, r, err)
@@ -367,7 +372,15 @@ func setCookie(w http.ResponseWriter, name, value string, maxAge time.Duration) 
 }
 
 func clearCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func redirectHost(u string) string {

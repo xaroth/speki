@@ -387,7 +387,12 @@ func connect(ctx context.Context, dir string, n int) (*generation, error) {
 		return nil, err
 	}
 	reader.SetMaxOpenConns(4)
-	return &generation{n: n, dir: dir, writer: writer, reader: reader}, nil
+	return &generation{
+		n:      n,
+		dir:    dir,
+		writer: writer,
+		reader: reader,
+	}, nil
 }
 
 func requireFTS5(ctx context.Context, db *sql.DB) error {
