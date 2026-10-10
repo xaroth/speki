@@ -36,10 +36,11 @@ type TokenSource interface {
 }
 
 // Mirror is a shallow, bare copy of one branch of one repository. Reads may run concurrently with each
-// other, but not with Fetch: the caller serialises them.
+// other, but not with Fetch or SetSource: the caller serialises them.
 type Mirror struct {
 	dir    string
 	branch plumbing.ReferenceName
+	url    string // where Fetch fetches from: never the remote stored in the copy
 	auth   TokenSource
 	repo   *git.Repository
 }
@@ -71,6 +72,7 @@ func Open(ctx context.Context, dir string, src Source) (*Mirror, error) {
 	m := &Mirror{
 		dir:    dir,
 		branch: plumbing.NewBranchReferenceName(src.Branch),
+		url:    src.URL,
 		auth:   src.Auth,
 	}
 
@@ -134,6 +136,13 @@ func (m *Mirror) basicAuth(ctx context.Context) (transport.AuthMethod, error) {
 	return &githttp.BasicAuth{Username: "x-access-token", Password: token}, nil
 }
 
+// SetSource changes where the copy fetches from, and with which credentials, for a repository that was
+// renamed or moved to another installation. The copy itself stays: it's the same repository.
+func (m *Mirror) SetSource(url string, auth TokenSource) {
+	m.url = url
+	m.auth = auth
+}
+
 // Head returns the commit the local copy of the branch is at.
 func (m *Mirror) Head() (string, error) {
 	ref, err := m.repo.Reference(m.branch, true)
@@ -153,6 +162,7 @@ func (m *Mirror) Fetch(ctx context.Context, progress io.Writer) (string, error) 
 	spec := config.RefSpec(fmt.Sprintf("+%s:%s", m.branch, m.branch))
 	err = m.repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: git.DefaultRemoteName,
+		RemoteURL:  m.url, // the URL the copy was cloned from may name another repository by now
 		RefSpecs:   []config.RefSpec{spec},
 		Depth:      1,
 		Auth:       httpAuth,

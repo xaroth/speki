@@ -226,16 +226,23 @@ func (l *Library) openMirror(ctx context.Context, v *Vault, dir string) (*gitsyn
 	info := v.Info()
 	ctx, touch, stop := stallContext(ctx, l.opts.StallTimeout)
 	defer stop()
-	var auth gitsync.TokenSource
-	if l.opts.Tokens != nil {
-		auth = l.opts.Tokens(info.InstallationID)
-	}
+	url, auth := l.source(info)
 	return gitsync.Open(ctx, dir, gitsync.Source{
-		URL:      l.opts.GitURL + "/" + info.Name + ".git",
+		URL:      url,
 		Branch:   info.DefaultBranch,
 		Auth:     auth,
 		Progress: progressWriter(touch),
 	})
+}
+
+// source returns where a vault's copy fetches from, and the credentials, by its current name and
+// installation.
+func (l *Library) source(info vault.Vault) (string, gitsync.TokenSource) {
+	var auth gitsync.TokenSource
+	if l.opts.Tokens != nil {
+		auth = l.opts.Tokens(info.InstallationID)
+	}
+	return l.opts.GitURL + "/" + info.Name + ".git", auth
 }
 
 // close closes the index. Called with syncMu held.
@@ -273,6 +280,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault) (err error) {
 
 	fetchCtx, touch, stop := stallContext(ctx, l.opts.StallTimeout)
 	v.gitMu.Lock()
+	v.mirror.SetSource(l.source(v.Info())) // follows renames and transfers: the vault is its repository ID
 	head, err := v.mirror.Fetch(fetchCtx, progressWriter(touch))
 	v.gitMu.Unlock()
 	stop()

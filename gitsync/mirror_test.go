@@ -331,3 +331,32 @@ func mustHead(t *testing.T, m *Mirror) string {
 	}
 	return h
 }
+
+// The copy fetches from the source it's given now, not from the remote stored when it was cloned: on
+// SetSource, and when an existing copy is opened with another URL.
+func TestFetchFollowsTheSource(t *testing.T) {
+	first, second := newSource(t), newSource(t)
+	first.commit(map[string]*string{"a.md": str("# First\n")})
+	want := second.commit(map[string]*string{"b.md": str("# Second\n")})
+	dir := filepath.Join(t.TempDir(), "copy")
+
+	m, err := Open(t.Context(), dir, Source{URL: first.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetSource(second.dir, nil)
+	got, err := m.Fetch(t.Context(), nil)
+	if err != nil || got != want {
+		t.Errorf("Fetch after SetSource = %s, %v; want %s", got, err, want)
+	}
+
+	want = second.commit(map[string]*string{"c.md": str("# More\n")})
+	m, err = Open(t.Context(), dir, Source{URL: second.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = m.Fetch(t.Context(), nil)
+	if err != nil || got != want {
+		t.Errorf("Fetch after reopening = %s, %v; want %s", got, err, want)
+	}
+}
