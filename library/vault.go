@@ -278,9 +278,20 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault) (err error) {
 		return errors.New("vault isn't open")
 	}
 
+	// A fetch goes by name, and a name can point at another repository by now: renamed, with a new one
+	// under the old name, before discovery has caught up. Fetch only while the name is still the vault's.
+	info := v.Info()
+	id, err := l.github.RepositoryID(ctx, info.InstallationID, info.Name)
+	if err != nil {
+		return err
+	}
+	if id != info.RepoID {
+		return fmt.Errorf("%s now names repository %d, not this vault's %d: waiting for discovery to find the new name", info.Name, id, info.RepoID)
+	}
+
 	fetchCtx, touch, stop := stallContext(ctx, l.opts.StallTimeout)
 	v.gitMu.Lock()
-	v.mirror.SetSource(l.source(v.Info())) // follows renames and transfers: the vault is its repository ID
+	v.mirror.SetSource(l.source(info)) // follows renames and transfers: the vault is its repository ID
 	head, err := v.mirror.Fetch(fetchCtx, progressWriter(touch))
 	v.gitMu.Unlock()
 	stop()

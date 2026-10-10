@@ -34,6 +34,29 @@ type remote struct {
 
 	mu      sync.Mutex
 	lookups int
+	ids     map[string]int64 // repository IDs by name; ours/kb is 100 unless set
+}
+
+// RepositoryID answers like GitHub: which repository a name points to now.
+func (r *remote) RepositoryID(_ context.Context, _ int64, repo string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if id, ok := r.ids[repo]; ok {
+		return id, nil
+	}
+	if repo == kb.Name {
+		return kb.RepoID, nil
+	}
+	return 0, gh.ErrNotFound
+}
+
+func (r *remote) setID(repo string, id int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ids == nil {
+		r.ids = map[string]int64{}
+	}
+	r.ids[repo] = id
 }
 
 func newRemote(t *testing.T) *remote {
@@ -401,6 +424,18 @@ func TestRenamedRepositoryIsFollowed(t *testing.T) {
 	moved.push(map[string]string{"a.md": "# A\n\nrenamed text\n"})
 	// Someone creates a new repository with the old name.
 	r.push(map[string]string{"a.md": "# A\n\nimposter text\n"})
+
+	r.setID("ours/kb-archive", kb.RepoID)
+	r.setID(kb.Name, 999)
+
+	// Before discovery learns the new name, the vault won't fetch what its old name points at now.
+	err = l.Sync(t.Context(), v)
+	if err == nil {
+		t.Error("synced from a name that points at another repository")
+	}
+	if got := search(t, v, "imposter"); len(got) != 0 {
+		t.Errorf("the vault serves the repository that took its old name")
+	}
 
 	renamed := kb
 	renamed.Name, renamed.InstallationID = "ours/kb-archive", 2

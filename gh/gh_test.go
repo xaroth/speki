@@ -88,6 +88,8 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("ETag", `"v1"`)
 		write(map[string]any{"ref": "refs/heads/main", "object": map[string]any{"sha": "abc123", "type": "commit"}})
+	case r.URL.Path == "/repos/eve-online-tools/kb" && install:
+		write(map[string]any{"id": 100, "full_name": "eve-online-tools/kb"})
 	case strings.HasPrefix(r.URL.Path, "/repos/") && install:
 		w.WriteHeader(http.StatusNotFound)
 		write(map[string]any{"message": "Not Found"})
@@ -225,6 +227,18 @@ func TestBranchHead(t *testing.T) {
 	_, err = c.BranchHead(t.Context(), 1, "eve-online-tools/gone", "main", "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing repo: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRepositoryID(t *testing.T) {
+	c, _, _ := newTestClient(t)
+	id, err := c.RepositoryID(t.Context(), 1, "eve-online-tools/kb")
+	if err != nil || id != 100 {
+		t.Errorf("RepositoryID = %d, %v", id, err)
+	}
+	_, err = c.RepositoryID(t.Context(), 1, "eve-online-tools/gone")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing repo: %v", err)
 	}
 }
 
