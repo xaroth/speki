@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -365,6 +366,9 @@ func readRows(ctx context.Context, rows *sql.Rows, sources []Source) (Rows, erro
 	}
 	out := Rows{Columns: cols, Rows: [][]any{}}
 	size := 0
+	for _, c := range cols {
+		size += encodedSize(c) + 1
+	}
 	for rows.Next() {
 		if len(out.Rows) == maxQueryRows {
 			out.Truncated = true
@@ -379,21 +383,17 @@ func readRows(ctx context.Context, rows *sql.Rows, sources []Source) (Rows, erro
 		if err != nil {
 			return Rows{}, queryError(ctx, err, sources)
 		}
+		size += 2 // the row's brackets
 		for i, v := range values {
 			switch v := v.(type) {
 			case []byte:
 				values[i] = string(v)
-				size += encodedSize(string(v))
-			case string:
-				size += encodedSize(v)
 			case float64:
 				if math.IsNaN(v) || math.IsInf(v, 0) { // JSON has no such numbers
 					values[i] = strconv.FormatFloat(v, 'g', -1, 64)
 				}
-				size += 8
-			default:
-				size += 8
 			}
+			size += encodedSize(values[i]) + 1 // and its comma
 		}
 		if size > maxQueryBytes {
 			out.Truncated = true
@@ -408,21 +408,14 @@ func readRows(ctx context.Context, rows *sql.Rows, sources []Source) (Rows, erro
 	return out, nil
 }
 
-// encodedSize is how many bytes s takes as a JSON string, as the MCP result encodes it: <, > and & and
-// control characters become six-byte escapes, quotes and backslashes two.
-func encodedSize(s string) int {
-	n := 2 // the quotes
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '<' || c == '>' || c == '&' || c < 0x20:
-			n += 6
-		case c == '"' || c == '\\':
-			n += 2
-		default:
-			n++
-		}
+// encodedSize is how many bytes v takes in the result, which is encoded with encoding/json: escapes for
+// <, > and &, invalid UTF-8 and line separators, numbers in full. It's exact by being json.Marshal.
+func encodedSize(v any) int {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return 0
 	}
-	return n
+	return len(raw)
 }
 
 // paths matches file paths in SQLite messages.

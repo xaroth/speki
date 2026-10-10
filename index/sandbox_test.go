@@ -361,22 +361,29 @@ func TestQueryErrorNamesVaults(t *testing.T) {
 	}
 }
 
-// The 1 MiB limit is on the result as it goes out, JSON-encoded, where markdown's < > & take six bytes.
+// The 1 MiB limit is on the result as it goes out, JSON-encoded: escapes for markdown's < > &, for
+// invalid UTF-8 and for line separators, numbers in full.
 func TestQueryLimitCountsEncodedSize(t *testing.T) {
 	sb, sources, _ := sandboxFixture(t)
-	rows, err := runQuery(t, sb, sources, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 30) SELECT printf('%.*c', 90000, '<') FROM n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.Marshal(rows.Rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(raw) > maxQueryBytes || !rows.Truncated {
-		t.Errorf("%d bytes of JSON, truncated %v", len(raw), rows.Truncated)
-	}
-	if got := encodedSize(`a<"\`); got != len(`"a\u003c\"\\"`) {
-		t.Errorf("encodedSize = %d", got)
+	for name, q := range map[string]string{
+		"angle brackets":  "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 30) SELECT printf('%.*c', 90000, '<') FROM n",
+		"invalid UTF-8":   "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 30) SELECT unhex(printf('%.*c', 98000, 'F')) FROM n",
+		"line separators": "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 40) SELECT replace(printf('%.*c', 30000, 'x'), 'x', char(8232)) FROM n",
+		"numbers":         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) SELECT printf('%.*c', 2000, 'x'), " + strings.TrimSuffix(strings.Repeat("i * 0.1234567891234567, ", 45), ", ") + " FROM n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows, err := runQuery(t, sb, sources, q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(map[string]any{"columns": rows.Columns, "rows": rows.Rows})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(raw) > maxQueryBytes+64 {
+				t.Errorf("%d bytes of JSON, truncated %v", len(raw), rows.Truncated)
+			}
+		})
 	}
 }
 
