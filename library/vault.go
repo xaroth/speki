@@ -366,7 +366,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		}
 	}
 
-	stats, err := v.index.Stats(ctx)
+	stats, err := v.index.Stats(context.WithoutCancel(ctx)) // the index caught up; say so even if ctx just ran out
 	if err != nil {
 		return err
 	}

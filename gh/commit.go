@@ -167,6 +167,9 @@ func graphqlErrors(errs []graphqlError) error {
 			return fmt.Errorf("%w: %s", ErrBranchRules, e.Message)
 		case strings.Contains(msg, "not accessible"):
 			return fmt.Errorf("%w: %s", ErrForbidden, e.Message)
+		case strings.Contains(msg, "timeout") || strings.Contains(msg, "something went wrong"):
+			// GitHub answers some timeouts this way, with HTTP 200; the commit may have landed.
+			return fmt.Errorf("GitHub: %s (%s)", e.Message, e.Type)
 		}
 	}
 	return fmt.Errorf("%w: %s (%s)", ErrRefused, errs[0].Message, errs[0].Type)
