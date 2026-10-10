@@ -87,8 +87,16 @@ fetches the document with an HTTP client that:
 - requires the document's `client_id` to equal its URL, and its redirect URIs to be either `https` on the
   same host or loopback (Claude Code's document lists loopback redirects)
 
-Parsed documents (name and redirect URIs only) are kept in a per-instance cache of 100 entries for 10
-minutes.
+Parsed documents (name and redirect URIs only) are kept in a per-instance cache of 100 entries and
+refetched after 10 minutes. The refetch runs in the background, and the old document is used meanwhile,
+and for up to an hour while the host can't be reached or answers with an error. A 404 or 410 means the
+document was removed, so the old one is dropped. Failed
+fetches are remembered on their own: a missing or invalid document for a minute, an unreachable host for
+10 seconds.
+
+At most 4 fetches of new documents run at once, with 2 more slots for refetching documents that were
+fetched before, so a stream of made-up URLs can't keep claude.ai out. A request waits up to 2 seconds for
+a slot, and stops waiting when its client leaves.
 
 Other local clients, the ones that don't use metadata documents, register with
 `POST /oauth/register`. Registration only accepts loopback redirect URIs (`http://127.0.0.1`,
@@ -166,7 +174,11 @@ Details per step:
 4. Refresh with GitHub. A `bad_refresh_token` becomes `invalid_grant`, which sends the user to sign in again.
 5. Seal the new pair. Store it for 30 seconds under the old token's hash, encrypted with a key derived
    from the old refresh token itself, so the store (Redis, in a cluster) never holds a usable token.
-   Return it.
+   Return it. Storing should finish before the lock runs out. If it fails twice, speki stores a marker
+   instead, and a request waiting with the same token gets `temporarily_unavailable`: the client may
+   already hold the new pair from the first request (another window of it, say). Once the marker expires,
+   the old token fails with `invalid_grant`, since the GitHub token inside it is spent. If even the marker
+   can't be stored, the store is down, and the waiting request most likely fails with `server_error`.
 
 Every speki refresh is a GitHub refresh. GitHub's single-use refresh tokens give us rotation and replay
 detection: after the real client has refreshed, an old refresh token is dead, because the GitHub token

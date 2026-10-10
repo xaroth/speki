@@ -150,7 +150,7 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 	for {
 		resp, found, err := s.refreshResult(ctx, key, old)
 		if err != nil {
-			s.tokenServerError(w, r, err)
+			s.refreshResultError(w, r, err)
 			return
 		}
 		if found {
@@ -202,7 +202,7 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 	// Another request may have finished between our look and our lock.
 	resp, found, err := s.refreshResult(ctx, key, old)
 	if err != nil {
-		s.tokenServerError(w, r, err)
+		s.refreshResultError(w, r, err)
 		return
 	}
 	if found {
@@ -239,17 +239,39 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 		s.tokenServerError(w, r, err)
 		return
 	}
-	err = s.keepRefreshResult(context.WithoutCancel(ctx), key, old, resp)
+	// The result should be kept before the lock runs out, or a waiting request takes the lock and refreshes
+	// again with the spent GitHub token. But a late GitHub answer still gets a moment to be kept.
+	kctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), maxTime(lock.at.Add(refreshLockTime), time.Now().Add(2*time.Second)))
+	defer cancel()
+	err = s.keepRefreshResult(kctx, key, old, resp)
 	if err != nil {
-		err = s.keepRefreshResult(context.WithoutCancel(ctx), key, old, resp) // once more
+		err = s.keepRefreshResult(kctx, key, old, resp) // once more
 	}
 	if err != nil {
-		// Another request with the same token would refresh again with a GitHub token that's spent.
-		// Keeping the lock until it runs out makes it wait and fail as temporary instead.
-		keepLock = true
+		// A request with the same token can't be given the result. A small marker tells it why, so it
+		// doesn't try GitHub with a spent token; if even that can't be written, the store is down and
+		// the lock is kept until it runs out.
 		s.logger.WarnContext(ctx, "keeping refresh result failed", "err", err)
+		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		if s.store.Set(mctx, "refresh-result:"+key, []byte(resultLost), refreshResultTime) != nil {
+			keepLock = true
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// refreshResultError answers a failed look for a stored result. A lost result means another request
+// refreshed this token, and may have handed the new pair to the same client. So the client is told to
+// try again, by which time it may hold that pair, rather than to sign in again; once the marker expires,
+// GitHub's refusal of the spent token signs it out.
+func (s *Server) refreshResultError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errResultLost) {
+		w.Header().Set("Retry-After", "5")
+		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "this refresh token was just used, but its result was lost")
+		return
+	}
+	s.tokenServerError(w, r, err)
 }
 
 // writeRefreshResult answers with the result of a refresh another request made with the same token, if
@@ -344,6 +366,13 @@ func narrow(granted []string, requested string) ([]string, bool) {
 	return out, true
 }
 
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
 func minTime(a, b time.Time) time.Time {
 	if b.IsZero() || a.Before(b) {
 		return a
@@ -351,10 +380,20 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
+// resultLost is kept in place of a refresh result that couldn't be stored. It can't be mistaken for a
+// sealed result, which is longer than a nonce.
+const resultLost = "lost"
+
+// errResultLost means the token was refreshed, but the result couldn't be kept for other requests.
+var errResultLost = errors.New("refresh result lost")
+
 func (s *Server) refreshResult(ctx context.Context, key, old string) (tokenResponse, bool, error) {
 	raw, found, err := s.store.Get(ctx, "refresh-result:"+key)
 	if err != nil || !found {
 		return tokenResponse{}, false, err
+	}
+	if string(raw) == resultLost {
+		return tokenResponse{}, false, errResultLost
 	}
 	plain, err := resultCipher(old, raw, false)
 	if err != nil {
