@@ -141,33 +141,43 @@ func commitError(err error) error {
 }
 
 // graphqlErrors maps the errors createCommitOnBranch reports in its response body. GitHub documents
-// the types but not the messages, so types are trusted first and messages matched loosely after.
+// the types but not the messages. Messages are matched before FORBIDDEN, because push protection and
+// rulesets come back as FORBIDDEN too (recorded in testdata/).
 func graphqlErrors(errs []graphqlError) error {
 	for _, e := range errs {
 		switch e.Type {
 		case "STALE_DATA":
-			return fmt.Errorf("%w: %s", ErrHeadMoved, e.Message)
+			return fmt.Errorf("%w: %s", ErrHeadMoved, tidy(e.Message))
 		case "RATE_LIMITED":
 			return &RateLimitError{RetryAfter: time.Minute}
-		case "FORBIDDEN", "NOT_FOUND":
-			return fmt.Errorf("%w: %s", ErrForbidden, e.Message)
 		}
 	}
 	for _, e := range errs {
 		msg := strings.ToLower(e.Message)
 		switch {
 		case strings.Contains(msg, "expected branch to point to"):
-			return fmt.Errorf("%w: %s", ErrHeadMoved, e.Message)
-		case strings.Contains(msg, "push protection") || strings.Contains(msg, "secret scanning") || strings.Contains(msg, "cannot contain secrets"):
-			return &SecretError{Detail: e.Message}
+			return fmt.Errorf("%w: %s", ErrHeadMoved, tidy(e.Message))
+		case strings.Contains(msg, "secret detected") || strings.Contains(msg, "push protection") ||
+			strings.Contains(msg, "secret scanning") || strings.Contains(msg, "cannot contain secrets"):
+			return &SecretError{Detail: tidy(e.Message)}
 		case strings.Contains(msg, "rule violation") || strings.Contains(msg, "protected branch"):
-			return fmt.Errorf("%w: %s", ErrBranchRules, e.Message)
+			return fmt.Errorf("%w: %s", ErrBranchRules, tidy(e.Message))
 		case strings.Contains(msg, "not accessible"):
-			return fmt.Errorf("%w: %s", ErrForbidden, e.Message)
+			return fmt.Errorf("%w: %s", ErrForbidden, tidy(e.Message))
 		case strings.Contains(msg, "timeout") || strings.Contains(msg, "something went wrong"):
 			// GitHub answers some timeouts this way, with HTTP 200; the commit may have landed.
-			return fmt.Errorf("GitHub: %s (%s)", e.Message, e.Type)
+			return fmt.Errorf("GitHub: %s (%s)", tidy(e.Message), e.Type)
 		}
 	}
-	return fmt.Errorf("%w: %s (%s)", ErrRefused, errs[0].Message, errs[0].Type)
+	for _, e := range errs {
+		if e.Type == "FORBIDDEN" || e.Type == "NOT_FOUND" {
+			return fmt.Errorf("%w: %s", ErrForbidden, tidy(e.Message))
+		}
+	}
+	return fmt.Errorf("%w: %s (%s)", ErrRefused, tidy(errs[0].Message), errs[0].Type)
+}
+
+// tidy folds GitHub's multi-line messages onto one line.
+func tidy(msg string) string {
+	return strings.Join(strings.Fields(msg), " ")
 }

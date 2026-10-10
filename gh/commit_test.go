@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -43,6 +45,14 @@ func fakeGraphQL(t *testing.T) *Client {
 		w.Header().Set("Content-Type", "application/json")
 		fail := func(typ, msg string) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{map[string]any{"type": typ, "message": msg}}})
+		}
+		if name, ok := strings.CutPrefix(in.Head, "recorded/"); ok {
+			body, err := os.ReadFile(filepath.Join("testdata", name+".json"))
+			if err != nil {
+				t.Error(err)
+			}
+			_, _ = w.Write(body)
+			return
 		}
 		switch in.Head {
 		case "good":
@@ -122,10 +132,19 @@ func TestCommit(t *testing.T) {
 			t.Errorf("%s: %v, want %v", head, err, want)
 		}
 	}
-	_, err = c.Commit(t.Context(), "ghu_good", req("secret"))
+	// Responses recorded from github.com: all FORBIDDEN, told apart only by their messages.
+	for _, name := range []string{"commit-ruleset-pull-request", "commit-ruleset-status-check"} {
+		_, err := c.Commit(t.Context(), "ghu_good", req("recorded/"+name))
+		if !errors.Is(err, ErrBranchRules) {
+			t.Errorf("%s: %v, want %v", name, err, ErrBranchRules)
+		}
+	}
 	var serr *SecretError
-	if !errors.As(err, &serr) || serr.Detail == "" {
-		t.Errorf("secret: %v", err)
+	for _, head := range []string{"secret", "recorded/commit-secret"} {
+		_, err = c.Commit(t.Context(), "ghu_good", req(head))
+		if !errors.As(err, &serr) || serr.Detail == "" || strings.Contains(serr.Detail, "\n") {
+			t.Errorf("%s: %v", head, err)
+		}
 	}
 	_, err = c.Commit(t.Context(), "ghu_good", req("abuse"))
 	var rerr *RateLimitError

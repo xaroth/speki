@@ -54,14 +54,27 @@ author and checks their push access.
 |---|---|---|---|---|
 | Contents `PUT`/`DELETE` | One | Blob SHA of that file | Undocumented for user tokens | Yes, documented |
 | Git Data (blobs, trees, commits, refs) | Any | Non-fast-forward ref update | Only if we sign | Undocumented |
-| GraphQL `createCommitOnBranch` | Any, additions and deletions | `expectedHeadOid` | Yes, by GitHub | Undocumented |
+| GraphQL `createCommitOnBranch` | Any, additions and deletions | `expectedHeadOid` | Yes, by GitHub | Undocumented, but applies (tested) |
 
 `move` needs a delete and an add in one commit, which rules out the Contents API. We use
 `createCommitOnBranch`: atomic, signed, with a branch-level check that turns a lost race into a clean error.
 
-Not yet verified: whether push protection rejects a secret sent through `createCommitOnBranch`, and which
-errors branch rulesets produce through it. If push protection doesn't apply, the Git Data API (blobs,
-tree, commit, non-forced ref update) does the same job. Either way the choice sits in one method of `gh`.
+Tested on github.com in October 2026, with a GitHub App user token, on public repositories:
+
+- A commit made this way is authored by the user and shows as Verified. GitHub is the committer.
+- Push protection rejects a secret in a new file. A GitHub token in the right format with a valid
+  checksum is enough; it doesn't have to be a live one.
+- A ruleset requiring a pull request, and one requiring a status check, both reject the commit.
+
+All three refusals come back with HTTP 200 and the same error type as a missing permission:
+
+| Case | `type` | `message` |
+|---|---|---|
+| Secret | `FORBIDDEN` | `Repository rule violations found\n\nSecret detected in content\n\n` |
+| Pull request required | `FORBIDDEN` | `Repository rule violations found\n\nChanges must be made through a pull request.\n\n` |
+| Status check required | `FORBIDDEN` | `Repository rule violations found\n\nRequired status check "ci/test" is expected.\n\n` |
+
+The secret message doesn't say what kind of secret was found. The bodies are recorded in `gh/testdata/`.
 
 Edits to a document check that the file's blob SHA still matches what the agent read. GitHub's branch
 check alone would also reject concurrent changes elsewhere in the vault. Speki retries those against the
