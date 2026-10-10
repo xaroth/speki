@@ -42,9 +42,14 @@ linters:
 
 formatters:
   enable:
+    - gci
     - gofmt
-    - goimports
   settings:
-    goimports:
-      local-prefixes:
-        - github.com/eve-online-tools/speki
+    gci:
+      sections:
+      - standard
+      - default
+      - prefix(github.com/eve-online-tools)
+      - prefix(github.com/eve-online-tools/speki)
+      - blank
+      custom-order: true
