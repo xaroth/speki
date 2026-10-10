@@ -28,7 +28,9 @@ type Copy interface {
 // Vaults hands out the local copies of the vaults speki serves.
 type Vaults interface {
 	Copy(repoID int64) (Copy, bool)
-	// Sync brings a vault's copy up to date with GitHub, and returns when it's done.
+	// Sync brings a vault's copy up to date with GitHub by applying changes, and returns when it's
+	// done. It stops waiting when ctx ends, and leaves anything bigger, such as a full rebuild, to the
+	// poller.
 	Sync(ctx context.Context, repoID int64) error
 }
 

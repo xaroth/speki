@@ -74,7 +74,7 @@ func New(github github, opts Options, logger *slog.Logger) *Library {
 		opening: make(chan struct{}, opts.Opening),
 		syncs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "speki_sync_total",
-			Help: "Vault syncs, by result: unchanged, applied, rebuilt or failed.",
+			Help: "Vault syncs, by result: unchanged, applied, rebuilt, deferred (a rebuild left to the poller) or failed.",
 		}, []string{"result"}),
 	}
 }
@@ -250,7 +250,7 @@ func (l *Library) initialise(ctx context.Context, v *Vault) {
 	v.setState(StateBuilding, nil)
 	err := v.open(ctx, l)
 	if err == nil {
-		err = l.syncLocked(ctx, v)
+		err = l.syncLocked(ctx, v, false)
 	}
 	if err != nil {
 		v.setState(StateFailed, err)

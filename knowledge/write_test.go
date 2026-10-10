@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -52,7 +53,7 @@ func TestWriteCreates(t *testing.T) {
 	if len(c.Changes) != 1 || c.Changes[0].Path != "runbooks/deploy.md" || string(c.Changes[0].Content) != want {
 		t.Errorf("commit changes = %+v", c.Changes)
 	}
-	if c.Message != "Create runbooks/deploy.md\n\nSpeki-Client: Claude Code" || c.Repo != "ours/kb" || c.Branch != "main" || c.ExpectedHead != "c1" {
+	if !strings.HasPrefix(c.Message, "Create runbooks/deploy.md\n\nSpeki-Client: Claude Code\nSpeki-Request: ") || c.Repo != "ours/kb" || c.Branch != "main" || c.ExpectedHead != "c1" {
 		t.Errorf("commit = %+v", c)
 	}
 	if res.Version != blobID([]byte(want)) || res.Commit == "" || res.IndexPending {
@@ -106,7 +107,7 @@ func TestWriteReplaces(t *testing.T) {
 	if got := f.read(t, "README.md"); got.Content != "---\ntitle: About\nupdated: 2026-10-09T14:02:11Z\n---\nNew text.\n" || got.Document.Version != res.Version {
 		t.Errorf("after replace: %q", got.Content)
 	}
-	if m := f.lastCommit(t).Message; m != "Rewrite the intro\n\nSpeki-Client: Claude Code" {
+	if m := f.lastCommit(t).Message; !strings.HasPrefix(m, "Rewrite the intro\n\nSpeki-Client: Claude Code\n") {
 		t.Errorf("message = %q", m)
 	}
 
@@ -246,7 +247,7 @@ func TestMoveAndDelete(t *testing.T) {
 	if len(c.Changes) != 2 || c.Changes[0].Path != "a.md" || c.Changes[0].Content != nil || c.Changes[1].Path != "archive/a.md" || string(c.Changes[1].Content) != "# A\n" {
 		t.Errorf("move changes = %+v", c.Changes)
 	}
-	if res.Version != v || strings.Join(res.LinkedFrom, ",") != "b.md,c.md" || c.Message != "Move a.md to archive/a.md\n\nSpeki-Client: Claude Code" {
+	if res.Version != v || strings.Join(res.LinkedFrom, ",") != "b.md,c.md" || !strings.HasPrefix(c.Message, "Move a.md to archive/a.md\n\nSpeki-Client: Claude Code\n") {
 		t.Errorf("move result = %+v, message %q", res, c.Message)
 	}
 
@@ -581,5 +582,50 @@ func TestWritePathChecks(t *testing.T) {
 	wantCode(t, err, Invalid)
 	if len(f.github.requests) != 0 {
 		t.Errorf("committed %d times", len(f.github.requests))
+	}
+}
+
+// GitHub made the commit but its answer was lost: speki finds the commit and reports success, so the
+// agent doesn't retry an edit that would apply twice.
+func TestLostAnswerToACommit(t *testing.T) {
+	f := newFixture(t)
+	f.github.lostErr = errors.New("502 Bad Gateway")
+	res, err := f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "# About", NewText: "# About\n\nAn intro."})
+	if err != nil {
+		t.Fatalf("edit whose answer was lost: %v", err)
+	}
+	if res.Commit == "" || res.Version != f.version(t, "README.md") {
+		t.Errorf("result = %+v", res)
+	}
+
+	if res.Commit != f.github.repoOf("ours/kb").head {
+		t.Errorf("result commit %s, want the commit speki made", res.Commit)
+	}
+
+	// A failure where nothing landed is still a failure.
+	f.github.lostErr = nil
+	f.github.err = errors.New("connection reset")
+	_, err = f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "An intro.", NewText: "Intro."})
+	if err == nil {
+		t.Error("a commit that never landed reported success")
+	}
+
+	// A definite refusal isn't looked for at all.
+	f.github.err = fmt.Errorf("%w: something (UNPROCESSABLE)", gh.ErrRefused)
+	_, err = f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "An intro.", NewText: "Intro."})
+	if err == nil {
+		t.Error("a refusal reported success")
+	}
+}
+
+func TestWriteDuringARebuild(t *testing.T) {
+	f := newFixture(t)
+	v := f.version(t, "README.md")
+	f.github.push("ours/kb", "README.md", []byte("# Changed\n"))
+	f.vaults.syncErr = ErrRebuilding
+	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "# Mine\n"})
+	wantCode(t, err, Unavailable)
+	if !strings.Contains(err.Error(), "rebuilding") {
+		t.Errorf("error = %v", err)
 	}
 }

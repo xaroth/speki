@@ -132,7 +132,7 @@ func (s *Server) addTools() {
 		Name:  "edit",
 		Title: "Edit a document",
 		Description: "Replace an exact piece of text in a document and commit the change. This is the tool for changing part of a document. " +
-			"old_text must appear exactly once (whitespace and line endings count) unless replace_all is set. Read the document first, and pass its version to be sure nobody changed it since.",
+			"old_text must appear exactly once (whitespace and line endings count) unless replace_all is set. Read the document first, and pass its version: it makes sure nobody changed the document since, and that retrying after a lost answer doesn't apply the edit twice.",
 		Annotations: changes(false),
 	}, handle(s, "edit", s.edit))
 	mcp.AddTool(s.mcp, &mcp.Tool{
