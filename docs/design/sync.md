@@ -113,8 +113,9 @@ small interface it declares:
 
 ```go
 // Package knowledge
-type committer interface {
-	Commit(ctx context.Context, token string, c gh.Commit) (sha string, err error)
+type gitHub interface {
+	Commit(ctx context.Context, token string, req gh.CommitRequest) (sha string, err error)
+	// ... and Commits, for history
 }
 
 // Package gh
@@ -123,7 +124,7 @@ type FileChange struct {
 	Content []byte // nil deletes the path
 }
 
-type Commit struct {
+type CommitRequest struct {
 	Repo         string // owner/repo
 	Branch       string
 	ExpectedHead string
@@ -139,15 +140,15 @@ applies to this mutation isn't documented, and is checked before anything is bui
 update) for every write instead. Nothing outside
 `gh` changes either way.
 
-Before committing, `knowledge` checks the target path against the mirror at the expected head with
-`Lookup`: a path that exists (as any kind of entry), or that differs only in letter case from an existing
+Before committing, `knowledge` checks the target path against every path in the mirror's tree at the
+expected head (`Paths`, plus the folders they imply): a path that exists (as any kind of entry), or that differs only in letter case from an existing
 file or folder, is refused for creation, and so is a file that differs only in Unicode normalisation. A
 folder that differs only in normalisation takes git's spelling (see `CheckPath` in
 [document.md](document.md)). When changing an existing file,
 speki writes back to the exact path bytes git has.
 
-Commit messages: the agent's message, or a default, is cut to one line of at most 200 characters. Lines that
-look like a `Speki-Client:` trailer are removed. Speki then appends its own trailer with the client name
+Commit messages: the first line of the agent's message, or a default, cut to at most 200 bytes. A line that
+looks like a `Speki-Client:` trailer is replaced by the default. Speki then appends its own trailer with the client name
 (one line, printable characters, at most 64). `history` reads only the last `Speki-Client` trailer of a
 message.
 
@@ -157,16 +158,24 @@ message.
 |---|---|---|
 | expected head doesn't match | `gh.ErrHeadMoved` | retried up to three times, then `conflict` |
 | rule violation, protected branch | `gh.ErrBranchRules` | `vault_read_only` |
-| push protection found a secret | `gh.ErrSecretDetected` | `secret_detected`, with GitHub's description of the secret type |
+| push protection found a secret | `*gh.SecretError{Detail}` | `secret_detected`, with GitHub's description of the secret type |
 | 403 or 404 on the repository | `gh.ErrForbidden` | `no_write_access` |
-| secondary rate limit | `gh.RateLimitError{RetryAfter}` | `rate_limited` |
+| secondary rate limit | `*gh.RateLimitError{RetryAfter}` | `rate_limited` |
+
+GitHub documents the GraphQL error types but not their messages, so `gh` matches the messages loosely.
+The exact responses still have to be recorded against a real app (milestone 0, check 1).
+
+When the agent's version doesn't match the index, `knowledge` syncs once before answering `conflict`: the
+agent may have read a version GitHub has and the index doesn't yet. One write runs at a time per vault on
+an instance; between instances, the expected head keeps commits from overwriting each other.
 
 After a successful commit, `knowledge`:
 
 1. computes the new version: the git blob hash of the content it sent
 2. asks the vault to sync, and waits until a sync that started after the commit has finished, at most 10
    seconds
-3. publishes `{repo id, commit}` on the store's change channel
+3. publishes `{repo id, commit}` on the store's change channel (milestone 8; a single instance has nobody
+   to tell)
 4. returns the version, the commit SHA, and `index_pending: true` if step 2 timed out
 
 ## Change notices between instances

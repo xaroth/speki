@@ -1,0 +1,524 @@
+package knowledge
+
+import (
+	"context"
+	"crypto/sha1" //nolint:gosec // git blob IDs are SHA-1
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/document"
+	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/index"
+	"github.com/eve-online-tools/speki/vault"
+)
+
+const (
+	// commitAttempts is how often a change is tried when the branch keeps moving under it.
+	commitAttempts = 3
+	// syncWait is how long a change waits for the index to catch up with its commit.
+	syncWait = 10 * time.Second
+	// maxHeadline is the longest commit message speki writes, in bytes.
+	maxHeadline = 200
+)
+
+// Result is what a change did.
+type Result struct {
+	Version      string // the document's new version; empty after a delete
+	Commit       string
+	IndexPending bool     // the index hadn't caught up with the commit yet
+	LinkedFrom   []string // documents linking to the old path, after a move or delete
+}
+
+// WriteRequest creates a document, or replaces one entirely.
+type WriteRequest struct {
+	Vault   string
+	Path    string
+	Content string
+	Version string // the version being replaced; empty creates
+	Message string
+}
+
+// EditRequest replaces exact text in a document.
+type EditRequest struct {
+	Vault      string
+	Path       string
+	OldText    string
+	NewText    string
+	ReplaceAll bool
+	Version    string // optional
+	Message    string
+}
+
+// MoveRequest moves a document to another path.
+type MoveRequest struct {
+	Vault   string
+	From    string
+	To      string
+	Version string // of From
+	Message string
+}
+
+// DeleteRequest deletes a document.
+type DeleteRequest struct {
+	Vault   string
+	Path    string
+	Version string
+	Message string
+}
+
+// Write creates a document (without a version) or replaces one (with the version being replaced).
+func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Result, error) {
+	path := strings.TrimPrefix(req.Path, "/")
+	return b.change(ctx, g, req.Vault, req.Message, func(ctx context.Context, st state) (plan, error) {
+		cur, exists, err := st.document(ctx, path)
+		if err != nil {
+			return plan{}, err
+		}
+		if req.Version == "" {
+			if exists {
+				return plan{}, &Error{
+					Code:    AlreadyExists,
+					Message: fmt.Sprintf("%s already exists, at version %s. Read it and pass that version to replace it, or use edit to change part of it", cur.Path, cur.Version),
+					Version: cur.Version,
+				}
+			}
+			newPath, err := st.newPath(path, "")
+			if err != nil {
+				return plan{}, err
+			}
+			out, err := prepareDocument(newPath, nil, []byte(req.Content), b.now())
+			if err != nil {
+				return plan{}, err
+			}
+			return plan{changes: []gh.FileChange{{Path: newPath, Content: out}}, message: "Create " + newPath, path: newPath, version: blobID(out)}, nil
+		}
+
+		if !exists {
+			return plan{}, errorf(NotFound, "%s has no document %s. Leave out version to create it", st.vault.Name, path)
+		}
+		if cur.Version != req.Version {
+			return plan{}, stale(cur)
+		}
+		raw, err := st.copy.Blob(cur.Version)
+		if err != nil {
+			return plan{}, err
+		}
+		out, err := prepareDocument(cur.Path, raw, []byte(req.Content), b.now())
+		if err != nil {
+			return plan{}, err
+		}
+		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, path: cur.Path, version: blobID(out)}, nil
+	})
+}
+
+// Edit replaces OldText in a document, once unless ReplaceAll is set.
+func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Result, error) {
+	if req.OldText == "" {
+		return Result{}, errorf(Invalid, "old_text is empty. Give the exact text to replace")
+	}
+	path := strings.TrimPrefix(req.Path, "/")
+	return b.change(ctx, g, req.Vault, req.Message, func(ctx context.Context, st state) (plan, error) {
+		cur, exists, err := st.document(ctx, path)
+		if err != nil {
+			return plan{}, err
+		}
+		if !exists {
+			return plan{}, errorf(NotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, path)
+		}
+		if req.Version != "" && cur.Version != req.Version {
+			return plan{}, stale(cur)
+		}
+		raw, err := st.copy.Blob(cur.Version)
+		if err != nil {
+			return plan{}, err
+		}
+		text := string(raw)
+		n := strings.Count(text, req.OldText)
+		switch {
+		case n == 0:
+			return plan{}, errorf(Invalid, "old_text doesn't appear in %s. Read it again and copy the text exactly; whitespace and line endings count", cur.Path)
+		case n > 1 && !req.ReplaceAll:
+			return plan{}, errorf(Invalid, "old_text appears %d times in %s. Include more of the surrounding text so it matches once, or set replace_all", n, cur.Path)
+		}
+		limit := 1
+		if req.ReplaceAll {
+			limit = -1
+		}
+		next := strings.Replace(text, req.OldText, req.NewText, limit)
+		out, err := prepareDocument(cur.Path, raw, []byte(next), b.now())
+		if err != nil {
+			return plan{}, err
+		}
+		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, path: cur.Path, version: blobID(out)}, nil
+	})
+}
+
+// Move moves a document in one commit. Links to it elsewhere aren't changed: the result lists the
+// documents that link to the old path.
+func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Result, error) {
+	if req.Version == "" {
+		return Result{}, errorf(Invalid, "move needs the version of the document being moved. Read it first")
+	}
+	from := strings.TrimPrefix(req.From, "/")
+	to := strings.TrimPrefix(req.To, "/")
+	if from == to {
+		return Result{}, errorf(Invalid, "from and to are the same path")
+	}
+	return b.change(ctx, g, req.Vault, req.Message, func(ctx context.Context, st state) (plan, error) {
+		cur, exists, err := st.document(ctx, from)
+		if err != nil {
+			return plan{}, err
+		}
+		if !exists {
+			return plan{}, errorf(NotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, from)
+		}
+		if cur.Version != req.Version {
+			return plan{}, stale(cur)
+		}
+		target, exists, err := st.document(ctx, to)
+		if err != nil {
+			return plan{}, err
+		}
+		if exists {
+			return plan{}, &Error{
+				Code:    AlreadyExists,
+				Message: fmt.Sprintf("%s already exists, at version %s. Pick another path, or delete that document first", target.Path, target.Version),
+				Version: target.Version,
+			}
+		}
+		newPath, err := st.newPath(to, cur.Path)
+		if err != nil {
+			return plan{}, err
+		}
+		raw, err := st.copy.Blob(cur.Version)
+		if err != nil {
+			return plan{}, err
+		}
+		linked, err := st.copy.Index().LinkedFrom(ctx, cur.Path)
+		if err != nil {
+			return plan{}, err
+		}
+		return plan{
+			changes:    []gh.FileChange{{Path: cur.Path}, {Path: newPath, Content: raw}},
+			message:    "Move " + cur.Path + " to " + newPath,
+			path:       newPath,
+			version:    cur.Version,
+			linkedFrom: linked,
+		}, nil
+	})
+}
+
+// Delete deletes a document. It stays in git history.
+func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (Result, error) {
+	if req.Version == "" {
+		return Result{}, errorf(Invalid, "delete needs the version of the document. Read it first")
+	}
+	path := strings.TrimPrefix(req.Path, "/")
+	return b.change(ctx, g, req.Vault, req.Message, func(ctx context.Context, st state) (plan, error) {
+		cur, exists, err := st.document(ctx, path)
+		if err != nil {
+			return plan{}, err
+		}
+		if !exists {
+			return plan{}, errorf(NotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, path)
+		}
+		if cur.Version != req.Version {
+			return plan{}, stale(cur)
+		}
+		linked, err := st.copy.Index().LinkedFrom(ctx, cur.Path)
+		if err != nil {
+			return plan{}, err
+		}
+		return plan{changes: []gh.FileChange{{Path: cur.Path}}, message: "Delete " + cur.Path, path: cur.Path, linkedFrom: linked}, nil
+	})
+}
+
+// state is a vault as a change sees it: its copy at the head the commit will be based on.
+type state struct {
+	vault vault.Vault
+	copy  Copy
+	head  string
+}
+
+// document looks a document up in the index.
+func (st state) document(ctx context.Context, path string) (index.Document, bool, error) {
+	d, err := st.copy.Index().Document(ctx, path)
+	if errors.Is(err, index.ErrNotFound) {
+		return index.Document{}, false, nil
+	}
+	if err != nil {
+		return index.Document{}, false, indexError(st.vault.Name, err)
+	}
+	return d, true, nil
+}
+
+// newPath checks a path for a new document against the git tree at head, and returns the path to
+// write. moving is the path being moved away from, which doesn't count as a collision.
+func (st state) newPath(path, moving string) (string, error) {
+	paths, err := st.copy.Paths(st.head)
+	if err != nil {
+		return "", err
+	}
+	taken := make(map[string]string, len(paths)) // path -> what it is
+	folded := make(map[string]string, len(paths))
+	for _, p := range paths {
+		if p == moving {
+			continue
+		}
+		taken[p] = "a file"
+		folded[document.Fold(p)] = p
+		for i := strings.LastIndexByte(p, '/'); i > 0; i = strings.LastIndexByte(p[:i], '/') {
+			taken[p[:i]] = "a folder"
+			folded[document.Fold(p[:i])] = p[:i]
+		}
+	}
+	checked, err := document.CheckPath(path, func(f string) (string, bool) {
+		p, ok := folded[f]
+		return p, ok
+	})
+	if err != nil {
+		return "", errorf(Invalid, "%s", err)
+	}
+	switch taken[checked] {
+	case "a file":
+		return "", errorf(AlreadyExists, "%s exists in the vault but isn't a document speki reads (it may be over 1 MiB). Pick another path", checked)
+	case "a folder":
+		return "", errorf(AlreadyExists, "%s is a folder in the vault. Pick another path", checked)
+	}
+	return checked, nil
+}
+
+// prepareDocument checks the new content of a document against its current content (nil for a new
+// one) and sets its dates. created is speki's: now for a new document, and kept from the current one
+// when the agent's content leaves it out.
+func prepareDocument(path string, current, next []byte, now time.Time) ([]byte, error) {
+	var cur *document.Document
+	created := now
+	if current != nil {
+		created = time.Time{}
+		var err error
+		cur, err = document.Parse(path, current)
+		if err != nil {
+			cur = nil // the current file is unusable; any valid content replaces it
+		}
+		if cur != nil {
+			created = cur.Meta.Created
+		}
+	}
+	d, err := document.Parse(path, next)
+	if err != nil {
+		return nil, errorf(Invalid, "the content can't be used: %s", err)
+	}
+	err = document.Check(cur, d)
+	if err != nil {
+		return nil, documentError(err)
+	}
+	out, err := d.Touch(now, created)
+	if err != nil {
+		return nil, documentError(err)
+	}
+	return out, nil
+}
+
+func documentError(err error) *Error {
+	msg := strings.ReplaceAll(err.Error(), "\n", "; ")
+	if errors.Is(err, document.ErrTooLarge) {
+		return errorf(TooLarge, "%s. Split the document into smaller ones", msg)
+	}
+	return errorf(Invalid, "%s", msg)
+}
+
+// staleError means the document changed since the version the agent gave.
+type staleError struct{ conflict *Error }
+
+func (e *staleError) Error() string { return e.conflict.Error() }
+
+func stale(cur index.Document) error {
+	return &staleError{conflict: &Error{
+		Code:    Conflict,
+		Message: fmt.Sprintf("%s changed since you read it. Current version: %s. Read it again and redo your change", cur.Path, cur.Version),
+		Version: cur.Version,
+	}}
+}
+
+// plan is a prepared commit.
+type plan struct {
+	changes    []gh.FileChange
+	message    string // used when the agent gave none
+	path       string // where the document is after the change
+	version    string // its version there; empty when it's deleted
+	linkedFrom []string
+}
+
+// change runs one change: it checks the user may write, takes the vault's write lock, prepares the commit
+// against the index's head, and commits it. When the agent's version is stale it syncs once and looks
+// again; when the branch moved, it syncs and starts over, up to commitAttempts times. After the commit it
+// waits for the index to catch up, up to syncWait.
+func (b *Base) change(ctx context.Context, g *access.Grant, name, message string, prepare func(context.Context, state) (plan, error)) (Result, error) {
+	v, ok := g.Vault(name)
+	switch {
+	case !ok:
+		return Result{}, noVault(name)
+	case g.ReadOnlySession():
+		return Result{}, errorf(ReadOnlySession, "the user connected speki read-only. Ask them to reconnect it with write access")
+	case !g.CanWrite(v.RepoID):
+		return Result{}, errorf(NoWriteAccess, "the user can read %s but can't push to it on GitHub. An owner of the repository can give them write access", v.Name)
+	}
+	unlock, err := b.lock(ctx, v.RepoID)
+	if err != nil {
+		return Result{}, err
+	}
+	defer unlock()
+
+	synced, moved := false, 0
+	for {
+		c, ok := b.vaults.Copy(v.RepoID)
+		if !ok {
+			return Result{}, noVault(name)
+		}
+		st := state{vault: c.Info(), copy: c, head: c.Index().Commit()} // the live name and branch
+		p, err := prepare(ctx, st)
+		if err != nil {
+			var se *staleError
+			var kerr *Error
+			if errors.As(err, &kerr) || ctx.Err() != nil {
+				return Result{}, err
+			}
+			if synced {
+				if errors.As(err, &se) {
+					return Result{}, se.conflict
+				}
+				return Result{}, err
+			}
+			// A stale version, or a version or tree the copy no longer has: the copy may be behind
+			// GitHub, or was just replaced. Sync once and look again.
+			synced = true
+			serr := b.vaults.Sync(ctx, v.RepoID)
+			if serr != nil {
+				b.logger.WarnContext(ctx, "sync before a change failed", "vault", v.Name, "err", serr)
+				if errors.As(err, &se) {
+					return Result{}, se.conflict
+				}
+				return Result{}, err
+			}
+			continue
+		}
+
+		sha, err := b.github.Commit(ctx, g.User().Token, gh.CommitRequest{
+			Repo:         st.vault.Name,
+			Branch:       st.vault.DefaultBranch,
+			ExpectedHead: st.head,
+			Message:      commitMessage(message, p.message, g.User().Client),
+			Changes:      p.changes,
+		})
+		if errors.Is(err, gh.ErrHeadMoved) {
+			moved++
+			if moved == commitAttempts {
+				return Result{}, errorf(Conflict, "%s kept changing while speki tried to commit. Read the document again and redo your change", v.Name)
+			}
+			err = b.vaults.Sync(ctx, v.RepoID)
+			if err != nil {
+				b.logger.WarnContext(ctx, "sync after a moved head failed", "vault", v.Name, "err", err)
+			}
+			continue
+		}
+		if err != nil {
+			return Result{}, commitError(st.vault.Name, err)
+		}
+
+		res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom}
+		sctx, cancel := context.WithTimeout(ctx, syncWait)
+		err = b.vaults.Sync(sctx, v.RepoID)
+		cancel()
+		if err != nil {
+			b.logger.WarnContext(ctx, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
+		}
+		res.IndexPending = err != nil || !b.indexed(ctx, v.RepoID, p.path, p.version)
+		return res, nil
+	}
+}
+
+// indexed reports whether the index has the document at path in version, or not at all when version is
+// empty.
+func (b *Base) indexed(ctx context.Context, repoID int64, path, version string) bool {
+	c, ok := b.vaults.Copy(repoID)
+	if !ok {
+		return false
+	}
+	d, err := c.Index().Document(ctx, path)
+	if version == "" {
+		return errors.Is(err, index.ErrNotFound)
+	}
+	return err == nil && d.Version == version
+}
+
+// commitError turns GitHub's refusal of a commit into an error the agent can act on.
+func commitError(name string, err error) error {
+	var secret *gh.SecretError
+	var limited *gh.RateLimitError
+	switch {
+	case errors.As(err, &secret):
+		return errorf(SecretDetected, "GitHub's push protection found a secret in the content (%s). Remove it, and tell the user", oneLine(secret.Detail))
+	case errors.As(err, &limited):
+		return errorf(RateLimited, "GitHub asked speki to slow down. Wait %d seconds and try again", int(limited.RetryAfter.Seconds()))
+	case errors.Is(err, gh.ErrBranchRules):
+		return errorf(VaultReadOnly, "GitHub refused the commit: %s only accepts changes through pull requests or checks. Tell the user", name)
+	case errors.Is(err, gh.ErrForbidden):
+		return errorf(NoWriteAccess, "GitHub refused the commit: the user can't push to %s", name)
+	case errors.Is(err, gh.ErrUnauthorized):
+		return errorf(Unavailable, "GitHub no longer accepts the user's sign-in. Ask them to reconnect speki")
+	}
+	return err
+}
+
+// commitMessage returns the commit message: the agent's first line (or fallback), cut to maxHeadline
+// bytes, and a trailer naming the client.
+func commitMessage(message, fallback, client string) string {
+	clean := func(s string) string {
+		line := strings.TrimSpace(oneLine(s))
+		if strings.HasPrefix(strings.ToLower(line), strings.ToLower(clientTrailer)) {
+			return ""
+		}
+		return cutUTF8(line, maxHeadline)
+	}
+	first, _, _ := strings.Cut(message, "\n")
+	line := clean(first)
+	if line == "" {
+		line = clean(fallback) // the whole of it: paths come from git, which allows line breaks in names
+	}
+	if line == "" {
+		line = "Update"
+	}
+	client = cutUTF8(strings.TrimSpace(oneLine(client)), maxClient)
+	if client == "" {
+		client = "unknown"
+	}
+	return line + "\n\n" + clientTrailer + " " + client
+}
+
+// oneLine drops line breaks and control and format characters.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t' || unicode.In(r, unicode.Zl, unicode.Zp):
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// blobID returns the git blob SHA of content: its version.
+func blobID(content []byte) string {
+	h := sha1.New() //nolint:gosec // git blob IDs are SHA-1
+	h.Write([]byte("blob " + strconv.Itoa(len(content)) + "\x00"))
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
+}

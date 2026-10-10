@@ -1,6 +1,6 @@
-// Package knowledge is what speki's tools do: list, search, read and history over the vaults a user may
-// see. It knows nothing about MCP. Every function that touches a vault takes the user's grant and checks
-// it before anything else.
+// Package knowledge is what speki's tools do: list, search, read, history, write, edit, move and delete
+// over the vaults a user may see. It knows nothing about MCP. Every function that touches a vault takes
+// the user's grant and checks it before anything else.
 package knowledge
 
 import (
@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/gh"
@@ -17,25 +19,56 @@ import (
 
 // Copy is one vault's local copy.
 type Copy interface {
+	Info() vault.Vault // the vault's current name and branch
 	Index() *index.Index
 	Blob(sha string) ([]byte, error)
+	Paths(commit string) ([]string, error) // every file in the git tree at commit
 }
 
-// historian looks up commits on GitHub as the user.
-type historian interface {
+// Vaults hands out the local copies of the vaults speki serves.
+type Vaults interface {
+	Copy(repoID int64) (Copy, bool)
+	// Sync brings a vault's copy up to date with GitHub, and returns when it's done.
+	Sync(ctx context.Context, repoID int64) error
+}
+
+// gitHub is what knowledge asks GitHub, as the user.
+type gitHub interface {
 	Commits(ctx context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error)
+	Commit(ctx context.Context, token string, req gh.CommitRequest) (string, error)
 }
 
 // Base answers the tools' questions.
 type Base struct {
-	copies func(repoID int64) (Copy, bool)
-	github historian
+	vaults Vaults
+	github gitHub
 	logger *slog.Logger
+	now    func() time.Time
+
+	mu    sync.Mutex
+	locks map[int64]chan struct{} // one write at a time per vault: a slot taken while writing
 }
 
-// New returns a Base. copies returns the local copy of a vault that's being served.
-func New(copies func(repoID int64) (Copy, bool), github historian, logger *slog.Logger) *Base {
-	return &Base{copies: copies, github: github, logger: logger}
+// New returns a Base.
+func New(vaults Vaults, github gitHub, logger *slog.Logger) *Base {
+	return &Base{vaults: vaults, github: github, logger: logger, now: time.Now, locks: map[int64]chan struct{}{}}
+}
+
+// lock takes a vault's write lock, or gives up when ctx ends, and returns its unlock.
+func (b *Base) lock(ctx context.Context, repoID int64) (func(), error) {
+	b.mu.Lock()
+	l, ok := b.locks[repoID]
+	if !ok {
+		l = make(chan struct{}, 1)
+		b.locks[repoID] = l
+	}
+	b.mu.Unlock()
+	select {
+	case l <- struct{}{}:
+		return func() { <-l }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // open returns a vault the user may read, by name, with its local copy.
@@ -44,7 +77,7 @@ func (b *Base) open(g *access.Grant, name string) (vault.Vault, Copy, error) {
 	if !ok {
 		return vault.Vault{}, nil, noVault(name)
 	}
-	c, ok := b.copies(v.RepoID)
+	c, ok := b.vaults.Copy(v.RepoID)
 	if !ok {
 		return vault.Vault{}, nil, noVault(name)
 	}

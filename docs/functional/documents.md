@@ -49,7 +49,7 @@ spelling, so the document lands in that folder rather than in a look-alike next 
 | `aliases` | list of text | writer | Other names for the subject. Searched like the title |
 | `status` | `draft`, `active`, `deprecated` | writer | Missing means `active`. Search ranks `deprecated` documents lower |
 | `related` | list of paths | writer | Other documents in the same vault worth reading alongside this one |
-| `created` | UTC datetime | speki | Set when speki creates the document |
+| `created` | UTC datetime | speki | Set when speki creates the document. A change that leaves it out keeps it |
 | `updated` | UTC datetime | speki | Set every time speki changes the document |
 
 Values that don't fit the table are rejected on write: a `status` of `wip`, `tags` given as a single string

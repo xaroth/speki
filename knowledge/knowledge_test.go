@@ -2,8 +2,6 @@ package knowledge
 
 import (
 	"context"
-	"crypto/sha1" //nolint:gosec // git blob IDs are SHA-1
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +10,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -24,15 +24,39 @@ import (
 	"github.com/eve-online-tools/speki/vault"
 )
 
-// fakeCopy is a vault copy with a real index and blobs in memory.
+// fakeCopy is a vault copy with a real index, and the git tree and blobs in memory.
 type fakeCopy struct {
+	mu    sync.Mutex
+	info  vault.Vault
 	idx   *index.Index
 	blobs map[string][]byte
+	tree  map[string][]byte // at the index's commit
+
+	blobFailures int
 }
 
 func (c *fakeCopy) Index() *index.Index { return c.idx }
 
+func (c *fakeCopy) Info() vault.Vault {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.info
+}
+
+// failBlobs makes the next n blob reads fail, as after a fresh clone dropped old objects.
+func (c *fakeCopy) failBlobs(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.blobFailures = n
+}
+
 func (c *fakeCopy) Blob(sha string) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.blobFailures > 0 {
+		c.blobFailures--
+		return nil, errors.New("object not found")
+	}
 	b, ok := c.blobs[sha]
 	if !ok {
 		return nil, errors.New("object not found")
@@ -40,11 +64,35 @@ func (c *fakeCopy) Blob(sha string) ([]byte, error) {
 	return b, nil
 }
 
-func blobID(content []byte) string {
-	h := sha1.New() //nolint:gosec // git blob IDs are SHA-1
-	fmt.Fprintf(h, "blob %d\x00", len(content))
-	h.Write(content)
-	return hex.EncodeToString(h.Sum(nil))
+func (c *fakeCopy) Paths(string) ([]string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Sorted(maps.Keys(c.tree)), nil
+}
+
+// load rebuilds the copy at commit with files. Files that aren't markdown are in the tree but not indexed.
+func (c *fakeCopy) load(t *testing.T, commit string, files map[string][]byte) {
+	t.Helper()
+	c.mu.Lock()
+	c.tree = maps.Clone(files)
+	for _, content := range files {
+		c.blobs[blobID(content)] = content
+	}
+	c.mu.Unlock()
+	changes := func(yield func(index.Change, error) bool) {
+		for _, p := range slices.Sorted(maps.Keys(files)) {
+			if !strings.HasSuffix(p, ".md") {
+				continue
+			}
+			if !yield(index.Change{Path: p, Version: blobID(files[p]), Content: files[p]}, nil) {
+				return
+			}
+		}
+	}
+	err := c.idx.Build(t.Context(), commit, iter.Seq2[index.Change, error](changes))
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newCopy(t *testing.T, files map[string]string) *fakeCopy {
@@ -55,34 +103,148 @@ func newCopy(t *testing.T, files map[string]string) *fakeCopy {
 	}
 	t.Cleanup(idx.Close)
 	c := &fakeCopy{idx: idx, blobs: map[string][]byte{}}
-	changes := func(yield func(index.Change, error) bool) {
-		for _, p := range slices.Sorted(maps.Keys(files)) {
-			content := []byte(files[p])
-			c.blobs[blobID(content)] = content
-			if !yield(index.Change{Path: p, Version: blobID(content), Content: content}, nil) {
-				return
-			}
-		}
+	raw := map[string][]byte{}
+	for p, content := range files {
+		raw[p] = []byte(content)
 	}
-	err = idx.Build(t.Context(), "c1", iter.Seq2[index.Change, error](changes))
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.load(t, "c1", raw)
 	return c
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-type fakeHistorian struct {
-	token, repo, branch, path string
-	limit                     int
-	commits                   []gh.Commit
-	err                       error
+// fakeRepo is a repository on the fake GitHub.
+type fakeRepo struct {
+	head  string
+	files map[string][]byte
 }
 
-func (f *fakeHistorian) Commits(_ context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error) {
+// fakeGitHub keeps repositories that start out as their copies, and takes commits to them.
+type fakeGitHub struct {
+	mu      sync.Mutex
+	t       *testing.T
+	f       *fixture
+	repos   map[string]*fakeRepo
+	commits int
+	// Commit
+	requests []gh.CommitRequest
+	before   func(repo *fakeRepo) // runs before a commit is checked, to change the repository under it
+	err      error                // returned by Commit when set
+	// Commits (history)
+	token, repo, branch, path string
+	limit                     int
+	history                   []gh.Commit
+	historyErr                error
+}
+
+func (f *fakeGitHub) Commits(_ context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error) {
 	f.token, f.repo, f.branch, f.path, f.limit = token, repo, branch, path, limit
-	return f.commits, f.err
+	return f.history, f.historyErr
+}
+
+// repoOf returns the repository behind a vault, starting it from the vault's copy.
+func (f *fakeGitHub) repoOf(name string) *fakeRepo {
+	r, ok := f.repos[name]
+	if ok {
+		return r
+	}
+	for _, v := range []vault.Vault{ours, shared, secret} {
+		if v.Name == name {
+			c := f.f.copies[v.RepoID]
+			r = &fakeRepo{head: c.idx.Commit(), files: maps.Clone(c.tree)}
+		}
+	}
+	f.repos[name] = r
+	return r
+}
+
+func (f *fakeGitHub) Commit(_ context.Context, _ string, req gh.CommitRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return "", f.err
+	}
+	r := f.repoOf(req.Repo)
+	if f.before != nil {
+		f.before(r)
+	}
+	if req.ExpectedHead != r.head {
+		return "", gh.ErrHeadMoved
+	}
+	r.files = maps.Clone(r.files)
+	for _, ch := range req.Changes {
+		if ch.Content == nil {
+			delete(r.files, ch.Path)
+		} else {
+			r.files[ch.Path] = ch.Content
+		}
+	}
+	f.commits++
+	r.head = fmt.Sprintf("commit-%d", f.commits)
+	return r.head, nil
+}
+
+// push changes a repository behind speki's back, as a push from elsewhere would.
+func (f *fakeGitHub) push(name, path string, content []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repoOf(name)
+	r.files = maps.Clone(r.files)
+	r.files[path] = content
+	f.commits++
+	r.head = fmt.Sprintf("push-%d", f.commits)
+}
+
+// fakeVaults serves the fixture's copies. Sync brings a copy up to date with its fake repository.
+type fakeVaults struct {
+	f       *fixture
+	syncs   atomic.Int32
+	syncErr error
+}
+
+func (v *fakeVaults) Copy(id int64) (Copy, bool) {
+	c, ok := v.f.copies[id]
+	if !ok {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.info.RepoID == 0 {
+		for _, vv := range []vault.Vault{ours, shared, secret} {
+			if vv.RepoID == id {
+				c.info = vv
+			}
+		}
+	}
+	return c, true
+}
+
+func (v *fakeVaults) Sync(_ context.Context, id int64) error {
+	v.syncs.Add(1)
+	if v.syncErr != nil {
+		return v.syncErr
+	}
+	gh := v.f.github
+	gh.mu.Lock()
+	var r *fakeRepo
+	for _, vv := range []vault.Vault{ours, shared, secret} {
+		if vv.RepoID == id {
+			r = gh.repos[vv.Name]
+		}
+	}
+	var head string
+	var files map[string][]byte
+	if r != nil {
+		head, files = r.head, maps.Clone(r.files)
+	}
+	gh.mu.Unlock()
+	c := v.f.copies[id]
+	if r == nil || c.idx.Commit() == head {
+		return nil
+	}
+	c.load(v.f.t, head, files)
+	return nil
 }
 
 var (
@@ -94,15 +256,20 @@ var (
 // fixture serves three vaults. The test user may read ours and shared, and write ours; secret holds a
 // document only others may read.
 type fixture struct {
-	base    *Base
-	grant   *access.Grant
-	copies  map[int64]*fakeCopy
-	history *fakeHistorian
+	t      *testing.T
+	base   *Base
+	grant  *access.Grant
+	copies map[int64]*fakeCopy
+	github *fakeGitHub
+	vaults *fakeVaults
 }
+
+var fixedNow = time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC)
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
+		t: t,
 		copies: map[int64]*fakeCopy{
 			1: newCopy(t, map[string]string{
 				"README.md":             "---\ntitle: About\n---\n# About\n\nThis vault holds zeppelin notes.\n",
@@ -112,13 +279,12 @@ func newFixture(t *testing.T) *fixture {
 			2: newCopy(t, map[string]string{"zeppelin.md": "# Zeppelin\n\nShared zeppelin facts.\n"}),
 			3: newCopy(t, map[string]string{"services/esi-proxy.md": "# Hidden\n\nThe secret zeppelin plan.\n"}),
 		},
-		history: &fakeHistorian{},
 	}
-	f.base = New(func(id int64) (Copy, bool) {
-		c, ok := f.copies[id]
-		return c, ok
-	}, f.history, discard())
-	f.grant = access.NewGrant(access.User{ID: 7, Login: "octocat", Token: "ghu_x", Write: true},
+	f.github = &fakeGitHub{t: t, f: f, repos: map[string]*fakeRepo{}}
+	f.vaults = &fakeVaults{f: f}
+	f.base = New(f.vaults, f.github, discard())
+	f.base.now = func() time.Time { return fixedNow }
+	f.grant = access.NewGrant(access.User{ID: 7, Login: "octocat", Token: "ghu_x", Client: "Claude Code", Write: true},
 		[]vault.Vault{ours, shared}, []int64{1})
 	return f
 }
@@ -336,7 +502,7 @@ func TestReadMissingBlob(t *testing.T) {
 
 func TestHistory(t *testing.T) {
 	f := newFixture(t)
-	f.history.commits = []gh.Commit{
+	f.github.history = []gh.Commit{
 		{SHA: "c2", Author: "octocat", Date: time.Unix(2, 0), Message: "Update a.md\n\nWhy.\n\nSpeki-Client: Claude Code\n"},
 		{SHA: "c1", Author: "someone", Date: time.Unix(1, 0), Message: "Create a.md\n\nSpeki-Client: fake\nin the body\n\nSigned-off-by: x\n"},
 	}
@@ -351,12 +517,12 @@ func TestHistory(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("history (-want +got):\n%s", diff)
 	}
-	h := f.history
+	h := f.github
 	if h.token != "ghu_x" || h.repo != "ours/kb" || h.branch != "main" || h.path != "a.md" || h.limit != 10 {
 		t.Errorf("asked GitHub for %+v", h)
 	}
 
-	f.history.err = gh.ErrNotFound
+	f.github.historyErr = gh.ErrNotFound
 	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
 	wantCode(t, err, NotFound)
 	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb", Limit: 51})
@@ -399,7 +565,7 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 	wantCode(t, err, NotFound)
 	_, err = f.base.History(ctx, f.grant, HistoryRequest{Vault: secret.Name})
 	wantCode(t, err, NotFound)
-	if f.history.repo != "" {
+	if f.github.repo != "" {
 		t.Error("asked GitHub about the secret vault")
 	}
 
@@ -445,12 +611,12 @@ func TestReadEdges(t *testing.T) {
 
 func TestHistoryEdges(t *testing.T) {
 	f := newFixture(t)
-	f.history.commits = []gh.Commit{{SHA: "c1", Message: "x\n\nSpeki-Client: " + strings.Repeat("é", 100)}}
+	f.github.history = []gh.Commit{{SHA: "c1", Message: "x\n\nSpeki-Client: " + strings.Repeat("é", 100)}}
 	got, err := f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
 	if err != nil || len(got[0].Client) > maxClient || !utf8.ValidString(got[0].Client) {
 		t.Errorf("long client: %q, %v", got[0].Client, err)
 	}
-	f.history.err = fmt.Errorf("commits: %w", gh.ErrUnauthorized)
+	f.github.historyErr = fmt.Errorf("commits: %w", gh.ErrUnauthorized)
 	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
 	wantCode(t, err, Unavailable)
 }

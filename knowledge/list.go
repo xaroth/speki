@@ -25,7 +25,7 @@ type VaultInfo struct {
 func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error) {
 	var out []VaultInfo
 	for _, v := range g.Readable() {
-		c, ok := b.copies(v.RepoID)
+		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
 			continue
 		}

@@ -63,8 +63,8 @@ lowercased. Dates accept RFC 3339 and Obsidian's `2026-10-09` and `2026-10-09T10
 // returns the problems the change introduces.
 func Check(current, next *Document) error
 
-// Touch sets updated, and created when it's empty, in the frontmatter, and returns the new bytes.
-func (d *Document) Touch(now time.Time, created bool) ([]byte, error)
+// Touch sets updated to now, and created to created unless that's zero, and returns the new bytes.
+func (d *Document) Touch(now, created time.Time) ([]byte, error)
 ```
 
 `Check` rejects problems the change brings in, and leaves old ones alone. An agent fixing a typo in a

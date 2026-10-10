@@ -35,10 +35,10 @@ func Check(current, next *Document) error {
 	return errors.Join(problems...)
 }
 
-// Touch sets updated to now in the frontmatter, and created too when created is true and the document
-// has no valid created date. It returns the new file and leaves d unchanged. Only the frontmatter block is rewritten: the
+// Touch sets updated to now in the frontmatter, and created to created unless that's zero. It returns the
+// new file and leaves d unchanged. Only the frontmatter block is rewritten: the
 // body is kept byte for byte, and the frontmatter keeps its line endings.
-func (d *Document) Touch(now time.Time, created bool) ([]byte, error) {
+func (d *Document) Touch(now, created time.Time) ([]byte, error) {
 	f := d.front
 	body := []byte(d.Body)
 	if f == nil {
@@ -62,11 +62,10 @@ func (d *Document) Touch(now time.Time, created bool) ([]byte, error) {
 
 	doc := copyNode(f.doc) // d stays as parsed
 	node := doc.Content[0]
-	stamp := now.UTC().Format(time.RFC3339)
-	if created && d.Meta.Created.IsZero() {
-		setKey(node, keyCreated, stamp)
+	if !created.IsZero() {
+		setKey(node, keyCreated, created.UTC().Format(time.RFC3339))
 	}
-	setKey(node, keyUpdated, stamp)
+	setKey(node, keyUpdated, now.UTC().Format(time.RFC3339))
 
 	encoded, err := encodeStable(doc)
 	if err != nil {

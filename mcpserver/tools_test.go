@@ -29,6 +29,7 @@ const version = "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1"
 type fakeKB struct {
 	err    error
 	search knowledge.SearchRequest
+	write  knowledge.WriteRequest
 }
 
 func (f *fakeKB) Vaults(context.Context, *access.Grant) ([]knowledge.VaultInfo, error) {
@@ -68,6 +69,23 @@ func (f *fakeKB) Read(context.Context, *access.Grant, knowledge.ReadRequest) (kn
 
 func (f *fakeKB) History(context.Context, *access.Grant, knowledge.HistoryRequest) ([]knowledge.Commit, error) {
 	return []knowledge.Commit{{SHA: "c2", Author: "octocat", Date: time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC), Message: "Update a.md", Client: "Claude Code"}}, f.err
+}
+
+func (f *fakeKB) Write(_ context.Context, _ *access.Grant, req knowledge.WriteRequest) (knowledge.Result, error) {
+	f.write = req
+	return knowledge.Result{Version: version, Commit: "c3"}, f.err
+}
+
+func (f *fakeKB) Edit(context.Context, *access.Grant, knowledge.EditRequest) (knowledge.Result, error) {
+	return knowledge.Result{Version: version, Commit: "c3", IndexPending: true}, f.err
+}
+
+func (f *fakeKB) Move(context.Context, *access.Grant, knowledge.MoveRequest) (knowledge.Result, error) {
+	return knowledge.Result{Version: version, Commit: "c3", LinkedFrom: []string{"b.md"}}, f.err
+}
+
+func (f *fakeKB) Delete(context.Context, *access.Grant, knowledge.DeleteRequest) (knowledge.Result, error) {
+	return knowledge.Result{Commit: "c3", LinkedFrom: []string{"b.md"}}, f.err
 }
 
 // connect starts the whole stack behind an HTTP server and connects a go-sdk client to it.
@@ -115,7 +133,7 @@ func call(t *testing.T, cs *mcp.ClientSession, name string, args any) (*mcp.Call
 func TestHandshakeAndToolList(t *testing.T) {
 	cs, _ := connect(t, &fakeKB{})
 	init := cs.InitializeResult()
-	if init.ServerInfo.Name != "speki" || !strings.Contains(init.Instructions, "Search speki") || len(init.Instructions) > 2048 {
+	if init.ServerInfo.Name != "speki" || !strings.Contains(init.Instructions, "Search speki") || !strings.Contains(init.Instructions, "write it back") || len(init.Instructions) > 2048 {
 		t.Errorf("handshake = %+v", init)
 	}
 	tools, err := cs.ListTools(t.Context(), nil)
@@ -126,7 +144,9 @@ func TestHandshakeAndToolList(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
 		a := tool.Annotations
-		if a == nil || !a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint || !a.IdempotentHint {
+		writes := map[string]bool{"write": true, "edit": true, "move": true, "delete": true}[tool.Name]
+		destructive := tool.Name == "move" || tool.Name == "delete"
+		if a == nil || a.ReadOnlyHint == writes || a.DestructiveHint == nil || *a.DestructiveHint != destructive || a.IdempotentHint == writes {
 			t.Errorf("%s annotations = %+v", tool.Name, a)
 		}
 		load := tool.Meta["anthropic/alwaysLoad"] == true
@@ -137,7 +157,7 @@ func TestHandshakeAndToolList(t *testing.T) {
 			t.Errorf("%s has no output schema or description", tool.Name)
 		}
 	}
-	if strings.Join(names, ",") != "guide,history,list,read,search" { // sorted by the SDK
+	if strings.Join(names, ",") != "delete,edit,guide,history,list,move,read,search,write" { // sorted by the SDK
 		t.Errorf("tools = %v", names)
 	}
 }
@@ -188,6 +208,32 @@ func TestToolResults(t *testing.T) {
 			text:       []string{"c2 2026-10-09T14:02:11Z octocat via Claude Code: Update a.md"},
 			structured: `"client":"Claude Code"`,
 		},
+		{
+			tool:       "write",
+			args:       map[string]any{"vault": "ours/kb", "path": "a.md", "content": "# A\n", "message": "Add A"},
+			text:       []string{"Saved in commit c3.\nNew version: " + version},
+			notText:    []string{"Search may not"},
+			structured: `"index_pending":false`,
+		},
+		{
+			tool:       "edit",
+			args:       map[string]any{"vault": "ours/kb", "path": "a.md", "old_text": "A", "new_text": "B"},
+			text:       []string{"Saved in commit c3.", "Search may not show the change"},
+			structured: `"index_pending":true`,
+		},
+		{
+			tool:       "move",
+			args:       map[string]any{"vault": "ours/kb", "from": "a.md", "to": "z.md", "version": version},
+			text:       []string{"Moved in commit c3.", "link to the old path:\n  b.md"},
+			structured: `"linked_from":["b.md"]`,
+		},
+		{
+			tool:       "delete",
+			args:       map[string]any{"vault": "ours/kb", "path": "a.md", "version": version},
+			text:       []string{"Deleted in commit c3.", "b.md"},
+			notText:    []string{"New version"},
+			structured: `"commit":"c3"`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -213,6 +259,9 @@ func TestToolResults(t *testing.T) {
 	}
 	if kb.search.Query != "proxi" || kb.search.Limit != 5 || len(kb.search.Tags) != 1 {
 		t.Errorf("search request = %+v", kb.search)
+	}
+	if kb.write.Content != "# A\n" || kb.write.Message != "Add A" || kb.write.Version != "" {
+		t.Errorf("write request = %+v", kb.write)
 	}
 }
 
