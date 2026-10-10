@@ -88,6 +88,8 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("ETag", `"v1"`)
 		write(map[string]any{"ref": "refs/heads/main", "object": map[string]any{"sha": "abc123", "type": "commit"}})
+	case r.URL.Path == "/repos/eve-online-tools/big/contents/speki.yaml" && install:
+		write(map[string]any{"type": "file", "encoding": "none", "size": 2_000_000, "content": ""})
 	case r.URL.Path == "/repos/eve-online-tools/kb" && install:
 		write(map[string]any{"id": 100, "full_name": "eve-online-tools/kb"})
 	case strings.HasPrefix(r.URL.Path, "/repos/") && install:
@@ -258,5 +260,13 @@ func TestMetrics(t *testing.T) {
 	n, err := testutil.GatherAndCount(reg, "speki_github_requests_total")
 	if err != nil || n == 0 {
 		t.Errorf("metric not registered: %d, %v", n, err)
+	}
+}
+
+func TestFileTooLarge(t *testing.T) {
+	c, _, _ := newTestClient(t)
+	_, err := c.File(t.Context(), 1, "eve-online-tools/big", "main", "speki.yaml")
+	if !errors.Is(err, ErrTooLarge) {
+		t.Errorf("a 2 MB file: %v, want ErrTooLarge", err)
 	}
 }

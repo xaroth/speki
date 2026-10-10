@@ -38,7 +38,8 @@ guidelines: |
 
 Speki ignores unknown keys, so a newer `speki.yaml` doesn't break an older speki.
 
-A `speki.yaml` that doesn't parse, misses a required field or goes over a length limit is rejected. A new
+A `speki.yaml` that doesn't parse, misses a required field, goes over a length limit or is larger than 64
+KiB is rejected. A new
 vault with a bad file isn't added. An existing vault keeps running with its last good configuration. Either
 way the problem is logged and shown on speki's status page, so an operator can see what's wrong.
 

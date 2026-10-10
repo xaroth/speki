@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -360,4 +361,26 @@ func TestRun(t *testing.T) {
 		cancel()
 		<-done
 	})
+}
+
+// An oversized speki.yaml is that repository's problem: the round still completes, the problem is
+// listed, and the file isn't fetched again until the next push.
+func TestOversizedConfig(t *testing.T) {
+	f := newFake()
+	f.fileErr["ours/kb"] = fmt.Errorf("get speki.yaml: %w", gh.ErrTooLarge)
+	r := NewRegistry(f, []int64{42}, discard())
+
+	c := mustDiscover(t, r) // fails the test if the round errs
+	if len(c.Added) != 0 {
+		t.Errorf("a vault with an oversized speki.yaml was added: %v", names(c.Added))
+	}
+	problems := r.Problems()
+	if len(problems) != 1 || problems[0].RepoID != 100 || !strings.Contains(problems[0].Err, "larger") {
+		t.Errorf("problems = %+v", problems)
+	}
+	reads := f.fileReads
+	mustDiscover(t, r)
+	if f.fileReads != reads {
+		t.Error("fetched the oversized file again without a push")
+	}
 }
