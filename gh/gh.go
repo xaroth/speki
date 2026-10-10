@@ -151,11 +151,9 @@ func notFound(err error) error {
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
 	var terr *ghinstallation.HTTPError
-	if errors.As(err, &terr) && terr.Response != nil {
-		_ = terr.Response.Body.Close() // ghinstallation leaves it open: a failing installation would leak a connection per try
-		if terr.Response.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
+	closeTokenError(err) // for token requests made outside an installation's transport, for git
+	if errors.As(err, &terr) && terr.Response != nil && terr.Response.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
 	return err
 }

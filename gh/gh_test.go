@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -313,13 +315,57 @@ func TestRateBudget(t *testing.T) {
 	if n := strings.Count(logged.String(), "budget is low"); n != 1 || !strings.Contains(logged.String(), "installation=1") {
 		t.Errorf("%d warnings:\n%s", n, logged.String())
 	}
+	m.record("installation", 2, header("20"))
+	if n := strings.Count(logged.String(), "budget is low"); n != 2 || !strings.Contains(logged.String(), "installation=2") {
+		t.Errorf("each installation is warned about once; got %d warnings:\n%s", n, logged.String())
+	}
+
 	m.mu.Lock()
 	m.installs[1] = reading{remaining: 50, at: time.Now().Add(-budgetWindow - time.Second)}
+	m.installs[2] = reading{remaining: 20, at: time.Now(), reset: time.Now().Add(-time.Second)}
 	m.mu.Unlock()
-	m.record("installation", 2, header("3900"))
+	m.record("installation", 3, header("3900"))
 	if got := testutil.ToFloat64(m.remaining.WithLabelValues("installation")); got != 3900 {
-		t.Errorf("installation remaining = %v after the low reading aged out, want 3900", got)
+		t.Errorf("installation remaining = %v after the low readings aged out or were refilled, want 3900", got)
 	}
+}
+
+// A failed installation token request counts as the app's, not as an installation call, and its
+// response body is closed.
+func TestTokenFailureCounts(t *testing.T) {
+	c, _, _ := newTestClient(t)
+	_, err := c.RepositoryID(t.Context(), 8, "eve-online-tools/kb")
+	if err == nil {
+		t.Fatal("RepositoryID succeeded without a token")
+	}
+	m := c.metrics
+	if got := testutil.ToFloat64(m.requests.WithLabelValues("app", "403")); got != 1 {
+		t.Errorf("app 403 requests = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.requests.WithLabelValues("installation", "error")); got != 0 {
+		t.Errorf("installation errors = %v, want 0", got)
+	}
+	body := &closeCounter{Reader: strings.NewReader("{}")}
+	err = &ghinstallation.HTTPError{Response: &http.Response{StatusCode: http.StatusForbidden, Body: body}}
+	closeTokenError(err)
+	closeTokenError(fmt.Errorf("wrapped: %w", err))
+	closeTokenError(&ghinstallation.HTTPError{Response: &http.Response{}}) // no body: no panic
+	if body.closed == 0 {
+		t.Error("the token error's body wasn't closed")
+	}
+	if signedByApp(&http.Request{Header: http.Header{"Authorization": {"Bearer ghu_user"}}}) {
+		t.Error("a user token counted as the app's JWT")
+	}
+}
+
+type closeCounter struct {
+	io.Reader
+	closed int
+}
+
+func (c *closeCounter) Close() error {
+	c.closed++
+	return nil
 }
 
 func TestFileTooLarge(t *testing.T) {

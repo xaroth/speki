@@ -261,6 +261,6 @@ User tokens carry the per-user calls: access checks (at most once a minute while
 commits and history.
 
 `gh` records `x-ratelimit-remaining` per token kind as a metric and logs a warning below 10%, at most
-once every 10 minutes per kind. Each request is counted once, by the credential it carries: an
+once every 10 minutes per kind and installation. Each request is counted once, by the credential it carries: an
 installation's calls go through the app's transport, which only counts the ones signed with the app's
 JWT.
