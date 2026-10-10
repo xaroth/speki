@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -353,5 +354,24 @@ func TestQueryErrorNamesVaults(t *testing.T) {
 	_, err := runQuery(t, sb, sources, "SELECT * FROM v0.nosuch")
 	if err == nil || !strings.Contains(err.Error(), "ours/kb.nosuch") {
 		t.Errorf("error = %v", err)
+	}
+}
+
+// The 1 MiB limit is on the result as it goes out, JSON-encoded, where markdown's < > & take six bytes.
+func TestQueryLimitCountsEncodedSize(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	rows, err := runQuery(t, sb, sources, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 30) SELECT printf('%.*c', 90000, '<') FROM n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(rows.Rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > maxQueryBytes || !rows.Truncated {
+		t.Errorf("%d bytes of JSON, truncated %v", len(raw), rows.Truncated)
+	}
+	if got := encodedSize(`a<"\`); got != len(`"a\u003c\"\\"`) {
+		t.Errorf("encodedSize = %d", got)
 	}
 }

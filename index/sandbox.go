@@ -383,9 +383,9 @@ func readRows(ctx context.Context, rows *sql.Rows, sources []Source) (Rows, erro
 			switch v := v.(type) {
 			case []byte:
 				values[i] = string(v)
-				size += len(v)
+				size += encodedSize(string(v))
 			case string:
-				size += len(v)
+				size += encodedSize(v)
 			case float64:
 				if math.IsNaN(v) || math.IsInf(v, 0) { // JSON has no such numbers
 					values[i] = strconv.FormatFloat(v, 'g', -1, 64)
@@ -406,6 +406,23 @@ func readRows(ctx context.Context, rows *sql.Rows, sources []Source) (Rows, erro
 		return Rows{}, queryError(ctx, err, sources)
 	}
 	return out, nil
+}
+
+// encodedSize is how many bytes s takes as a JSON string, as the MCP result encodes it: <, > and & and
+// control characters become six-byte escapes, quotes and backslashes two.
+func encodedSize(s string) int {
+	n := 2 // the quotes
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '<' || c == '>' || c == '&' || c < 0x20:
+			n += 6
+		case c == '"' || c == '\\':
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
 }
 
 // paths matches file paths in SQLite messages.
