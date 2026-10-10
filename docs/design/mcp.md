@@ -108,22 +108,29 @@ Every result has structured content matching the output schema, and a text rende
 show text. Versions are always shown in full in both, because agents copy them into the next call.
 
 `search` renders one line per hit (vault, path, title, version) plus its snippet. `read` renders a header
-line and the content between markers:
+line and the content in a fence:
 
 ```text
 eve-online-tools/kb services/esi-proxy.md
 version 3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1, lines 1-212 of 212
-<document>
+<document boundary="9f3c1a7e5b2d8c40">
 ---
 title: ESI proxy
 ...
-</document>
+</document boundary="9f3c1a7e5b2d8c40">
 ```
 
-Vault-supplied text that isn't a whole document (titles, descriptions, snippets, guidelines) has control
-characters and line breaks stripped where it's meant to be one line. Any `<document>` or `</document>` tag
-inside content, in any letter case and with any spacing, is escaped in the text rendering, so content can't
-fake the end of a block. Structured content carries the raw text unchanged.
+Vault guidelines get the same kind of fence, named `guidelines`. Each fence has a random boundary, new for
+every response, and only a closing tag with that boundary ends it. Content can't know the boundary, so it
+can't end the block early.
+
+As a second line of defence, every `<` in content that starts something a reader could take for a
+`document` or `guidelines` tag is escaped as `&lt;`. "Could take for" is decided loosely: invisible
+characters (controls, format characters, combining marks, any kind of space) are skipped, a slash is
+allowed, and look-alike letters (fullwidth, mathematical and Cyrillic or Greek forms) are folded to ASCII
+before comparing. Vault-supplied text that isn't a whole document (titles, descriptions, snippets) has
+control and format characters and line breaks stripped where it's meant to be one line, and is escaped
+the same way. Structured content carries the raw text unchanged.
 
 `read` returns at most 64 KiB of content per call, so a result stays well below client limits even with the
 content in both the structured part and the text.

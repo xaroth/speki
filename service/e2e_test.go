@@ -72,7 +72,7 @@ func TestSignInAndSearch(t *testing.T) {
 	}
 
 	text = callTool(t, cs, "read", map[string]any{"vault": fakeRepo, "path": "fleet.md"})
-	if !strings.Contains(text, "version "+found.Results[0].Version) || !strings.Contains(text, "<document>\n---\ntitle: Fleet doctrine\n") {
+	if !strings.Contains(text, "version "+found.Results[0].Version) || !strings.Contains(text, "\">\n---\ntitle: Fleet doctrine\n") {
 		t.Errorf("read:\n%s", text)
 	}
 
