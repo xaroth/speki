@@ -149,6 +149,24 @@ func (c *Client) BranchHead(ctx context.Context, installationID int64, repo, bra
 	return Head{SHA: ref.GetObject().GetSHA(), ETag: resp.Header.Get("ETag")}, nil
 }
 
+// RepositoryID returns the ID of the repository a name points to now. A name can move: after a rename,
+// someone can create a new repository under the old one.
+func (c *Client) RepositoryID(ctx context.Context, installationID int64, repo string) (int64, error) {
+	client, err := c.installationClient(installationID)
+	if err != nil {
+		return 0, err
+	}
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return 0, err
+	}
+	r, _, err := client.Repositories.Get(ctx, owner, name)
+	if err != nil {
+		return 0, fmt.Errorf("repository %s: %w", repo, notFound(err))
+	}
+	return r.GetID(), nil
+}
+
 // escapeBranch escapes each segment of a branch name; branches may contain slashes.
 func escapeBranch(branch string) string {
 	parts := strings.Split(branch, "/")

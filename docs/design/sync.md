@@ -57,6 +57,12 @@ installation. A vault is its repository ID, so after a rename or a transfer to a
 copy fetches from the new name with the new installation's token. A new repository that takes the old
 name is never fetched.
 
+Discovery learns a new name only every few minutes, while polls and syncs go by name every minute. So
+before each sync, `library` asks GitHub which repository the name points to now (`GET /repos/{owner}/{repo}`,
+one request per sync, not per poll). When it isn't the vault's repository ID, the sync is refused and
+recorded as a failure, and the vault keeps serving its last good index until discovery reports the new
+name.
+
 Eligible files: `.md`, regular file modes `100644` and `100755`, no path segment starting with `.`, at
 most 1 MiB, not an LFS pointer. Symlinks and submodules are never eligible. A rename shows up as a delete
 plus an add. Paths are reported as the raw bytes git has.
@@ -206,6 +212,7 @@ Installation tokens get 5,000 to 12,500 requests an hour. Speki's own background
 |---|---|
 | Polling every minute | about 1,200, nearly all 304 and free |
 | Discovery every 5 minutes | about 12 × (1 + installations), plus `speki.yaml` fetches only for pushed repositories |
+| Repository ID checks | one per sync, so only for vaults that changed |
 | Installation tokens | a few |
 
 User tokens carry the per-user calls: access checks (at most once a minute while active, mostly 304),

@@ -27,6 +27,7 @@ import (
 // github is what the library needs from GitHub.
 type github interface {
 	BranchHead(ctx context.Context, installationID int64, repo, branch, etag string) (gh.Head, error)
+	RepositoryID(ctx context.Context, installationID int64, repo string) (int64, error)
 }
 
 // Options configure a Library.

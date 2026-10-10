@@ -155,6 +155,8 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		write(map[string]any{"type": "file", "encoding": "base64", "content": base64.StdEncoding.EncodeToString(content)})
+	case "/repos/" + fakeRepo:
+		write(map[string]any{"id": 100, "full_name": fakeRepo})
 	case "/repos/" + fakeRepo + "/git/ref/heads/master":
 		head, err := f.repo.Head()
 		if err != nil {
