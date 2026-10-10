@@ -154,17 +154,25 @@ func graphqlErrors(errs []graphqlError) error {
 	}
 	for _, e := range errs {
 		msg := strings.ToLower(e.Message)
+		if strings.HasPrefix(msg, "repository rule violations found") {
+			// The rest can quote names users chose, such as a status check's, so only GitHub's own
+			// wording for a secret counts.
+			if strings.Contains(msg, "secret detected in content") {
+				return &SecretError{Detail: tidy(e.Message)}
+			}
+			return fmt.Errorf("%w: %s", ErrBranchRules, tidy(e.Message))
+		}
 		switch {
 		case strings.Contains(msg, "expected branch to point to"):
 			return fmt.Errorf("%w: %s", ErrHeadMoved, tidy(e.Message))
-		case strings.Contains(msg, "secret detected") || strings.Contains(msg, "push protection") ||
-			strings.Contains(msg, "secret scanning") || strings.Contains(msg, "cannot contain secrets"):
+		case strings.Contains(msg, "push protection") || strings.Contains(msg, "secret scanning") ||
+			strings.Contains(msg, "cannot contain secrets"):
 			return &SecretError{Detail: tidy(e.Message)}
 		case strings.Contains(msg, "rule violation") || strings.Contains(msg, "protected branch"):
 			return fmt.Errorf("%w: %s", ErrBranchRules, tidy(e.Message))
 		case strings.Contains(msg, "not accessible"):
 			return fmt.Errorf("%w: %s", ErrForbidden, tidy(e.Message))
-		case strings.Contains(msg, "timeout") || strings.Contains(msg, "something went wrong"):
+		case e.Type != "FORBIDDEN" && (strings.Contains(msg, "timeout") || strings.Contains(msg, "something went wrong")):
 			// GitHub answers some timeouts this way, with HTTP 200; the commit may have landed.
 			return fmt.Errorf("GitHub: %s (%s)", tidy(e.Message), e.Type)
 		}

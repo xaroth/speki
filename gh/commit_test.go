@@ -71,6 +71,10 @@ func fakeGraphQL(t *testing.T) *Client {
 			fail("UNPROCESSABLE", "Push cannot contain secrets: GitHub Personal Access Token")
 		case "forbidden":
 			fail("FORBIDDEN", "Resource not accessible by integration")
+		case "forbidden-other":
+			fail("FORBIDDEN", "Something went wrong: you can't do that")
+		case "check-named-secret":
+			fail("FORBIDDEN", "Repository rule violations found\n\nRequired status check \"secret scanning\" is expected.\n\n")
 		case "empty":
 			if a := in.FileChanges.Additions; len(a) != 1 || a[0].Contents != "" {
 				t.Errorf("empty file sent as %+v", a)
@@ -120,10 +124,13 @@ func TestCommit(t *testing.T) {
 	}
 
 	for head, want := range map[string]error{
-		"moved":     ErrHeadMoved,
-		"protected": ErrBranchRules,
-		"forbidden": ErrForbidden,
-		"missing":   ErrForbidden,
+		"moved":           ErrHeadMoved,
+		"protected":       ErrBranchRules,
+		"forbidden":       ErrForbidden,
+		"forbidden-other": ErrForbidden,
+		"missing":         ErrForbidden,
+		// a status check's name is the user's, not GitHub's verdict
+		"check-named-secret": ErrBranchRules,
 		// a path named secrets.md in a stale-head message isn't push protection
 		"stale-secrets": ErrHeadMoved,
 	} {

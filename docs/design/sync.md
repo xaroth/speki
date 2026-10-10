@@ -199,7 +199,7 @@ message.
 | expected head doesn't match | `gh.ErrHeadMoved` | retried up to three times, then `conflict` |
 | push protection found a secret | `*gh.SecretError{Detail}` | `secret_detected`, with GitHub's message |
 | rule violation, protected branch | `gh.ErrBranchRules` | `vault_read_only` |
-| 403 or 404 on the repository, `FORBIDDEN` for any other reason | `gh.ErrForbidden` | `no_write_access` |
+| 403 or 404, "not accessible", or `FORBIDDEN`/`NOT_FOUND` for any other reason | `gh.ErrForbidden` | `no_write_access` |
 | secondary rate limit | `*gh.RateLimitError{RetryAfter}` | `rate_limited` |
 
 GitHub documents the GraphQL error types but not their messages. Push protection and rulesets both come
