@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/gitsync"
 	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/vault"
 )
@@ -371,4 +372,52 @@ func TestStallContext(t *testing.T) {
 			t.Fatal("not cancelled after stalling")
 		}
 	})
+}
+
+// A repository renamed and moved to another installation keeps its vault (the repository ID), and the
+// copy follows: it fetches from the new name with the new installation's credentials, even after a new
+// repository took the old name.
+func TestRenamedRepositoryIsFollowed(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n\noriginal text\n"})
+	var mu sync.Mutex
+	var installations []int64
+	l := New(r, Options{DataDir: t.TempDir(), GitURL: r.root, Tokens: func(id int64) gitsync.TokenSource {
+		mu.Lock()
+		defer mu.Unlock()
+		installations = append(installations, id)
+		return nil // local remotes need no credentials
+	}}, discard())
+	t.Cleanup(l.Close)
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+
+	// The repository is renamed: its history now lives under the new name.
+	archive, err := git.PlainClone(filepath.Join(r.root, "ours/kb-archive.git"), false, &git.CloneOptions{URL: r.dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := &remote{t: t, root: r.root, dir: filepath.Join(r.root, "ours/kb-archive.git"), repo: archive}
+	moved.push(map[string]string{"a.md": "# A\n\nrenamed text\n"})
+	// Someone creates a new repository with the old name.
+	r.push(map[string]string{"a.md": "# A\n\nimposter text\n"})
+
+	renamed := kb
+	renamed.Name, renamed.InstallationID = "ours/kb-archive", 2
+	l.Update(t.Context(), vault.Changes{Changed: []vault.Vault{renamed}})
+	err = l.Sync(t.Context(), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := search(t, v, "imposter"); len(got) != 0 {
+		t.Errorf("the vault serves the repository that took its old name")
+	}
+	if got := search(t, v, "renamed"); len(got) != 1 {
+		t.Errorf("the vault didn't follow the rename: %v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if installations[len(installations)-1] != 2 {
+		t.Errorf("credentials from installations %v", installations)
+	}
 }

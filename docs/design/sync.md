@@ -42,19 +42,26 @@ bad `speki.yaml` is not added.
 
 ```go
 // Package gitsync
-func Open(dir, remote string, auth TokenSource) (*Mirror, error) // clones when dir is empty
-func (m *Mirror) Fetch(ctx context.Context) (head plumbing.Hash, err error)
-func (m *Mirror) Diff(from, to plumbing.Hash) ([]Change, error) // changed eligible files between two commits
-func (m *Mirror) Files(at plumbing.Hash) iter.Seq2[File, error] // every eligible file, for full builds
-func (m *Mirror) Blob(sha plumbing.Hash) ([]byte, error)
-func (m *Mirror) Lookup(at plumbing.Hash, path string) (Entry, bool, error) // any path, any type
+func Open(ctx context.Context, dir string, src Source) (*Mirror, error) // clones when dir is empty or broken
+func (m *Mirror) SetSource(url string, auth TokenSource)              // where Fetch fetches from
+func (m *Mirror) Fetch(ctx context.Context, progress io.Writer) (head string, err error)
+func (m *Mirror) Diff(from, to string) ([]Change, error) // changed eligible files between two commits
+func (m *Mirror) Files(at string) ([]File, error)        // every eligible file, for full builds
+func (m *Mirror) Blob(sha string) ([]byte, error)
+func (m *Mirror) Paths(at string) ([]string, error)      // every file, any type
 ```
+
+Every fetch goes to the URL and credentials the mirror was last given, never to the remote stored in the
+copy when it was cloned. Before each sync, `library` sets them from the vault's current name and
+installation. A vault is its repository ID, so after a rename or a transfer to another installation the
+copy fetches from the new name with the new installation's token. A new repository that takes the old
+name is never fetched.
 
 Eligible files: `.md`, regular file modes `100644` and `100755`, no path segment starting with `.`, at
 most 1 MiB, not an LFS pointer. Symlinks and submodules are never eligible. A rename shows up as a delete
 plus an add. Paths are reported as the raw bytes git has.
 
-`Lookup` sees every entry, eligible or not. The write path uses it to make sure it doesn't overwrite
+`Paths` sees every file, eligible or not. The write path uses it to make sure it doesn't overwrite
 something the index doesn't know about.
 
 `TokenSource` is the one-method interface `gitsync` declares for getting an installation token. The
