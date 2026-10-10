@@ -33,11 +33,16 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 	if len(req.Vaults) > index.MaxQuerySources {
 		return index.Rows{}, errorf(Invalid, "a query covers at most %d vaults", index.MaxQuerySources)
 	}
+	seen := map[int64]bool{}
 	for _, name := range req.Vaults {
 		v, c, err := b.open(g, name)
 		if err != nil {
 			return index.Rows{}, err
 		}
+		if seen[v.RepoID] {
+			continue
+		}
+		seen[v.RepoID] = true
 		sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
 	}
 

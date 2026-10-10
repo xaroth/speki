@@ -32,6 +32,10 @@ type fakeGitHub struct {
 
 	block chan struct{} // when set, the installation list waits for it to close
 
+	// hidden is a second repository the app can see but the user can't: speki serves it, and the user
+	// must never see anything from it. Nil unless addHidden was called.
+	hidden *git.Repository
+
 	mu        sync.Mutex      // commits, and refresh tokens, arrive from several instances at once
 	refreshed map[string]bool // GitHub refresh tokens work once
 	refreshes int
@@ -39,8 +43,21 @@ type fakeGitHub struct {
 
 const (
 	fakeRepo      = "ours/kb"
+	hiddenRepo    = "ours/secret"
 	fakeUserToken = "ghu_test"
 )
+
+// addHidden creates the hidden repository with files.
+func (f *fakeGitHub) addHidden(files map[string]string) {
+	f.t.Helper()
+	dir := filepath.Join(f.gitURL, hiddenRepo+".git")
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	commitFiles(f.t, repo, dir, files)
+	f.hidden = repo
+}
 
 func newFakeGitHub(t *testing.T, files map[string]string) *fakeGitHub {
 	t.Helper()
@@ -59,12 +76,18 @@ func newFakeGitHub(t *testing.T, files map[string]string) *fakeGitHub {
 
 func (f *fakeGitHub) push(files map[string]string) {
 	f.t.Helper()
-	wt, err := f.repo.Worktree()
+	commitFiles(f.t, f.repo, f.dir, files)
+}
+
+// commitFiles writes files into the repository in dir and commits them.
+func commitFiles(t *testing.T, repo *git.Repository, dir string, files map[string]string) {
+	t.Helper()
+	wt, err := repo.Worktree()
 	if err != nil {
-		f.t.Fatal(err)
+		t.Fatal(err)
 	}
 	for name, content := range files {
-		full := filepath.Join(f.dir, name)
+		full := filepath.Join(dir, name)
 		err = os.MkdirAll(filepath.Dir(full), 0o755)
 		if err == nil {
 			err = os.WriteFile(full, []byte(content), 0o644)
@@ -73,12 +96,12 @@ func (f *fakeGitHub) push(files map[string]string) {
 			_, err = wt.Add(name)
 		}
 		if err != nil {
-			f.t.Fatal(err)
+			t.Fatal(err)
 		}
 	}
 	_, err = wt.Commit("push", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@x", When: time.Now()}})
 	if err != nil {
-		f.t.Fatal(err)
+		t.Fatal(err)
 	}
 }
 
@@ -144,9 +167,27 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		write(map[string]any{"token": "ghs_test", "expires_at": time.Now().Add(time.Hour)})
 	case "/installation/repositories":
-		write(map[string]any{"total_count": 1, "repositories": []any{map[string]any{
+		repos := []any{map[string]any{
 			"id": 100, "full_name": fakeRepo, "default_branch": "master", "pushed_at": "2026-10-09T10:00:00Z",
-		}}})
+		}}
+		if f.hidden != nil {
+			repos = append(repos, map[string]any{
+				"id": 101, "full_name": hiddenRepo, "default_branch": "master", "pushed_at": "2026-10-09T10:00:00Z",
+			})
+		}
+		write(map[string]any{"total_count": len(repos), "repositories": repos})
+	case "/repos/" + hiddenRepo + "/contents/speki.yaml":
+		write(map[string]any{"type": "file", "encoding": "base64",
+			"content": base64.StdEncoding.EncodeToString([]byte("title: Secret\ndescription: Not for this user.\n"))})
+	case "/repos/" + hiddenRepo:
+		write(map[string]any{"id": 101, "full_name": hiddenRepo})
+	case "/repos/" + hiddenRepo + "/git/ref/heads/master":
+		head, err := f.hidden.Head()
+		if err != nil {
+			f.t.Error(err)
+			return
+		}
+		write(map[string]any{"object": map[string]any{"sha": head.Hash().String()}})
 	case "/repos/" + fakeRepo + "/contents/speki.yaml":
 		content, err := os.ReadFile(filepath.Join(f.dir, "speki.yaml"))
 		if err != nil {

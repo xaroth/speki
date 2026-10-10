@@ -594,9 +594,53 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 	if err != nil || strings.Contains(p.Content, hidden) {
 		t.Errorf("read: %q, %v", p.Content, err)
 	}
-	// Names are matched exactly.
+	// Names match without regard to case, which doesn't open the secret vault either.
 	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "OURS/SECRET", Path: "services/esi-proxy.md"})
 	wantCode(t, err, NotFound)
+
+	// Filters aimed at the secret vault don't get past the vault check.
+	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: secret.Name, Path: "services"})
+	wantCode(t, err, NotFound)
+	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: hidden, Vaults: []string{secret.Name}, Path: "services", Tags: []string{"x"}})
+	wantCode(t, err, NotFound)
+	_, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{secret.Name}})
+	wantCode(t, err, NotFound)
+
+	// The answer for a vault the user can't read is the answer for one that doesn't exist.
+	_, errSecret := f.base.Read(ctx, f.grant, ReadRequest{Vault: secret.Name, Path: "x.md"})
+	_, errNone := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/nothing", Path: "x.md"})
+	if strings.ReplaceAll(errSecret.Error(), secret.Name, "V") != strings.ReplaceAll(errNone.Error(), "ours/nothing", "V") {
+		t.Errorf("answers differ:\n%v\n%v", errSecret, errNone)
+	}
+
+	// Spelling correction only knows the user's vaults: "secrut" is close to a word only the secret
+	// vault has, so it isn't corrected to it.
+	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "secrut"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for word, instead := range res.Corrected {
+		if instead == hidden {
+			t.Errorf("corrected %q to %q, a word only the secret vault has", word, instead)
+		}
+	}
+}
+
+func TestVaultNames(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	p, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "Ours/KB", Path: "README.md"})
+	if err != nil || p.Vault != "ours/kb" {
+		t.Errorf("read with another letter case: vault %q, %v", p.Vault, err)
+	}
+	res, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared", "OURS/SHARED"}})
+	if err != nil || len(res.Hits) != 1 || res.Hits[0].Source != "ours/shared" {
+		t.Errorf("a vault named twice: %+v, %v", res.Hits, err)
+	}
+	rows, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT count(*) FROM documents", Vaults: []string{"ours/shared", "ours/shared"}})
+	if err != nil || fmt.Sprint(rows.Rows) != "[[1]]" {
+		t.Errorf("query with a vault named twice: %v, %v", rows.Rows, err)
+	}
 }
 
 func TestReadEdges(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,10 +62,11 @@ func (g *Grant) User() User { return g.user }
 // Readable returns the vaults the user may read, sorted by name.
 func (g *Grant) Readable() []vault.Vault { return slices.Clone(g.readable) }
 
-// Vault returns a readable vault by name.
+// Vault returns a readable vault by name. Names are matched without regard to letter case, as GitHub
+// matches repository names.
 func (g *Grant) Vault(name string) (vault.Vault, bool) {
 	for _, v := range g.readable {
-		if v.Name == name {
+		if strings.EqualFold(v.Name, name) {
 			return v, true
 		}
 	}
