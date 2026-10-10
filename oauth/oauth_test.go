@@ -651,8 +651,11 @@ func TestOneLine(t *testing.T) {
 	if got := oneLine("Claude\nCo-authored-by: x\u0085"); got != "ClaudeCo-authored-by: x" {
 		t.Errorf("oneLine = %q", got)
 	}
-	if got := oneLine("Claude\u202edoC\u200b"); got != "ClaudedoC" {
-		t.Errorf("oneLine kept format characters: %q", got)
+	if got := oneLine("Claude\u202edoC\u2066x\U000e0041"); got != "ClaudedoCx" {
+		t.Errorf("oneLine kept characters that hide text: %q", got)
+	}
+	if got := oneLine("team \U0001f468\u200d\U0001f469"); got != "team \U0001f468\u200d\U0001f469" {
+		t.Errorf("oneLine dropped a zero-width joiner: %q", got)
 	}
 }
 
@@ -666,14 +669,17 @@ func TestAuthorizeChecksScopesAndChallenge(t *testing.T) {
 	h := newHarness(t)
 	clientID := h.register("http://127.0.0.1/callback")
 
-	for name, extra := range map[string]url.Values{
-		"unknown scope":   {"scope": {"speki:read admin"}},
-		"short challenge": {"code_challenge": {"x"}},
-	} {
-		rec := h.authorizeTo(clientID, extra)
-		back, _ := url.Parse(rec.Header().Get("Location"))
-		if rec.Code != http.StatusFound || back.Query().Get("error") == "" {
-			t.Errorf("%s: %d %s", name, rec.Code, rec.Header().Get("Location"))
+	rec := h.authorizeTo(clientID, url.Values{"code_challenge": {"x"}})
+	back, _ := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusFound || back.Query().Get("error") != "invalid_request" {
+		t.Errorf("short challenge: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Scopes speki doesn't know are ignored; only speki:read without speki:write limits the choice.
+	for scope, write := range map[string]bool{"openid offline_access": true, "offline_access speki:read": false, "speki:read speki:write": true} {
+		page := h.authorizeTo(clientID, url.Values{"scope": {scope}})
+		if page.Code != http.StatusOK || strings.Contains(page.Body.String(), `value="write"`) != write {
+			t.Errorf("scope %q: %d, write offered: %v", scope, page.Code, !write)
 		}
 	}
 
@@ -684,11 +690,11 @@ func TestAuthorizeChecksScopesAndChallenge(t *testing.T) {
 		t.Error("write offered to a read-only request")
 	}
 	consent := consentField.FindStringSubmatch(page.Body.String())[1]
-	rec := h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent}, "access": {"write"}, "decision": {"allow"}}.Encode()), cookie(page, consentCookie))
+	rec = h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent}, "access": {"write"}, "decision": {"allow"}}.Encode()), cookie(page, consentCookie))
 	loc, _ := url.Parse(rec.Header().Get("Location"))
 	nonce := loc.Query().Get("state")
 	rec = h.do(http.MethodGet, "/oauth/github/callback?code=good&state="+nonce, nil, cookie(rec, txCookie+nonce))
-	back, _ := url.Parse(rec.Header().Get("Location"))
+	back, _ = url.Parse(rec.Header().Get("Location"))
 	resp, _ := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {back.Query().Get("code")}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}})
 	if resp.Scope != "speki:read" {
 		t.Errorf("scope = %q, want speki:read", resp.Scope)
@@ -703,6 +709,22 @@ func TestTokenNeedsRedirectURI(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "redirect_uri") {
 		t.Errorf("without redirect_uri: %d %s", rec.Code, rec.Body)
 	}
+
+	// A client that named no redirect URI at authorize (it has only one) needn't name it here either.
+	page := h.do(http.MethodGet, strings.Replace(authorizeURL(clientID, "", nil), "redirect_uri=&", "", 1), nil)
+	consent := consentField.FindStringSubmatch(page.Body.String())
+	if consent == nil {
+		t.Fatalf("authorize without redirect_uri: %d", page.Code)
+	}
+	rec = h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent[1]}, "decision": {"allow"}}.Encode()), cookie(page, consentCookie))
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	nonce := loc.Query().Get("state")
+	rec = h.do(http.MethodGet, "/oauth/github/callback?code=good&state="+nonce, nil, cookie(rec, txCookie+nonce))
+	back, _ := url.Parse(rec.Header().Get("Location"))
+	_, rec = h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {back.Query().Get("code")}, "client_id": {clientID}, "code_verifier": {verifier}})
+	if rec.Code != http.StatusOK {
+		t.Errorf("no redirect_uri at either end: %d %s", rec.Code, rec.Body)
+	}
 }
 
 func TestStoredRefreshNeverWidens(t *testing.T) {
@@ -711,6 +733,10 @@ func TestStoredRefreshNeverWidens(t *testing.T) {
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
 	if _, rec := h.tokens(form); rec.Code != http.StatusOK {
 		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
+	}
+	form.Set("scope", ScopeWrite+" "+ScopeRead) // the same scopes in another order get the stored result
+	if _, rec := h.tokens(form); rec.Code != http.StatusOK {
+		t.Errorf("same scopes, other order: %d %s", rec.Code, rec.Body)
 	}
 	form.Set("scope", ScopeRead)
 	resp, rec := h.tokens(form) // the stored result has both scopes
@@ -795,12 +821,38 @@ func TestExpiredValues(t *testing.T) {
 	}
 }
 
+// A fetch that fails for reasons outside the document, such as a client that hung up, isn't remembered:
+// the next sign-in fetches again.
+func TestMetadataNetworkFailuresAreNotCached(t *testing.T) {
+	h := newHarness(t)
+	fail := true
+	h.s.clients.fetch = func(ctx context.Context, u string) ([]byte, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if fail {
+			return nil, errors.New("connection reset")
+		}
+		return json.Marshal(map[string]any{"client_id": u, "client_name": "Claude", "redirect_uris": []string{"https://claude.ai/cb"}})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/oauth/authorize?client_id=https://claude.ai/c.json", nil)
+	h.handler.ServeHTTP(httptest.NewRecorder(), req)
+	h.authorizeTo("https://claude.ai/c.json", nil) // connection reset
+	fail = false
+	page := h.do(http.MethodGet, authorizeURL("https://claude.ai/c.json", "https://claude.ai/cb", nil), nil)
+	if page.Code != http.StatusOK {
+		t.Errorf("after a network failure: %d", page.Code)
+	}
+}
+
 func TestMetadataURLs(t *testing.T) {
 	h := newHarness(t)
 	fetches := 0
 	h.s.clients.fetch = func(context.Context, string) ([]byte, error) {
 		fetches++
-		return nil, errors.New("not found")
+		return []byte(`{"client_id":"someone else"}`), nil // a bad document: remembered for a while
 	}
 	if rec := h.authorizeTo("https://claude.ai/oauth/client.json?n=1", nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("metadata URL with a query: %d", rec.Code)

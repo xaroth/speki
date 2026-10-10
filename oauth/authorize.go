@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,7 +45,8 @@ type authRequest struct {
 	RedirectURI   string `json:"redirect_uri"`
 	State         string `json:"state,omitempty"`
 	CodeChallenge string `json:"code_challenge"`
-	AllowWrite    bool   `json:"allow_write"` // the client asked for speki:write, or for no scope in particular
+	AllowWrite    bool   `json:"allow_write"`    // the client asked for speki:write, or for no speki scope in particular
+	RedirectGiven bool   `json:"redirect_given"` // the request named its redirect_uri, so the token request must too
 }
 
 type consentValue struct {
@@ -76,6 +78,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirectURI := q.Get("redirect_uri")
+	redirectGiven := redirectURI != ""
 	if redirectURI == "" && len(c.RedirectURIs) == 1 {
 		redirectURI = c.RedirectURIs[0]
 	}
@@ -91,9 +94,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		RedirectURI:   redirectURI,
 		State:         q.Get("state"),
 		CodeChallenge: q.Get("code_challenge"),
+		AllowWrite:    allowsWrite(q.Get("scope")),
+		RedirectGiven: redirectGiven,
 	}
-	allowWrite, scopesOK := requestedScopes(q.Get("scope"))
-	req.AllowWrite = allowWrite
 	switch {
 	case q.Get("response_type") != "code":
 		s.redirectError(w, r, req, "unsupported_response_type", "only the code flow is supported")
@@ -103,9 +106,6 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	case q.Get("resource") != "" && q.Get("resource") != s.Resource():
 		s.redirectError(w, r, req, "invalid_target", "tokens are only issued for "+s.Resource())
-		return
-	case !scopesOK:
-		s.redirectError(w, r, req, "invalid_scope", "the scopes are speki:read and speki:write")
 		return
 	}
 
@@ -126,23 +126,12 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requestedScopes reads the scope parameter: whether write access may be offered, and whether every
-// scope asked for is speki's. No scope at all lets the user choose.
-func requestedScopes(scope string) (allowWrite, ok bool) {
+// allowsWrite reads the scope parameter: whether write access may be offered. Scopes speki doesn't know
+// (offline_access, openid and the like) are ignored, as RFC 6749 allows; the token response says what
+// was granted. A request naming no speki scope lets the user choose.
+func allowsWrite(scope string) bool {
 	fields := strings.Fields(scope)
-	if len(fields) == 0 {
-		return true, true
-	}
-	for _, f := range fields {
-		switch f {
-		case ScopeWrite:
-			allowWrite = true
-		case ScopeRead:
-		default:
-			return false, false
-		}
-	}
-	return allowWrite, true
+	return slices.Contains(fields, ScopeWrite) || !slices.Contains(fields, ScopeRead)
 }
 
 // validChallenge reports whether c can be an S256 PKCE challenge: 43 base64url characters (RFC 7636).
@@ -199,6 +188,7 @@ type codeValue struct {
 	ClientName    string        `json:"client_name"`
 	RedirectURI   string        `json:"redirect_uri"`
 	CodeChallenge string        `json:"code_challenge"`
+	RedirectGiven bool          `json:"redirect_given"`
 	Scopes        []string      `json:"scopes"`
 	Resource      string        `json:"resource"`
 	SignedIn      time.Time     `json:"signed_in"`
@@ -281,6 +271,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		ClientName:    tx.Request.ClientName,
 		RedirectURI:   tx.Request.RedirectURI,
 		CodeChallenge: tx.Request.CodeChallenge,
+		RedirectGiven: tx.Request.RedirectGiven,
 		Scopes:        scopes,
 		Resource:      s.Resource(),
 		SignedIn:      s.now(),

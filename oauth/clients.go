@@ -40,6 +40,8 @@ type clientResolver struct {
 	hosts []string
 	fetch func(ctx context.Context, url string) ([]byte, error)
 
+	fetching chan struct{} // a slot per metadata fetch in progress
+
 	mu    sync.Mutex
 	cache map[string]cachedClient // metadata documents, by URL
 }
@@ -55,15 +57,17 @@ const (
 	metadataCacheSize  = 100
 	metadataCacheTime  = 10 * time.Minute
 	metadataFailedTime = time.Minute
+	metadataFetches    = 4 // at once
 	metadataMaxBytes   = 64 << 10
 )
 
 func newClientResolver(keys *seal.Keyring, hosts []string) *clientResolver {
 	return &clientResolver{
-		keys:  keys,
-		hosts: hosts,
-		fetch: newMetadataFetcher(hosts),
-		cache: make(map[string]cachedClient),
+		keys:     keys,
+		hosts:    hosts,
+		fetch:    newMetadataFetcher(hosts),
+		fetching: make(chan struct{}, metadataFetches),
+		cache:    make(map[string]cachedClient),
 	}
 }
 
@@ -99,10 +103,14 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 	}
 	r.mu.Unlock()
 
-	cl, err := r.fetchClient(ctx, u, clientID)
+	// A fetch is the server's, not the request's: a client that disconnects mustn't fail it.
+	cl, lasting, err := r.fetchClient(context.WithoutCancel(ctx), u, clientID)
+	if err != nil && !lasting {
+		return client{}, err // a network error or a busy fetcher: try again on the next request
+	}
 	expires := now.Add(metadataCacheTime)
 	if err != nil {
-		expires = now.Add(metadataFailedTime) // so a stream of bad IDs doesn't mean a stream of fetches
+		expires = now.Add(metadataFailedTime) // a bad document stays bad for a while
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -119,11 +127,18 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 	return cl, err
 }
 
-// fetchClient fetches and checks a client metadata document.
-func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID string) (client, error) {
+// fetchClient fetches and checks a client metadata document. lasting reports whether a failure is the
+// document's own, which another fetch soon wouldn't change.
+func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID string) (cl client, lasting bool, err error) {
+	select {
+	case r.fetching <- struct{}{}:
+		defer func() { <-r.fetching }()
+	default:
+		return client{}, false, fmt.Errorf("%w: too many metadata documents being fetched", errUnknownClient)
+	}
 	raw, err := r.fetch(ctx, clientID)
 	if err != nil {
-		return client{}, fmt.Errorf("%w: fetching its metadata document: %w", errUnknownClient, err)
+		return client{}, false, fmt.Errorf("%w: fetching its metadata document: %w", errUnknownClient, err)
 	}
 	var doc struct {
 		ClientID     string   `json:"client_id"`
@@ -132,14 +147,14 @@ func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID s
 	}
 	err = json.Unmarshal(raw, &doc)
 	if err != nil || doc.ClientID != clientID || len(doc.RedirectURIs) == 0 {
-		return client{}, fmt.Errorf("%w: invalid metadata document", errUnknownClient)
+		return client{}, true, fmt.Errorf("%w: invalid metadata document", errUnknownClient)
 	}
 	for _, ru := range doc.RedirectURIs {
 		if !isLoopback(ru) && !sameHTTPSHost(ru, u.Hostname()) {
-			return client{}, fmt.Errorf("%w: redirect URI %q isn't on %s or loopback", errUnknownClient, ru, u.Hostname())
+			return client{}, true, fmt.Errorf("%w: redirect URI %q isn't on %s or loopback", errUnknownClient, ru, u.Hostname())
 		}
 	}
-	return client{ID: clientID, Name: oneLine(doc.ClientName), Host: u.Hostname(), RedirectURIs: doc.RedirectURIs}, nil
+	return client{ID: clientID, Name: oneLine(doc.ClientName), Host: u.Hostname(), RedirectURIs: doc.RedirectURIs}, true, nil
 }
 
 // register handles dynamic client registration. Only local programs register, so only loopback
@@ -236,13 +251,20 @@ func oneLine(s string) string {
 		if n == maxClientName {
 			break
 		}
-		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) { // Cf: bidi overrides and the like
+		if unicode.IsControl(r) || unicode.In(r, unicode.Zl, unicode.Zp) || hidesText(r) {
 			continue
 		}
 		b.WriteRune(r)
 		n++
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// hidesText reports whether r can reorder or hide text: the bidi controls and the tag characters. Other
+// format characters, such as the zero-width joiners emoji and some scripts need, are kept.
+func hidesText(r rune) bool {
+	return r == 0x061c || r == 0x200e || r == 0x200f || (r >= 0x202a && r <= 0x202e) ||
+		(r >= 0x2066 && r <= 0x2069) || (r >= 0xe0000 && r <= 0xe007f)
 }
 
 // newMetadataFetcher returns a function that fetches client metadata documents from the allowed hosts
