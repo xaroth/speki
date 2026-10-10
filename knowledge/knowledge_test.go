@@ -684,12 +684,45 @@ func TestReadEdges(t *testing.T) {
 	}
 }
 
+// Long headings can't make a read much bigger than 64 KiB: they're cut, and the outline counts against
+// the cap.
+func TestReadOutlineBytes(t *testing.T) {
+	f := newFixture(t)
+	var b strings.Builder
+	for range maxOutline {
+		b.WriteString("# " + strings.Repeat("é", 2500) + "\n" + strings.Repeat("text ", 200) + "\n")
+	}
+	f.copies[1] = newCopy(t, map[string]string{"long.md": b.String()})
+	for _, n := range []int{1, 0} {
+		p, err := f.base.Read(t.Context(), f.grant, ReadRequest{Vault: "ours/kb", Path: "long.md", LineCount: n})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range p.Outline {
+			if len(h.Text) > maxHeading || !utf8.ValidString(h.Text) || !strings.HasSuffix(h.Text, "…") {
+				t.Fatalf("heading of %d bytes: %q", len(h.Text), h.Text)
+			}
+		}
+		if size := outlineSize(p.Outline); size > maxOutlineLen || len(p.Content)+size > maxReadBytes {
+			t.Errorf("line_count %d: %d bytes of content and %d of outline", n, len(p.Content), size)
+		}
+		if len(p.Outline) == 0 || len(p.Outline) == maxOutline || len(p.Warnings) != 1 {
+			t.Errorf("line_count %d: outline of %d, warnings %v", n, len(p.Outline), p.Warnings)
+		}
+	}
+}
+
 func TestHistoryEdges(t *testing.T) {
 	f := newFixture(t)
 	f.github.history = []gh.Commit{{SHA: "c1", Message: "x\n\nSpeki-Client: " + strings.Repeat("é", 100)}}
 	got, err := f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
 	if err != nil || len(got[0].Client) > maxClient || !utf8.ValidString(got[0].Client) {
 		t.Errorf("long client: %q, %v", got[0].Client, err)
+	}
+	f.github.history = []gh.Commit{{SHA: "c1", Author: strings.Repeat("a", 1000), Message: strings.Repeat("é", 1000) + "\n\nbody"}}
+	got, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
+	if err != nil || len(got[0].Author) > maxAuthor || len(got[0].Message) > maxSubject || !utf8.ValidString(got[0].Message) {
+		t.Errorf("long author and subject: %d and %d bytes, %v", len(got[0].Author), len(got[0].Message), err)
 	}
 	f.github.historyErr = fmt.Errorf("commits: %w", gh.ErrUnauthorized)
 	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})

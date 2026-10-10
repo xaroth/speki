@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -667,6 +668,36 @@ func TestBuildStopsAtAFailedInsert(t *testing.T) {
 	}
 	if read > total/2 {
 		t.Errorf("read %d of %d files after the insert failed", read, total)
+	}
+}
+
+// Answers carry the start of a long title or description, not all of it.
+func TestLongTitlesAreCut(t *testing.T) {
+	title, desc := strings.Repeat("é", maxTitle), strings.Repeat("quokka ", maxDescription)
+	x := newIndex(t, map[string]string{"long.md": "---\ntitle: " + title + "\ndescription: " + desc + "\n---\nBody.\n"})
+	check := func(where, title, desc string) {
+		t.Helper()
+		if len(title) > maxTitle || len(desc) > maxDescription || !utf8.ValidString(title) || !strings.HasSuffix(desc, "…") {
+			t.Errorf("%s: title of %d bytes, description of %d", where, len(title), len(desc))
+		}
+	}
+	d, err := x.Document(t.Context(), "long.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("document", d.Title, d.Description)
+	entries, err := x.List(t.Context(), "", true, "", 10)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("list: %v, %v", entries, err)
+	}
+	check("list", entries[0].Title, entries[0].Description)
+	res := search(t, []Source{{Name: "kb", Index: x}}, "quokka", Options{})
+	if len(res.Hits) != 1 {
+		t.Fatalf("search: %v", hitPaths(res))
+	}
+	check("search", res.Hits[0].Title, res.Hits[0].Description)
+	if len(res.Hits[0].Snippet) > maxDescription {
+		t.Errorf("snippet of %d bytes", len(res.Hits[0].Snippet))
 	}
 }
 

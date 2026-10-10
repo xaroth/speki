@@ -279,7 +279,7 @@ func addSnippets(ctx context.Context, db *sql.DB, expr string, hits []found) err
 			hits[i].Snippet = hits[i].Description // the match wasn't in the body
 			continue
 		}
-		hits[i].Snippet = strings.NewReplacer("\x01", "**", "\x02", "**").Replace(s)
+		hits[i].Snippet = clip(strings.NewReplacer("\x01", "**", "\x02", "**").Replace(s), maxDescription)
 	}
 	return nil
 }
@@ -316,7 +316,7 @@ func queryHits(ctx context.Context, db *sql.DB, q string, args []any) ([]found, 
 		if err != nil {
 			return nil, err
 		}
-		h.Description, h.Updated = desc.String, updated.String
+		h.Title, h.Description, h.Updated = clip(h.Title, maxTitle), clip(desc.String, maxDescription), updated.String
 		err = json.Unmarshal([]byte(tags), &h.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("tags of %s: %w", h.Path, err)

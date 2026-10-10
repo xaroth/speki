@@ -148,6 +148,13 @@ const (
 	keyUpdated     = "updated"
 )
 
+// The longest title and description that answers show whole, in bytes. Longer ones are kept, with a
+// warning, so a change can't add one.
+const (
+	MaxTitle       = 200
+	MaxDescription = 500
+)
+
 // readMeta fills m from the block and returns the problems it ignored.
 func (f *frontmatter) readMeta(m *Meta) []string {
 	if f.broken != "" {
@@ -167,8 +174,14 @@ func (f *frontmatter) readMeta(m *Meta) []string {
 		switch key {
 		case keyTitle:
 			m.Title = scalarField(key, value, warn)
+			if len(m.Title) > MaxTitle {
+				warn("title: longer than %d bytes; answers show only its start", MaxTitle)
+			}
 		case keyDescription:
 			m.Description = scalarField(key, value, warn)
+			if len(m.Description) > MaxDescription {
+				warn("description: longer than %d bytes; answers show only its start", MaxDescription)
+			}
 		case keyTags:
 			m.Tags = normaliseTags(listField(key, value, warn))
 		case keyAliases:

@@ -21,6 +21,12 @@ const requestTrailer = "Speki-Request:"
 // made elsewhere may carry anything.
 const maxClient = 64
 
+// How much of a commit's author name and subject history shows, in bytes.
+const (
+	maxAuthor  = 100
+	maxSubject = 300
+)
+
 // HistoryRequest asks for the latest commits of a vault or one document.
 type HistoryRequest struct {
 	Vault string
@@ -66,9 +72,9 @@ func (b *Base) History(ctx context.Context, g *access.Grant, req HistoryRequest)
 		subject, _, _ := strings.Cut(c.Message, "\n")
 		out = append(out, Commit{
 			SHA:     c.SHA,
-			Author:  c.Author,
+			Author:  clip(c.Author, maxAuthor),
 			Date:    c.Date,
-			Message: strings.TrimSpace(subject),
+			Message: clip(strings.TrimSpace(subject), maxSubject),
 			Client:  client(c.Message),
 		})
 	}

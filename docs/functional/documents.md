@@ -58,6 +58,9 @@ spelling, so the document lands in that folder rather than in a look-alike next 
 Values that don't fit the table are rejected on write: a `status` of `wip`, `tags` given as a single string
 with commas. The error says which field and why.
 
+A `title` longer than 200 bytes or a `description` longer than 500 is kept, with a warning; answers show
+only its start.
+
 Any other key is kept as is. `query` exposes these keys as JSON in the `extra` column. Speki never removes
 or reorders keys it doesn't own.
 
