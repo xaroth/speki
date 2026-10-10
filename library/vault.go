@@ -338,21 +338,34 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 	head, err := v.mirror.Fetch(fetchCtx, progressWriter(touch))
 	v.gitMu.Unlock()
 	stop()
-	if err != nil {
-		return err
+	if err == nil {
+		commit := v.index.Commit()
+		switch {
+		case commit == head:
+		case commit != "" && v.mirror.Has(commit):
+			result = "applied"
+			err = l.apply(ctx, v, commit, head)
+		case quick:
+			return ErrRebuildNeeded
+		default:
+			result = "rebuilt"
+			err = l.build(ctx, v, head)
+		}
 	}
-
-	commit := v.index.Commit()
-	switch {
-	case commit == head:
-	case commit != "" && v.mirror.Has(commit):
-		result = "applied"
-		err = l.apply(ctx, v, commit, head)
-	case quick:
-		return ErrRebuildNeeded
-	default:
+	if errors.Is(err, gitsync.ErrBroken) {
+		if quick {
+			return ErrRebuildNeeded // the poller repairs it
+		}
+		// A copy that broke while in use: clone it again, next to the old one, and rebuild from it.
+		l.logger.Warn("git copy is broken; cloning it again", "vault", info.Name, "err", err)
 		result = "rebuilt"
-		err = l.build(ctx, v, head)
+		err = l.freshClone(ctx, v)
+		if err == nil {
+			head, err = v.mirror.Head()
+		}
+		if err == nil {
+			err = l.build(ctx, v, head)
+		}
 	}
 	if err != nil {
 		return err

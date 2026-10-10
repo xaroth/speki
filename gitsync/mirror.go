@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -112,7 +113,7 @@ func Open(ctx context.Context, dir string, src Source) (*Mirror, error) {
 	return m, nil
 }
 
-// healthy reports whether the copy has the branch and can walk its tree.
+// healthy reports whether the copy has the branch and every object of its tree.
 func healthy(repo *git.Repository, branch plumbing.ReferenceName) bool {
 	ref, err := repo.Reference(branch, true)
 	if err != nil {
@@ -122,7 +123,43 @@ func healthy(repo *git.Repository, branch plumbing.ReferenceName) bool {
 	if err != nil {
 		return false
 	}
-	return tree.Files().ForEach(func(*object.File) error { return nil }) == nil
+	return walk(repo, tree, "", func(string, object.TreeEntry) error { return nil }) == nil
+}
+
+// ErrBroken means the copy is missing or has a corrupt object: it has to be cloned again.
+var ErrBroken = errors.New("the git copy is broken")
+
+// broken marks errors about missing or corrupt objects with ErrBroken.
+func broken(err error) error {
+	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, plumbing.ErrInvalidType) {
+		return fmt.Errorf("%w: %w", ErrBroken, err)
+	}
+	return err
+}
+
+// walk calls fn for every entry under tree that isn't a folder. It looks every subtree up itself, so a
+// missing object is an error rather than the end of the walk (go-git's walker stops quietly), and file
+// names git allows but go-git's walker rejects, such as ones with a tab, are passed on.
+func walk(repo *git.Repository, tree *object.Tree, prefix string, fn func(name string, e object.TreeEntry) error) error {
+	for _, e := range tree.Entries {
+		name := prefix + e.Name
+		if e.Mode != filemode.Dir {
+			err := fn(name, e)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		sub, err := object.GetTree(repo.Storer, e.Hash)
+		if err != nil {
+			return broken(fmt.Errorf("%s: %w", name, err))
+		}
+		err = walk(repo, sub, name+"/", fn)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Mirror) basicAuth(ctx context.Context) (transport.AuthMethod, error) {
@@ -184,24 +221,17 @@ func (m *Mirror) Files(commit string) ([]File, error) {
 		return nil, err
 	}
 	var files []File
-	walker := object.NewTreeWalker(tree, true, nil)
-	defer walker.Close()
-	for {
-		name, entry, err := walker.Next()
-		if errors.Is(err, io.EOF) {
-			return files, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("walk %s: %w", commit, err)
-		}
-		ok, err := m.eligible(name, entry)
-		if err != nil {
-			return nil, err
-		}
+	err = walk(m.repo, tree, "", func(name string, e object.TreeEntry) error {
+		ok, err := m.eligible(name, e)
 		if ok {
-			files = append(files, File{Path: name, Blob: entry.Hash.String()})
+			files = append(files, File{Path: name, Blob: e.Hash.String()})
 		}
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("files at %s: %w", commit, err)
 	}
+	return files, nil
 }
 
 // Paths returns the path of every file in the tree at commit, of any kind: what a new document must not
@@ -212,32 +242,14 @@ func (m *Mirror) Paths(commit string) ([]string, error) {
 		return nil, err
 	}
 	var paths []string
-	err = m.walkPaths(tree, "", &paths)
+	err = walk(m.repo, tree, "", func(name string, _ object.TreeEntry) error {
+		paths = append(paths, name)
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("paths at %s: %w", commit, err)
 	}
 	return paths, nil
-}
-
-// walkPaths collects the paths under tree. It looks every subtree up itself, so a missing object is an
-// error rather than the end of the walk, and file names git allows but go-git's walker rejects are kept.
-func (m *Mirror) walkPaths(tree *object.Tree, prefix string, paths *[]string) error {
-	for _, e := range tree.Entries {
-		name := prefix + e.Name
-		if e.Mode != filemode.Dir {
-			*paths = append(*paths, name)
-			continue
-		}
-		sub, err := object.GetTree(m.repo.Storer, e.Hash)
-		if err != nil {
-			return fmt.Errorf("%s: %w", name, err)
-		}
-		err = m.walkPaths(sub, name+"/", paths)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Diff returns the markdown files that changed between two commits. Both must be in the copy.
@@ -252,7 +264,7 @@ func (m *Mirror) Diff(from, to string) ([]Change, error) {
 	}
 	diffs, err := object.DiffTree(fromTree, toTree)
 	if err != nil {
-		return nil, fmt.Errorf("diff %s..%s: %w", from, to, err)
+		return nil, fmt.Errorf("diff %s..%s: %w", from, to, broken(err))
 	}
 
 	var changes []Change
@@ -305,12 +317,12 @@ func (m *Mirror) eligible(name string, e object.TreeEntry) (bool, error) {
 	if e.Mode != filemode.Regular && e.Mode != filemode.Executable {
 		return false, nil
 	}
-	if !strings.HasSuffix(name, ".md") || hasDotSegment(name) {
-		return false, nil
+	if !strings.HasSuffix(name, ".md") || hasDotSegment(name) || strings.ContainsFunc(name, unicode.IsControl) {
+		return false, nil // a control character in a name is allowed by git, but speki never reads it
 	}
 	blob, err := m.repo.BlobObject(e.Hash)
 	if err != nil {
-		return false, fmt.Errorf("blob of %s: %w", name, err)
+		return false, fmt.Errorf("blob of %s: %w", name, broken(err))
 	}
 	if blob.Size > MaxFileSize {
 		return false, nil
@@ -339,11 +351,11 @@ func hasDotSegment(name string) bool {
 func commitTree(repo *git.Repository, h plumbing.Hash) (*object.Tree, error) {
 	c, err := repo.CommitObject(h)
 	if err != nil {
-		return nil, fmt.Errorf("commit %s: %w", h, err)
+		return nil, fmt.Errorf("commit %s: %w", h, broken(err))
 	}
 	t, err := c.Tree()
 	if err != nil {
-		return nil, fmt.Errorf("tree of %s: %w", h, err)
+		return nil, fmt.Errorf("tree of %s: %w", h, broken(err))
 	}
 	return t, nil
 }

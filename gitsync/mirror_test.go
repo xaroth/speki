@@ -1,6 +1,8 @@
 package gitsync
 
 import (
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +11,8 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -375,4 +379,144 @@ func TestPathsKeepGitsBytes(t *testing.T) {
 	if err != nil || len(paths) != 1 || paths[0] != name {
 		t.Errorf("Paths = %q, %v; want the NFD bytes %q", paths, err, name)
 	}
+}
+
+// copyDir copies a directory tree, for breaking a copy of a repository without touching the original.
+func copyDir(t *testing.T, from, to string) {
+	t.Helper()
+	err := filepath.WalkDir(from, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(from, p)
+		target := filepath.Join(to, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, raw, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// removeObject deletes a loose object from a repository's object store.
+func removeObject(t *testing.T, gitDir, hash string) {
+	t.Helper()
+	err := os.Remove(filepath.Join(gitDir, "objects", hash[:2], hash[2:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// treeOf returns the hash of the folder at path in commit.
+func treeOf(t *testing.T, repo *git.Repository, commit, path string) string {
+	t.Helper()
+	c, err := repo.CommitObject(plumbing.NewHash(commit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := c.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := root.FindEntry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e.Hash.String()
+}
+
+// A copy missing a tree object isn't an empty vault: Open clones it again, and reading it says it's broken.
+func TestBrokenCopies(t *testing.T) {
+	src := newSource(t)
+	head := src.commit(map[string]*string{"d/x.md": str("# X\n"), "top.md": str("# Top\n")})
+	dir := filepath.Join(t.TempDir(), "copy")
+	copyDir(t, src.dir, dir) // a working repository, with loose objects
+	sub := treeOf(t, src.repo, head, "d")
+
+	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeObject(t, filepath.Join(dir, ".git"), sub)
+	_, err = m.Files(head)
+	if !errors.Is(err, ErrBroken) {
+		t.Errorf("Files on a broken copy: %v, want ErrBroken", err)
+	}
+	_, err = m.Paths(head)
+	if !errors.Is(err, ErrBroken) {
+		t.Errorf("Paths on a broken copy: %v, want ErrBroken", err)
+	}
+
+	m, err = Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := m.Files(head)
+	if err != nil || len(files) != 2 {
+		t.Errorf("after reopening a broken copy: %v, %v", paths(files), err)
+	}
+}
+
+// A control character in a file name skips that file, not the vault.
+func TestControlCharacterInAName(t *testing.T) {
+	src := newSource(t)
+	head := src.rawCommit(map[string]string{"a\tb.md": "# Tab\n", "ok.md": "# OK\n"})
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := m.Files(head)
+	if err != nil || len(files) != 1 || files[0].Path != "ok.md" {
+		t.Errorf("Files = %v, %v", paths(files), err)
+	}
+}
+
+// rawCommit commits files at the top level by writing the objects directly, for names go-git's worktree
+// refuses but git allows.
+func (s *source) rawCommit(files map[string]string) string {
+	s.t.Helper()
+	store := s.repo.Storer
+	var entries []object.TreeEntry
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		blob := store.NewEncodedObject()
+		blob.SetType(plumbing.BlobObject)
+		w, _ := blob.Writer()
+		_, _ = w.Write([]byte(files[name]))
+		_ = w.Close()
+		h, err := store.SetEncodedObject(blob)
+		if err != nil {
+			s.t.Fatal(err)
+		}
+		entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Regular, Hash: h})
+	}
+	tree := &object.Tree{Entries: entries}
+	obj := store.NewEncodedObject()
+	if err := tree.Encode(obj); err != nil {
+		s.t.Fatal(err)
+	}
+	treeHash, err := store.SetEncodedObject(obj)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	sig := object.Signature{Name: "t", Email: "t@x", When: time.Now()}
+	commit := &object.Commit{Author: sig, Committer: sig, Message: "raw", TreeHash: treeHash}
+	obj = store.NewEncodedObject()
+	if err := commit.Encode(obj); err != nil {
+		s.t.Fatal(err)
+	}
+	h, err := store.SetEncodedObject(obj)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	err = store.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("master"), h))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return h.String()
 }
