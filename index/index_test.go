@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"crypto/sha1"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/mattn/go-sqlite3"
 )
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -604,5 +607,26 @@ func TestApplyFailureKeepsTheCommit(t *testing.T) {
 	}
 	if x.Commit() != "c1" {
 		t.Errorf("commit moved to %s", x.Commit())
+	}
+}
+
+// Only errors that mean a generation is unusable for good get it discarded; anything else, such as a
+// cancelled context or too many open files, keeps the file for the next try.
+func TestUnusableErrors(t *testing.T) {
+	for _, tt := range []struct {
+		err  error
+		want bool
+	}{
+		{sql.ErrNoRows, true},
+		{fmt.Errorf("%w: quick_check: row 3 missing", errUnusable), true},
+		{sqlite3.Error{Code: sqlite3.ErrNotADB}, true},
+		{sqlite3.Error{Code: sqlite3.ErrCorrupt}, true},
+		{context.Canceled, false},
+		{sqlite3.Error{Code: sqlite3.ErrCantOpen}, false},
+		{sqlite3.Error{Code: sqlite3.ErrBusy}, false},
+	} {
+		if got := errors.Is(unusable(tt.err), errUnusable); got != tt.want {
+			t.Errorf("unusable(%v) = %v, want %v", tt.err, got, tt.want)
+		}
 	}
 }

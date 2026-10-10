@@ -34,6 +34,7 @@ type remote struct {
 
 	mu      sync.Mutex
 	lookups int
+	headErr error            // when set, BranchHead fails with it
 	ids     map[string]int64 // repository IDs by name; ours/kb is 100 unless set
 }
 
@@ -112,7 +113,11 @@ func (r *remote) head() string {
 func (r *remote) BranchHead(_ context.Context, _ int64, _, _, etag string) (gh.Head, error) {
 	r.mu.Lock()
 	r.lookups++
+	headErr := r.headErr
 	r.mu.Unlock()
+	if headErr != nil {
+		return gh.Head{}, headErr
+	}
 	h := r.head()
 	if etag == h {
 		return gh.Head{ETag: etag}, nil
@@ -514,6 +519,7 @@ func TestPollerCompactsPacksFromWrites(t *testing.T) {
 	}
 	l.Poll(t.Context()) // learns the head, which the index already has
 	l.Poll(t.Context())
+	l.WaitIdle() // compacting runs in the background
 	if n := v.mirror.Packs(); n > maxPacks {
 		t.Errorf("%d packs after polling", n)
 	}
@@ -541,5 +547,184 @@ func TestCopyWithoutObjectsCatchesUp(t *testing.T) {
 	}
 	if got := search(t, v, "second"); len(got) != 1 {
 		t.Errorf("after the sync: %v", got)
+	}
+}
+
+// A vault that can't be cloned backs off longer with every attempt.
+func TestFailedVaultBacksOffMore(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	missing := kb
+	missing.Name = "ours/missing"
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{missing}})
+	l.background.Wait()
+	v := l.vaults[missing.RepoID]
+	first := v.retryAt
+	v.mu.Lock()
+	v.retryAt = time.Now() // due again
+	v.mu.Unlock()
+	l.initialise(t.Context(), v)
+	if v.failures != 2 || !v.retryAt.After(first.Add(time.Minute)) {
+		t.Errorf("after two failures: %d failures, retry at %v (first %v)", v.failures, v.retryAt, first)
+	}
+}
+
+// A failing head check shows on the status page and backs off.
+func TestFailedHeadCheckIsRecorded(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	r.mu.Lock()
+	r.headErr = errors.New("401 Bad credentials")
+	r.mu.Unlock()
+	l.Poll(t.Context())
+	if st := v.Status(); st.Error == "" || v.due() {
+		t.Errorf("status %+v, due %v", st, v.due())
+	}
+}
+
+// A vault busy with a long sync doesn't hold up a poll round.
+func TestPollSkipsABusyVault(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	r.push(map[string]string{"a.md": "# A\n\nchanged\n"})
+	v.syncMu.Lock() // a rebuild is running
+	done := make(chan struct{})
+	go func() {
+		l.Poll(t.Context())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("the poll round waited for a busy vault")
+	}
+	v.syncMu.Unlock()
+}
+
+// A restart only restores vaults whose git copy is usable without the network.
+func TestRestoreSkipsCopiesThatNeedTheNetwork(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	dataDir := t.TempDir()
+	l := newLibrary(t, r, dataDir)
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	serving(t, l)
+	l.Close()
+
+	err := os.RemoveAll(filepath.Join(dataDir, "100", gitDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l2 := newLibrary(t, r, dataDir)
+	err = l2.Restore(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l2.Vault(kb.RepoID); ok {
+		t.Error("restored a vault that would have needed a clone")
+	}
+}
+
+// Work a poll round starts in the background finishes after the round: here a full rebuild.
+func TestPollRebuildsInTheBackground(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	// An index at a commit the copy doesn't have can only be rebuilt.
+	err := v.index.Apply(t.Context(), strings.Repeat("0", 40), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.push(map[string]string{"a.md": "# A\n\nrebuilt\n"})
+	l.Poll(t.Context())
+	l.WaitIdle()
+	if v.Index().Commit() != r.head() || len(search(t, v, "rebuilt")) != 1 {
+		t.Errorf("index at %s after the background rebuild, want %s", v.Index().Commit(), r.head())
+	}
+}
+
+// A vault that failed to open recovers through the poller once its repository can be cloned.
+func TestFailedVaultRecovers(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	late := kb
+	late.Name = "ours/late"
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{late}})
+	l.WaitIdle()
+	if _, ok := l.Vault(late.RepoID); ok {
+		t.Fatal("served a vault whose repository doesn't exist yet")
+	}
+	_, err := git.PlainClone(filepath.Join(r.root, "ours/late.git"), false, &git.CloneOptions{URL: r.dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.setID(late.Name, late.RepoID)
+	v := l.vaults[late.RepoID]
+	v.mu.Lock()
+	v.retryAt = time.Now() // due
+	v.mu.Unlock()
+	l.Poll(t.Context())
+	l.WaitIdle()
+	if _, ok := l.Vault(late.RepoID); !ok {
+		t.Errorf("not serving after recovery: %+v", v.Status())
+	}
+}
+
+// A branch change on a vault that never opened goes the normal way in, without holding an opening slot
+// it would then wait for itself.
+func TestRecloneOfANeverOpenedVault(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := New(r, Options{DataDir: t.TempDir(), GitURL: r.root, Opening: 1}, discard())
+	t.Cleanup(l.Close)
+	missing := kb
+	missing.Name = "ours/missing"
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{missing}})
+	l.WaitIdle()
+	moved := missing
+	moved.DefaultBranch = "trunk"
+	l.Update(t.Context(), vault.Changes{Changed: []vault.Vault{moved}})
+	done := make(chan struct{})
+	go func() {
+		l.WaitIdle()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("reclone of a never-opened vault deadlocked")
+	}
+}
+
+// A good head check after a failed one clears the failure.
+func TestHeadCheckRecovers(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	r.mu.Lock()
+	r.headErr = errors.New("502")
+	r.mu.Unlock()
+	l.Poll(t.Context())
+	r.mu.Lock()
+	r.headErr = nil
+	r.mu.Unlock()
+	v.mu.Lock()
+	v.retryAt = time.Now()
+	v.mu.Unlock()
+	l.Poll(t.Context())
+	if st := v.Status(); st.Error != "" {
+		t.Errorf("error still shown after a good check: %q", st.Error)
 	}
 }

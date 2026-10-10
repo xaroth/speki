@@ -113,6 +113,12 @@ func Open(ctx context.Context, dir string, src Source) (*Mirror, error) {
 	return m, nil
 }
 
+// Usable reports whether dir holds a copy of branch that can be used without the network.
+func Usable(dir, branch string) bool {
+	repo, err := git.PlainOpen(dir)
+	return err == nil && healthy(repo, plumbing.NewBranchReferenceName(branch))
+}
+
 // healthy reports whether the copy has the branch and every object of its tree.
 func healthy(repo *git.Repository, branch plumbing.ReferenceName) bool {
 	ref, err := repo.Reference(branch, true)

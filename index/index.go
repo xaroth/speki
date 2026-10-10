@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3" // registers the sqlite3 driver
 )
 
@@ -63,9 +64,12 @@ func Open(ctx context.Context, dir string, logger *slog.Logger) (*Index, error) 
 	var keep *generation
 	for _, n := range slices.Backward(gens) {
 		g, err := openGeneration(ctx, dir, n)
-		if err != nil {
+		if errors.Is(err, errUnusable) {
 			logger.Warn("discarding unusable index", "file", generationPath(dir, n), "err", err)
 			continue
+		}
+		if err != nil { // maybe temporary (too many open files, a cancelled context): keep the files
+			return nil, fmt.Errorf("open index: %w", err)
 		}
 		keep = g
 		break
@@ -225,33 +229,52 @@ func removeGeneration(dir string, n int) {
 	}
 }
 
+// errUnusable marks a generation that can't be used and won't become usable: corrupt, of another schema,
+// or without a recorded commit.
+var errUnusable = errors.New("unusable index")
+
 // openGeneration opens an existing generation and checks that it's usable.
 func openGeneration(ctx context.Context, dir string, n int) (*generation, error) {
 	g, err := connect(ctx, dir, n)
 	if err != nil {
-		return nil, err
+		return nil, unusable(err)
 	}
 	var check string
 	err = g.writer.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&check)
 	if err == nil && check != "ok" {
-		err = errors.New("quick_check: " + check)
+		err = fmt.Errorf("%w: quick_check: %s", errUnusable, check)
 	}
 	var version, commit string
 	if err == nil {
 		err = g.writer.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'schema'").Scan(&version)
 	}
 	if err == nil && version != schemaVersion {
-		err = fmt.Errorf("schema version %s, want %s", version, schemaVersion)
+		err = fmt.Errorf("%w: schema version %s, want %s", errUnusable, version, schemaVersion)
 	}
 	if err == nil {
 		err = g.writer.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'commit'").Scan(&commit)
 	}
 	if err != nil {
 		g.close(false)
-		return nil, err
+		return nil, unusable(err)
 	}
 	g.commit.Store(commit)
 	return g, nil
+}
+
+// unusable marks the errors that mean a generation is unusable for good.
+func unusable(err error) error {
+	var serr sqlite3.Error
+	switch {
+	case errors.Is(err, errUnusable):
+		return err
+	case errors.Is(err, sql.ErrNoRows):
+	case errors.As(err, &serr) && (serr.Code == sqlite3.ErrCorrupt || serr.Code == sqlite3.ErrNotADB ||
+		(serr.Code == sqlite3.ErrError && strings.Contains(serr.Error(), "no such table"))):
+	default:
+		return err
+	}
+	return fmt.Errorf("%w: %w", errUnusable, err)
 }
 
 // createGeneration creates an empty generation.
