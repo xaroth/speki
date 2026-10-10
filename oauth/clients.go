@@ -243,7 +243,12 @@ func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID s
 			return client{}, badDocument, fmt.Errorf("%w: redirect URI %q isn't on %s or loopback", errUnknownClient, ru, u.Hostname())
 		}
 	}
-	return client{ID: clientID, Name: oneLine(doc.ClientName), Host: u.Hostname(), RedirectURIs: doc.RedirectURIs}, noFailure, nil
+	return client{
+		ID:           clientID,
+		Name:         oneLine(doc.ClientName),
+		Host:         u.Hostname(),
+		RedirectURIs: doc.RedirectURIs,
+	}, noFailure, nil
 }
 
 // register handles dynamic client registration. Only local programs register, so only loopback

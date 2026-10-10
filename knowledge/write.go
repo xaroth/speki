@@ -101,7 +101,12 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 			if err != nil {
 				return plan{}, err
 			}
-			return plan{changes: []gh.FileChange{{Path: newPath, Content: out}}, message: "Create " + newPath, path: newPath, version: blobID(out)}, nil
+			return plan{
+				changes: []gh.FileChange{{Path: newPath, Content: out}},
+				message: "Create " + newPath,
+				path:    newPath,
+				version: blobID(out),
+			}, nil
 		}
 
 		if !exists {
@@ -118,7 +123,12 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 		if err != nil {
 			return plan{}, err
 		}
-		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, path: cur.Path, version: blobID(out)}, nil
+		return plan{
+			changes: []gh.FileChange{{Path: cur.Path, Content: out}},
+			message: "Update " + cur.Path,
+			path:    cur.Path,
+			version: blobID(out),
+		}, nil
 	})
 }
 
@@ -163,7 +173,12 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 		if err != nil {
 			return plan{}, err
 		}
-		return plan{changes: []gh.FileChange{{Path: cur.Path, Content: out}}, message: "Update " + cur.Path, path: cur.Path, version: blobID(out)}, nil
+		return plan{
+			changes: []gh.FileChange{{Path: cur.Path, Content: out}},
+			message: "Update " + cur.Path,
+			path:    cur.Path,
+			version: blobID(out),
+		}, nil
 	})
 }
 
@@ -253,7 +268,12 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 		if err != nil {
 			return plan{}, err
 		}
-		return plan{changes: []gh.FileChange{{Path: cur.Path}}, message: "Delete " + cur.Path, path: cur.Path, linkedFrom: linked}, nil
+		return plan{
+			changes:    []gh.FileChange{{Path: cur.Path}},
+			message:    "Delete " + cur.Path,
+			path:       cur.Path,
+			linkedFrom: linked,
+		}, nil
 	})
 }
 

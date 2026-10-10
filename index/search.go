@@ -359,7 +359,12 @@ func parseQuery(text string) []term {
 			phrase, after, _ := strings.Cut(rest, `"`)
 			text = after
 			if words := splitWords(phrase); len(words) > 0 {
-				terms = addTerm(terms, term{text: strings.Join(words, " "), phrase: len(words) > 1, quoted: true, exclude: exclude})
+				terms = addTerm(terms, term{
+					text:    strings.Join(words, " "),
+					phrase:  len(words) > 1,
+					quoted:  true,
+					exclude: exclude,
+				})
 			}
 			continue
 		}
