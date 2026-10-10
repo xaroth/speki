@@ -13,6 +13,10 @@ import (
 // clientTrailer is the commit trailer that names the MCP client a change came from.
 const clientTrailer = "Speki-Client:"
 
+// requestTrailer is the commit trailer that marks one commit attempt, so speki can find its commit when
+// GitHub's answer is lost.
+const requestTrailer = "Speki-Request:"
+
 // maxClient is the longest client name history shows, in bytes. Speki writes shorter ones; commits
 // made elsewhere may carry anything.
 const maxClient = 64
@@ -71,12 +75,17 @@ func (b *Base) History(ctx context.Context, g *access.Grant, req HistoryRequest)
 	return out, nil
 }
 
-// client returns the value of the last Speki-Client trailer in a commit message.
+// client returns the value of the last Speki-Client trailer in a commit message, cut to maxClient.
 func client(message string) string {
+	return cutUTF8(trailer(message, clientTrailer), maxClient)
+}
+
+// trailer returns the value of the last trailer named key ("Key:") in a commit message.
+func trailer(message, key string) string {
 	lines := strings.Split(strings.TrimRight(message, "\n"), "\n")
 	for i := len(lines) - 1; i > 0; i-- {
-		if v, ok := strings.CutPrefix(lines[i], clientTrailer); ok {
-			return cutUTF8(strings.TrimSpace(v), maxClient)
+		if v, ok := strings.CutPrefix(lines[i], key); ok {
+			return strings.TrimSpace(v)
 		}
 		if strings.TrimSpace(lines[i]) == "" {
 			break // trailers are the last paragraph

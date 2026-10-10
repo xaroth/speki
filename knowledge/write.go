@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // git blob IDs are SHA-1
 	"encoding/hex"
 	"errors"
@@ -253,6 +254,14 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 	})
 }
 
+// ErrRebuilding is what Vaults.Sync returns when a vault's index needs a full rebuild before it can catch
+// up, which isn't done for a waiting request.
+var ErrRebuilding = errors.New("the vault's index is being rebuilt")
+
+func rebuilding(name string) *Error {
+	return errorf(Unavailable, "%s is rebuilding its index. Try again in a minute", name)
+}
+
 // writable returns a vault the user may change, or why not. Every change checks this first, so the
 // answer doesn't depend on whether the rest of the request is well formed.
 func writable(g *access.Grant, name string) (vault.Vault, error) {
@@ -455,6 +464,9 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			// GitHub, or was just replaced. Sync once and look again.
 			synced = true
 			serr := b.vaults.Sync(ctx, v.RepoID)
+			if errors.Is(serr, ErrRebuilding) {
+				return Result{}, rebuilding(v.Name)
+			}
 			if serr != nil {
 				b.logger.WarnContext(ctx, "sync before a change failed", "vault", v.Name, "err", serr)
 				if errors.As(err, &se) {
@@ -465,11 +477,12 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			continue
 		}
 
+		requestID := randomID()
 		sha, err := b.github.Commit(ctx, g.User().Token, gh.CommitRequest{
 			Repo:         st.vault.Name,
 			Branch:       st.vault.DefaultBranch,
 			ExpectedHead: st.head,
-			Message:      commitMessage(message, p.message, g.User().Client),
+			Message:      commitMessage(message, p.message, g.User().Client) + "\n" + requestTrailer + " " + requestID,
 			Changes:      p.changes,
 		})
 		if errors.Is(err, gh.ErrHeadMoved) {
@@ -478,6 +491,9 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 				return Result{}, b.keptChanging(ctx, v, p.path)
 			}
 			err = b.vaults.Sync(ctx, v.RepoID)
+			if errors.Is(err, ErrRebuilding) {
+				return Result{}, rebuilding(v.Name)
+			}
 			if err != nil {
 				b.logger.WarnContext(ctx, "sync after a moved head failed", "vault", v.Name, "err", err)
 			}
@@ -486,12 +502,17 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		if err != nil {
 			cerr := commitError(st.vault.Name, err)
 			var kerr *Error
-			if !errors.As(cerr, &kerr) { // the outcome is unknown: GitHub may have made the commit
-				if res, ok := b.landed(ctx, v, st.head, p); ok {
-					return res, nil
-				}
+			if errors.As(cerr, &kerr) || errors.Is(err, gh.ErrRefused) {
+				return Result{}, cerr // GitHub answered: nothing landed
 			}
-			return Result{}, cerr
+			// The answer was lost (a dropped connection, a timeout, a 5xx): GitHub may have made the
+			// commit anyway. Look for it, so an agent doesn't retry an edit that would apply twice.
+			found, ok := b.findCommit(ctx, g, st.vault, p.path, requestID)
+			if !ok {
+				return Result{}, cerr
+			}
+			b.logger.InfoContext(ctx, "a commit whose answer was lost landed", "vault", v.Name, "commit", found)
+			sha = found
 		}
 
 		res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom}
@@ -502,7 +523,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		if err != nil {
 			b.logger.WarnContext(ctx, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
 		}
-		res.IndexPending = err != nil || !b.indexed(ctx, v.RepoID, p.path, p.version)
+		res.IndexPending = err != nil || !b.indexed(context.WithoutCancel(ctx), v.RepoID, p.path, p.version)
 		nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeTimeout) // the commit landed: tell others
 		err = b.notices.Publish(nctx, v.RepoID, sha)
 		cancel()
@@ -513,21 +534,29 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 	}
 }
 
-// landed checks whether a commit whose answer was lost made it anyway: the branch moved on from head,
-// and the document is now as the plan left it. Reporting that as a success keeps an agent from retrying
-// an edit that would then apply twice.
-func (b *Base) landed(ctx context.Context, v vault.Vault, head string, p plan) (Result, bool) {
-	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncWait)
+// findCommit looks on GitHub, as the user, for the commit carrying requestID among the latest ones
+// that touched path, and returns its SHA. It asks GitHub rather than the local copy, so a sync holding
+// the vault's lock can't delay the answer.
+func (b *Base) findCommit(ctx context.Context, g *access.Grant, v vault.Vault, path, requestID string) (string, bool) {
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncWait)
 	defer cancel()
-	if b.vaults.Sync(sctx, v.RepoID) != nil {
-		return Result{}, false
+	commits, err := b.github.Commits(fctx, g.User().Token, v.Name, v.DefaultBranch, path, 5)
+	if err != nil {
+		return "", false
 	}
-	c, ok := b.vaults.Copy(v.RepoID)
-	if !ok || c.Index().Commit() == head || !b.indexed(sctx, v.RepoID, p.path, p.version) {
-		return Result{}, false
+	for _, c := range commits {
+		if trailer(c.Message, requestTrailer) == requestID {
+			return c.SHA, true
+		}
 	}
-	b.logger.InfoContext(ctx, "a commit whose answer was lost landed", "vault", v.Name)
-	return Result{Version: p.version, Commit: c.Index().Commit(), LinkedFrom: p.linkedFrom}, true
+	return "", false
+}
+
+// randomID returns a value unique to one commit attempt.
+func randomID() string {
+	var b [12]byte
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never returns an error
+	return hex.EncodeToString(b[:])
 }
 
 // keptChanging is the conflict for a vault whose branch moved under every attempt. It carries the

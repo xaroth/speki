@@ -107,7 +107,7 @@ func TestSignInAndSearch(t *testing.T) {
 	}
 	head, _ := fake.repo.Head()
 	commit, _ := fake.repo.CommitObject(head.Hash())
-	if commit.Message != "Update ops/airships.md\n\nSpeki-Client: e2e" {
+	if !strings.HasPrefix(commit.Message, "Update ops/airships.md\n\nSpeki-Client: e2e\nSpeki-Request: ") {
 		t.Errorf("commit message = %q", commit.Message)
 	}
 

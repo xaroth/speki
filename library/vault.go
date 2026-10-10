@@ -89,11 +89,18 @@ func newVault(info vault.Vault, dir string) *Vault {
 	}
 }
 
-// syncLock is a mutex a caller can stop waiting for.
+// syncLock is a mutex a caller can stop waiting for. Make it with make(syncLock, 1): newVault does.
 type syncLock chan struct{}
 
-func (l syncLock) Lock()   { l <- struct{}{} }
-func (l syncLock) Unlock() { <-l }
+func (l syncLock) Lock() { l <- struct{}{} }
+
+func (l syncLock) Unlock() {
+	select {
+	case <-l:
+	default:
+		panic("library: unlock of an unlocked sync lock")
+	}
+}
 
 // LockContext takes the lock, or gives up when ctx ends.
 func (l syncLock) LockContext(ctx context.Context) error {
@@ -296,7 +303,10 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 	ctx, span := telemetry.Tracer().Start(ctx, "library.Sync", trace.WithAttributes(attribute.String("speki.vault", v.Info().Name)))
 	result := "unchanged"
 	defer func() {
-		if err != nil {
+		switch {
+		case errors.Is(err, ErrRebuildNeeded):
+			result = "deferred" // to the poller, which rebuilds
+		case err != nil:
 			result = "failed"
 			span.SetStatus(codes.Error, "sync failed")
 		}

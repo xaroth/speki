@@ -131,6 +131,7 @@ type fakeGitHub struct {
 	before   func(repo *fakeRepo) // runs before a commit is checked, to change the repository under it
 	err      error                // returned by Commit when set
 	lostErr  error                // when set, Commit makes the commit and then fails with it, as when the answer is lost
+	log      []gh.Commit          // the commits made, newest first
 	// Commits (history)
 	token, repo, branch, path string
 	limit                     int
@@ -139,6 +140,11 @@ type fakeGitHub struct {
 }
 
 func (f *fakeGitHub) Commits(_ context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.history == nil && f.historyErr == nil { // nothing set up: what was committed
+		return f.log, nil
+	}
 	f.token, f.repo, f.branch, f.path, f.limit = token, repo, branch, path, limit
 	return f.history, f.historyErr
 }
@@ -183,6 +189,7 @@ func (f *fakeGitHub) Commit(_ context.Context, _ string, req gh.CommitRequest) (
 	}
 	f.commits++
 	r.head = fmt.Sprintf("commit-%d", f.commits)
+	f.log = append([]gh.Commit{{SHA: r.head, Message: req.Message}}, f.log...)
 	if f.lostErr != nil {
 		return "", f.lostErr
 	}

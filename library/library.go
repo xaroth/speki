@@ -74,7 +74,7 @@ func New(github github, opts Options, logger *slog.Logger) *Library {
 		opening: make(chan struct{}, opts.Opening),
 		syncs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "speki_sync_total",
-			Help: "Vault syncs, by result: unchanged, applied, rebuilt or failed.",
+			Help: "Vault syncs, by result: unchanged, applied, rebuilt, deferred (a rebuild left to the poller) or failed.",
 		}, []string{"result"}),
 	}
 }

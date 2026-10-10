@@ -20,6 +20,8 @@ var (
 	ErrBranchRules = errors.New("the branch's rules don't allow this commit")
 	// ErrForbidden means the user can't push to the repository.
 	ErrForbidden = errors.New("no permission to push")
+	// ErrRefused means GitHub answered and refused the commit, for a reason none of the others name.
+	ErrRefused = errors.New("GitHub refused the commit")
 )
 
 // SecretError means GitHub's push protection found a secret in the content.
@@ -167,5 +169,5 @@ func graphqlErrors(errs []graphqlError) error {
 			return fmt.Errorf("%w: %s", ErrForbidden, e.Message)
 		}
 	}
-	return fmt.Errorf("GitHub: %s (%s)", errs[0].Message, errs[0].Type)
+	return fmt.Errorf("%w: %s (%s)", ErrRefused, errs[0].Message, errs[0].Type)
 }
