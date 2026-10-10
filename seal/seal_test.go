@@ -33,7 +33,7 @@ type payload struct {
 func TestSealAndOpen(t *testing.T) {
 	k := keyring(t, fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n", secret()))
 
-	s, err := k.Seal(Access, payload{User: "octocat", Count: 3}, time.Now().Add(time.Hour))
+	s, err := k.Seal(PurposeAccess, payload{User: "octocat", Count: 3}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,13 +41,13 @@ func TestSealAndOpen(t *testing.T) {
 		t.Errorf("sealed = %q", s)
 	}
 	var got payload
-	err = k.Open(Access, s, &got)
+	err = k.Open(PurposeAccess, s, &got)
 	if err != nil || got != (payload{User: "octocat", Count: 3}) {
 		t.Errorf("Open = %+v, %v", got, err)
 	}
 
 	// Another purpose can't open it.
-	err = k.Open(Refresh, s, &got)
+	err = k.Open(PurposeRefresh, s, &got)
 	if !errors.Is(err, ErrInvalid) {
 		t.Errorf("open as refresh: %v", err)
 	}
@@ -55,14 +55,14 @@ func TestSealAndOpen(t *testing.T) {
 	// Tampering is detected.
 	raw := []byte(s)
 	raw[len(raw)-3] ^= 1
-	err = k.Open(Access, string(raw), &got)
+	err = k.Open(PurposeAccess, string(raw), &got)
 	if !errors.Is(err, ErrInvalid) {
 		t.Errorf("tampered: %v", err)
 	}
 
 	for _, bad := range []string{"", "v1", "v1.a", "v2.a.xyz", "v1.b.xyz", "v1.a.!!!", "v1.a.AAAA"} {
 		t.Run(fmt.Sprintf("%q", bad), func(t *testing.T) {
-			if err := k.Open(Access, bad, &got); !errors.Is(err, ErrInvalid) {
+			if err := k.Open(PurposeAccess, bad, &got); !errors.Is(err, ErrInvalid) {
 				t.Errorf("Open(%q) = %v", bad, err)
 			}
 		})
@@ -74,26 +74,26 @@ func TestExpiry(t *testing.T) {
 	now := time.Now()
 	k.now = func() time.Time { return now }
 
-	s, err := k.Seal(Code, "x", now.Add(time.Minute))
+	s, err := k.Seal(PurposeCode, "x", now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var v string
 	k.now = func() time.Time { return now.Add(time.Minute + 30*time.Second) } // within the skew
-	if err := k.Open(Code, s, &v); err != nil {
+	if err := k.Open(PurposeCode, s, &v); err != nil {
 		t.Errorf("within skew: %v", err)
 	}
 	k.now = func() time.Time { return now.Add(3 * time.Minute) }
-	if err := k.Open(Code, s, &v); !errors.Is(err, ErrExpired) {
+	if err := k.Open(PurposeCode, s, &v); !errors.Is(err, ErrExpired) {
 		t.Errorf("expired: %v", err)
 	}
 
-	forever, err := k.Seal(Client, "x", time.Time{})
+	forever, err := k.Seal(PurposeClient, "x", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	k.now = func() time.Time { return now.Add(10 * 365 * 24 * time.Hour) }
-	if err := k.Open(Client, forever, &v); err != nil {
+	if err := k.Open(PurposeClient, forever, &v); err != nil {
 		t.Errorf("value without expiry: %v", err)
 	}
 }
@@ -104,19 +104,19 @@ func TestRotation(t *testing.T) {
 	during := keyring(t, fmt.Sprintf("keys:\n  - id: new\n    secret: %s\n    primary: true\n  - id: old\n    secret: %s\n", newSecret, oldSecret))
 	after := keyring(t, fmt.Sprintf("keys:\n  - id: new\n    secret: %s\n    primary: true\n", newSecret))
 
-	s, err := before.Seal(Refresh, "token", time.Time{})
+	s, err := before.Seal(PurposeRefresh, "token", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var v string
-	if err := during.Open(Refresh, s, &v); err != nil || v != "token" {
+	if err := during.Open(PurposeRefresh, s, &v); err != nil || v != "token" {
 		t.Errorf("during rotation: %q, %v", v, err)
 	}
-	fresh, _ := during.Seal(Refresh, "token", time.Time{})
+	fresh, _ := during.Seal(PurposeRefresh, "token", time.Time{})
 	if !strings.HasPrefix(fresh, "v1.new.") {
 		t.Errorf("new values use %q", fresh[:7])
 	}
-	if err := after.Open(Refresh, s, &v); !errors.Is(err, ErrInvalid) {
+	if err := after.Open(PurposeRefresh, s, &v); !errors.Is(err, ErrInvalid) {
 		t.Errorf("retired key still opens: %v", err)
 	}
 }

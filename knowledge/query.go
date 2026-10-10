@@ -27,7 +27,7 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 			}
 		}
 		if len(sources) > index.MaxQuerySources {
-			return index.Rows{}, errorf(Invalid, "you can read %d vaults, and a query covers at most %d. Name the ones to query in vaults", len(sources), index.MaxQuerySources)
+			return index.Rows{}, errorf(CodeInvalid, "you can read %d vaults, and a query covers at most %d. Name the ones to query in vaults", len(sources), index.MaxQuerySources)
 		}
 	}
 	seen := map[int64]bool{}
@@ -44,13 +44,13 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 	}
 
 	if len(sources) > index.MaxQuerySources { // counted after repeats are dropped
-		return index.Rows{}, errorf(Invalid, "a query covers at most %d vaults", index.MaxQuerySources)
+		return index.Rows{}, errorf(CodeInvalid, "a query covers at most %d vaults", index.MaxQuerySources)
 	}
 	ctx, cancel := context.WithTimeout(ctx, index.QueryTimeout)
 	defer cancel()
 	done, err := b.queryTurn(ctx, g.User().ID)
 	if err != nil {
-		return index.Rows{}, errorf(Timeout, "your previous query was still running. Wait for it, or make it faster")
+		return index.Rows{}, errorf(CodeTimeout, "your previous query was still running. Wait for it, or make it faster")
 	}
 	defer done()
 
@@ -59,13 +59,13 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 	case err == nil:
 		return rows, nil
 	case errors.Is(err, index.ErrBadQuery):
-		return index.Rows{}, errorf(Invalid, "%s", strings.TrimPrefix(err.Error(), index.ErrBadQuery.Error()+": "))
+		return index.Rows{}, errorf(CodeInvalid, "%s", strings.TrimPrefix(err.Error(), index.ErrBadQuery.Error()+": "))
 	case errors.Is(err, index.ErrQueryTimeout):
-		return index.Rows{}, errorf(Timeout, "the query ran longer than %s. Narrow it down, or use search", index.QueryTimeout)
+		return index.Rows{}, errorf(CodeTimeout, "the query ran longer than %s. Narrow it down, or use search", index.QueryTimeout)
 	case errors.Is(err, index.ErrQueryTooLarge):
-		return index.Rows{}, errorf(TooLarge, "%s. Select fewer or shorter values", strings.TrimPrefix(err.Error(), index.ErrQueryTooLarge.Error()+": "))
+		return index.Rows{}, errorf(CodeTooLarge, "%s. Select fewer or shorter values", strings.TrimPrefix(err.Error(), index.ErrQueryTooLarge.Error()+": "))
 	case errors.Is(err, index.ErrClosed):
-		return index.Rows{}, errorf(NotFound, "a vault was removed during the query. Run it again")
+		return index.Rows{}, errorf(CodeNotFound, "a vault was removed during the query. Run it again")
 	}
 	return index.Rows{}, err
 }

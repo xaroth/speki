@@ -24,13 +24,13 @@ type Purpose string
 
 // The purposes speki seals values for.
 const (
-	Client      Purpose = "client"
-	Consent     Purpose = "consent"
-	Transaction Purpose = "transaction"
-	Code        Purpose = "code"
-	Access      Purpose = "access"
-	Refresh     Purpose = "refresh"
-	Cache       Purpose = "cache" // values parked in a shared store
+	PurposeClient      Purpose = "client"
+	PurposeConsent     Purpose = "consent"
+	PurposeTransaction Purpose = "transaction"
+	PurposeCode        Purpose = "code"
+	PurposeAccess      Purpose = "access"
+	PurposeRefresh     Purpose = "refresh"
+	PurposeCache       Purpose = "cache" // values parked in a shared store
 )
 
 // ErrInvalid is returned by Open for a value that isn't a sealed value of that purpose from this keyring.

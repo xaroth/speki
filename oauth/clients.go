@@ -97,7 +97,7 @@ func (r *clientResolver) resolve(ctx context.Context, clientID string) (client, 
 		return r.metadataClient(ctx, clientID)
 	}
 	var reg registration
-	err := r.keys.Open(seal.Client, clientID, &reg)
+	err := r.keys.Open(seal.PurposeClient, clientID, &reg)
 	if err != nil {
 		return client{}, errUnknownClient
 	}
@@ -278,7 +278,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "unnamed program"
 	}
-	id, err := s.keys.Seal(seal.Client, registration{Name: name, RedirectURIs: req.RedirectURIs}, time.Time{})
+	id, err := s.keys.Seal(seal.PurposeClient, registration{Name: name, RedirectURIs: req.RedirectURIs}, time.Time{})
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "sealing client registration", "err", err)
 		oauthError(w, http.StatusInternalServerError, "server_error", "registration failed")

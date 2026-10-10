@@ -109,7 +109,7 @@ func (b *Base) open(g *access.Grant, name string) (vault.Vault, Copy, error) {
 }
 
 func noVault(name string) *Error {
-	return errorf(NotFound, "there's no vault named %q that you can read. Call list without arguments to see your vaults", name)
+	return errorf(CodeNotFound, "there's no vault named %q that you can read. Call list without arguments to see your vaults", name)
 }
 
 // indexError turns an index that closed under a request (its vault was just removed) into a not_found.

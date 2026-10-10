@@ -30,12 +30,12 @@ func TestQuery(t *testing.T) {
 		req  QueryRequest
 		code Code
 	}{
-		"syntax":            {QueryRequest{SQL: "SELEC 1"}, Invalid},
-		"write":             {QueryRequest{SQL: "DELETE FROM documents"}, Invalid},
-		"another vault":     {QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/secret"}}, NotFound},
-		"an attached index": {QueryRequest{SQL: "SELECT * FROM v2.documents"}, Invalid},
-		"too much":          {QueryRequest{SQL: "SELECT printf('%.*c', 2000000, 'x')"}, TooLarge},
-		"endless":           {QueryRequest{SQL: "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n"}, Timeout},
+		"syntax":            {QueryRequest{SQL: "SELEC 1"}, CodeInvalid},
+		"write":             {QueryRequest{SQL: "DELETE FROM documents"}, CodeInvalid},
+		"another vault":     {QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/secret"}}, CodeNotFound},
+		"an attached index": {QueryRequest{SQL: "SELECT * FROM v2.documents"}, CodeInvalid},
+		"too much":          {QueryRequest{SQL: "SELECT printf('%.*c', 2000000, 'x')"}, CodeTooLarge},
+		"endless":           {QueryRequest{SQL: "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n"}, CodeTimeout},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := f.base.Query(ctx, f.grant, tt.req)
@@ -54,7 +54,7 @@ func TestQueryNeedsVaultsPastTen(t *testing.T) {
 	}
 	g := access.NewGrant(access.User{ID: 7}, many, nil)
 	_, err := f.base.Query(t.Context(), g, QueryRequest{SQL: "SELECT 1"})
-	wantCode(t, err, Invalid)
+	wantCode(t, err, CodeInvalid)
 	_, err = f.base.Query(t.Context(), g, QueryRequest{SQL: "SELECT count(*) FROM documents", Vaults: []string{"ours/v00", "ours/v01"}})
 	if err != nil {
 		t.Errorf("naming vaults: %v", err)
@@ -70,7 +70,7 @@ func TestOneQueryPerUser(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	_, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1"})
-	wantCode(t, err, Timeout)
+	wantCode(t, err, CodeTimeout)
 
 	other := access.NewGrant(access.User{ID: 8}, []vault.Vault{ours}, nil)
 	if _, err := f.base.Query(t.Context(), other, QueryRequest{SQL: "SELECT 1"}); err != nil {

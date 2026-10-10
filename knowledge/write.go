@@ -88,7 +88,7 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 		if req.Version == "" {
 			if exists {
 				return plan{}, &Error{
-					Code:    AlreadyExists,
+					Code:    CodeAlreadyExists,
 					Message: fmt.Sprintf("%s already exists, at version %s. Read it and pass that version to replace it, or use edit to change part of it", cur.Path, cur.Version),
 					Version: cur.Version,
 				}
@@ -110,7 +110,7 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 		}
 
 		if !exists {
-			return plan{}, errorf(NotFound, "%s has no document %s. Leave out version to create it", st.vault.Name, path)
+			return plan{}, errorf(CodeNotFound, "%s has no document %s. Leave out version to create it", st.vault.Name, path)
 		}
 		if cur.Version != req.Version {
 			return plan{}, stale(cur)
@@ -138,7 +138,7 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 		return Result{}, err
 	}
 	if req.OldText == "" {
-		return Result{}, errorf(Invalid, "old_text is empty. Give the exact text to replace")
+		return Result{}, errorf(CodeInvalid, "old_text is empty. Give the exact text to replace")
 	}
 	path := strings.TrimPrefix(req.Path, "/")
 	return b.change(ctx, g, req.Vault, req.Message, func(ctx context.Context, st state) (plan, error) {
@@ -147,7 +147,7 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 			return plan{}, err
 		}
 		if !exists {
-			return plan{}, errorf(NotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, path)
+			return plan{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, path)
 		}
 		if req.Version != "" && cur.Version != req.Version {
 			return plan{}, stale(cur)
@@ -160,9 +160,9 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 		n := countOverlapping(text, req.OldText)
 		switch {
 		case n == 0:
-			return plan{}, errorf(Invalid, "old_text doesn't appear in %s. Read it again and copy the text exactly; whitespace and line endings count", cur.Path)
+			return plan{}, errorf(CodeInvalid, "old_text doesn't appear in %s. Read it again and copy the text exactly; whitespace and line endings count", cur.Path)
 		case n > 1 && !req.ReplaceAll:
-			return plan{}, errorf(Invalid, "old_text appears %d times in %s. Include more of the surrounding text so it matches once, or set replace_all", n, cur.Path)
+			return plan{}, errorf(CodeInvalid, "old_text appears %d times in %s. Include more of the surrounding text so it matches once, or set replace_all", n, cur.Path)
 		}
 		limit := 1
 		if req.ReplaceAll {
@@ -189,12 +189,12 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 		return Result{}, err
 	}
 	if req.Version == "" {
-		return Result{}, errorf(Invalid, "move needs the version of the document being moved. Read it first")
+		return Result{}, errorf(CodeInvalid, "move needs the version of the document being moved. Read it first")
 	}
 	from := strings.TrimPrefix(req.From, "/")
 	to := strings.TrimPrefix(req.To, "/")
 	if from == to {
-		return Result{}, errorf(Invalid, "from and to are the same path")
+		return Result{}, errorf(CodeInvalid, "from and to are the same path")
 	}
 	return b.change(ctx, g, req.Vault, req.Message, func(ctx context.Context, st state) (plan, error) {
 		cur, exists, err := st.document(ctx, from)
@@ -202,7 +202,7 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 			return plan{}, err
 		}
 		if !exists {
-			return plan{}, errorf(NotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, from)
+			return plan{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, from)
 		}
 		if cur.Version != req.Version {
 			return plan{}, stale(cur)
@@ -213,7 +213,7 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 		}
 		if exists {
 			return plan{}, &Error{
-				Code:    AlreadyExists,
+				Code:    CodeAlreadyExists,
 				Message: fmt.Sprintf("%s already exists, at version %s. Pick another path, or delete that document first", target.Path, target.Version),
 				Version: target.Version,
 			}
@@ -223,7 +223,7 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 			return plan{}, err
 		}
 		if newPath == cur.Path { // to was the same path in another normalisation
-			return plan{}, errorf(Invalid, "%s and %s are the same path", from, to)
+			return plan{}, errorf(CodeInvalid, "%s and %s are the same path", from, to)
 		}
 		raw, err := st.copy.Blob(cur.Version)
 		if err != nil {
@@ -250,7 +250,7 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 		return Result{}, err
 	}
 	if req.Version == "" {
-		return Result{}, errorf(Invalid, "delete needs the version of the document. Read it first")
+		return Result{}, errorf(CodeInvalid, "delete needs the version of the document. Read it first")
 	}
 	path := strings.TrimPrefix(req.Path, "/")
 	return b.change(ctx, g, req.Vault, req.Message, func(ctx context.Context, st state) (plan, error) {
@@ -259,7 +259,7 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 			return plan{}, err
 		}
 		if !exists {
-			return plan{}, errorf(NotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, path)
+			return plan{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, path)
 		}
 		if cur.Version != req.Version {
 			return plan{}, stale(cur)
@@ -282,7 +282,7 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 var ErrRebuilding = errors.New("the vault's index is being rebuilt")
 
 func rebuilding(name string) *Error {
-	return errorf(Unavailable, "%s is rebuilding its index. Try again in a minute", name)
+	return errorf(CodeUnavailable, "%s is rebuilding its index. Try again in a minute", name)
 }
 
 // writable returns a vault the user may change, or why not. Every change checks this first, so the
@@ -293,9 +293,9 @@ func writable(g *access.Grant, name string) (vault.Vault, error) {
 	case !ok:
 		return vault.Vault{}, noVault(name)
 	case g.ReadOnlySession():
-		return vault.Vault{}, errorf(ReadOnlySession, "the user connected speki read-only. Ask them to reconnect it with write access")
+		return vault.Vault{}, errorf(CodeReadOnlySession, "the user connected speki read-only. Ask them to reconnect it with write access")
 	case !g.CanWrite(v.RepoID):
-		return vault.Vault{}, errorf(NoWriteAccess, "the user can read %s but can't push to it on GitHub. An owner of the repository can give them write access", v.Name)
+		return vault.Vault{}, errorf(CodeNoWriteAccess, "the user can read %s but can't push to it on GitHub. An owner of the repository can give them write access", v.Name)
 	}
 	return v, nil
 }
@@ -344,21 +344,21 @@ func (st state) newPath(path, moving string) (string, error) {
 		return p, ok
 	})
 	if errors.Is(err, document.ErrExists) {
-		return "", errorf(AlreadyExists, "%s (stored with a different Unicode encoding of the same name). Pick another path", err)
+		return "", errorf(CodeAlreadyExists, "%s (stored with a different Unicode encoding of the same name). Pick another path", err)
 	}
 	if err != nil {
-		return "", errorf(Invalid, "%s", err)
+		return "", errorf(CodeInvalid, "%s", err)
 	}
 	for i := strings.IndexByte(checked, '/'); i > 0; i = next(checked, i) {
 		if taken[checked[:i]] == "a file" {
-			return "", errorf(AlreadyExists, "%s is a file in the vault, so nothing can go under it. Pick another path", checked[:i])
+			return "", errorf(CodeAlreadyExists, "%s is a file in the vault, so nothing can go under it. Pick another path", checked[:i])
 		}
 	}
 	switch taken[checked] {
 	case "a file":
-		return "", errorf(AlreadyExists, "%s exists in the vault but isn't a document speki reads (it may be over 1 MiB). Pick another path", checked)
+		return "", errorf(CodeAlreadyExists, "%s exists in the vault but isn't a document speki reads (it may be over 1 MiB). Pick another path", checked)
 	case "a folder":
-		return "", errorf(AlreadyExists, "%s is a folder in the vault. Pick another path", checked)
+		return "", errorf(CodeAlreadyExists, "%s is a folder in the vault. Pick another path", checked)
 	}
 	return checked, nil
 }
@@ -405,7 +405,7 @@ func prepareDocument(path string, current, next []byte, now time.Time) ([]byte, 
 	}
 	d, err := document.Parse(path, next)
 	if err != nil {
-		return nil, errorf(Invalid, "the content can't be used: %s", err)
+		return nil, errorf(CodeInvalid, "the content can't be used: %s", err)
 	}
 	err = document.Check(cur, d)
 	if err != nil {
@@ -421,9 +421,9 @@ func prepareDocument(path string, current, next []byte, now time.Time) ([]byte, 
 func documentError(err error) *Error {
 	msg := strings.ReplaceAll(err.Error(), "\n", "; ")
 	if errors.Is(err, document.ErrTooLarge) {
-		return errorf(TooLarge, "%s. Split the document into smaller ones", msg)
+		return errorf(CodeTooLarge, "%s. Split the document into smaller ones", msg)
 	}
-	return errorf(Invalid, "%s", msg)
+	return errorf(CodeInvalid, "%s", msg)
 }
 
 // staleError means the document changed since the version the agent gave.
@@ -433,7 +433,7 @@ func (e *staleError) Error() string { return e.conflict.Error() }
 
 func stale(cur index.Document) error {
 	return &staleError{conflict: &Error{
-		Code:    Conflict,
+		Code:    CodeConflict,
 		Message: fmt.Sprintf("%s changed since you read it. Current version: %s. Read it again and redo your change", cur.Path, cur.Version),
 		Version: cur.Version,
 	}}
@@ -603,7 +603,7 @@ func randomID() string {
 // keptChanging is the conflict for a vault whose branch moved under every attempt. It carries the
 // document's current version, as every conflict does, when speki has it.
 func (b *Base) keptChanging(ctx context.Context, v vault.Vault, path string) *Error {
-	e := errorf(Conflict, "%s kept changing while speki tried to commit. Read the document again and redo your change", v.Name)
+	e := errorf(CodeConflict, "%s kept changing while speki tried to commit. Read the document again and redo your change", v.Name)
 	if c, ok := b.vaults.Copy(v.RepoID); ok {
 		if d, err := c.Index().Document(ctx, path); err == nil {
 			e.Version = d.Version
@@ -633,15 +633,15 @@ func commitError(name string, err error) error {
 	var limited *gh.RateLimitError
 	switch {
 	case errors.As(err, &secret):
-		return errorf(SecretDetected, "GitHub's push protection found a secret in the content (%s). Remove it, and tell the user", oneLine(secret.Detail))
+		return errorf(CodeSecretDetected, "GitHub's push protection found a secret in the content (%s). Remove it, and tell the user", oneLine(secret.Detail))
 	case errors.As(err, &limited):
-		return errorf(RateLimited, "GitHub asked speki to slow down. Wait %d seconds and try again", int(limited.RetryAfter.Seconds()))
+		return errorf(CodeRateLimited, "GitHub asked speki to slow down. Wait %d seconds and try again", int(limited.RetryAfter.Seconds()))
 	case errors.Is(err, gh.ErrBranchRules):
-		return errorf(VaultReadOnly, "GitHub refused the commit: %s only accepts changes through pull requests or checks. Tell the user", name)
+		return errorf(CodeVaultReadOnly, "GitHub refused the commit: %s only accepts changes through pull requests or checks. Tell the user", name)
 	case errors.Is(err, gh.ErrForbidden):
-		return errorf(NoWriteAccess, "GitHub refused the commit: the user can't push to %s", name)
+		return errorf(CodeNoWriteAccess, "GitHub refused the commit: the user can't push to %s", name)
 	case errors.Is(err, gh.ErrUnauthorized):
-		return errorf(Unavailable, "GitHub no longer accepts the user's sign-in. Ask them to reconnect speki")
+		return errorf(CodeUnavailable, "GitHub no longer accepts the user's sign-in. Ask them to reconnect speki")
 	}
 	return err
 }
