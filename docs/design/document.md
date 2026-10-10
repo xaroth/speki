@@ -48,7 +48,9 @@ is the body.
 
 The block is decoded into a `yaml.Node` with `go.yaml.in/yaml/v3`, which doesn't expand aliases. Speki
 walks the node tree and treats the frontmatter as broken if it contains an anchor or alias. The top level
-must be a mapping.
+must be a mapping, and the block must hold exactly one YAML document. That last rule catches a closing
+line with a trailing space: the block then runs on to the next `---` in the body, and the text in between
+would otherwise disappear without a warning.
 
 Core fields are read from the node tree with type checks. `tags` accepts a list of strings. A single string
 is accepted when read (Obsidian allows it) but rejected on write. Tags lose a leading `#` and are
