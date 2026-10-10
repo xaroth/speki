@@ -32,7 +32,8 @@ var githubRemaining = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Help: "Requests left in the current GitHub rate limit window, by credential kind; for installations, the lowest across installations heard from in the last few minutes.",
 }, []string{"kind"})
 
-// metrics counts one client's requests and keeps what it needs to report rate limit budgets.
+// metrics counts one client's requests and keeps what it needs to report rate limit budgets. The counters
+// and the gauge are process-wide; the budget bookkeeping is per client, and a process has one client.
 type metrics struct {
 	logger *slog.Logger
 

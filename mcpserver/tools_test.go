@@ -353,7 +353,8 @@ func TestFence(t *testing.T) {
 }
 
 func TestHandleErrors(t *testing.T) {
-	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var logged safeBuffer
+	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{}, "test", slog.New(slog.NewTextHandler(&logged, nil)))
 	g := access.NewGrant(access.User{Login: "alice"}, nil, nil)
 	ctx := context.WithValue(t.Context(), grantKey{}, g)
 	run := func(ctx context.Context, err error) error {
@@ -382,6 +383,10 @@ func TestHandleErrors(t *testing.T) {
 	cancel()
 	if err := run(canceled, context.Canceled); err == nil {
 		t.Error("canceled call succeeded")
+	}
+	lines := strings.Split(strings.TrimSpace(logged.String()), "\n")
+	if last := lines[len(lines)-1]; !strings.Contains(last, "outcome=canceled") {
+		t.Errorf("a canceled call is logged as %q", last)
 	}
 }
 

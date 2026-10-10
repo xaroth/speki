@@ -17,9 +17,12 @@ func (l *Library) Status() []Status {
 	return out
 }
 
-// publish writes every vault's status to the gauges. Resetting first drops vaults that are gone. Poll
-// and Update call it, so the gauges lag the real status by a poll interval at most.
+// publish writes every vault's status to the gauges. Resetting first drops vaults that are gone.
+// Restore, Run, Poll, Update and Close call it, so the gauges lag the real status by a poll round at
+// most. Calls take turns, so an older snapshot can't overwrite a newer one.
 func (l *Library) publish() {
+	l.publishMu.Lock()
+	defer l.publishMu.Unlock()
 	vaultUp.Reset()
 	vaultDocuments.Reset()
 	vaultBytes.Reset()

@@ -262,6 +262,7 @@ func TestMetricsByKind(t *testing.T) {
 	for i, tt := range tests {
 		before[i] = testutil.ToFloat64(githubRequests.WithLabelValues(tt.kind, tt.status))
 	}
+	githubRemaining.Reset() // shared by the whole test binary
 	githubRemaining.WithLabelValues("app").Set(4999)
 	_, err := c.RepositoryID(t.Context(), 1, "eve-online-tools/kb")
 	if err != nil {
@@ -284,6 +285,7 @@ func TestMetricsByKind(t *testing.T) {
 func TestRateBudget(t *testing.T) {
 	var logged bytes.Buffer
 	m := newMetrics(slog.New(slog.NewTextHandler(&logged, nil)))
+	githubRemaining.Reset() // shared by the whole test binary
 	header := func(remaining string) http.Header {
 		return http.Header{"X-Ratelimit-Remaining": {remaining}, "X-Ratelimit-Limit": {"5000"}}
 	}

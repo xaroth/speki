@@ -57,6 +57,7 @@ type Library struct {
 	opening    *semaphore.Weighted // limits concurrent clones and builds
 	background sync.WaitGroup
 	closed     atomic.Bool
+	publishMu  sync.Mutex // one publish at a time
 }
 
 // New returns an empty library.
@@ -102,6 +103,7 @@ func (l *Library) Restore(ctx context.Context) error {
 		l.mu.Unlock()
 		l.logger.Info("vault restored from disk", "vault", v.Info().Name, "commit", v.index.Commit())
 	}
+	l.publish()
 	return nil
 }
 
@@ -226,6 +228,7 @@ func (l *Library) Close() {
 		v.close()
 		v.syncMu.Unlock()
 	}
+	l.publish()
 }
 
 func (l *Library) all() []*Vault {

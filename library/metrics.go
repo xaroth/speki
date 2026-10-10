@@ -5,7 +5,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-var syncs = promauto.NewCounterVec(prometheus.CounterOpts{
+var syncTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "speki_sync_total",
 	Help: "Vault syncs, by result: unchanged, applied, rebuilt, deferred (a rebuild left to the poller) or failed.",
 }, []string{"result"})

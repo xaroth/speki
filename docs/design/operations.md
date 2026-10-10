@@ -98,8 +98,8 @@ Names:
 | `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, deferred, failed) |
 | `speki_signins_total` | counter | `result` |
 
-The vault gauges are written from the library's status after every poll round and every discovery
-update, so they lag by a poll interval at most. Alert on `time() - speki_vault_fresh_timestamp_seconds`:
+The vault gauges are written from the library's status at startup, after every poll round and
+discovery update, and on shutdown, so they lag by a poll round at most. Alert on `time() - speki_vault_fresh_timestamp_seconds`:
 above a few poll intervals, a vault is falling behind. It's a timestamp rather than an age so that it
 keeps growing staler when the poller itself stalls.
 

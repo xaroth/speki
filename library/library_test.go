@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/gitsync"
@@ -803,4 +804,23 @@ func TestStallContextStop(t *testing.T) {
 			t.Error("the context is still live after stop")
 		}
 	})
+}
+
+// The vault gauges follow the library's vaults: a served vault is up with its counts, and a removed one
+// is gone.
+func TestPublish(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n", "b.md": "# B\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	serving(t, l)
+	l.publish()
+	if up, docs := testutil.ToFloat64(vaultUp.WithLabelValues(kb.Name)), testutil.ToFloat64(vaultDocuments.WithLabelValues(kb.Name)); up != 1 || docs != 2 {
+		t.Errorf("up %v, documents %v", up, docs)
+	}
+	l.Update(t.Context(), vault.Changes{Removed: []vault.Vault{kb}})
+	l.WaitIdle()
+	if n := testutil.CollectAndCount(vaultUp); n != 0 {
+		t.Errorf("%d vaults still published after the removal", n)
+	}
 }

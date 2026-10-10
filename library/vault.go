@@ -335,7 +335,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		}
 		span.SetAttributes(attribute.String("speki.result", result))
 		span.End()
-		syncs.WithLabelValues(result).Inc()
+		syncTotal.WithLabelValues(result).Inc()
 	}()
 	if v.removed {
 		return errRemoved

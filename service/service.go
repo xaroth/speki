@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 
@@ -410,7 +411,7 @@ func (s *Service) whenReady(next http.Handler) http.Handler {
 // reachable through the public one.
 func (s *Service) internalHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.Handle("GET /metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}))
 	mux.HandleFunc("GET /status", s.status)
 	return mux
 }
