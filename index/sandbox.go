@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -418,9 +419,24 @@ func encodedSize(v any) int {
 	return len(raw)
 }
 
-// paths matches file paths in SQLite messages.
-// A path has at least two segments, so a lone slash ("SELECT / 1") or a name with one ('x/y') isn't one.
-var paths = regexp.MustCompile(`(?:file:)?(?:/[^\s'"/]+){2,}/?`)
+// paths matches absolute file paths in SQLite messages, as a fallback for paths that aren't the
+// sources' own: at least two segments, not inside a word. So a lone slash ("SELECT / 1") isn't one, nor
+// is a name with slashes inside ('a/b/c').
+var paths = regexp.MustCompile(`(^|[^\w/])(?:file:(?://)?)?(?:/[^\s'"/]+){2,}/?`)
+
+// scrubPaths replaces file paths in msg with "<file>": first the sources' index folders, as given
+// (relative or not, plain or as a file: URI), then anything that looks like an absolute path.
+func scrubPaths(msg string, sources []Source) string {
+	for _, src := range sources {
+		if src.Index == nil || src.Index.dir == "" {
+			continue
+		}
+		dir := strings.TrimPrefix(filepath.ToSlash(src.Index.dir), "/")
+		re := regexp.MustCompile(`(?:file:)?/*` + regexp.QuoteMeta(dir) + `[^\s'"]*`)
+		msg = re.ReplaceAllString(msg, "<file>")
+	}
+	return paths.ReplaceAllString(msg, "$1<file>")
+}
 
 // aliases matches the names vaults are attached under, where they qualify a table or column.
 var aliases = regexp.MustCompile(`\bv(\d+)\.`)
@@ -438,7 +454,7 @@ func queryError(ctx context.Context, err error, sources []Source) error {
 	if !errors.As(err, &serr) {
 		return err
 	}
-	msg := paths.ReplaceAllString(serr.Error(), "<file>") // before vault names, which contain a slash
+	msg := scrubPaths(serr.Error(), sources) // before vault names, which contain a slash
 	msg = aliases.ReplaceAllStringFunc(msg, func(m string) string {
 		n, err := strconv.Atoi(m[1 : len(m)-1])
 		if err != nil || n >= len(sources) {

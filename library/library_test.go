@@ -768,7 +768,7 @@ func TestFreshCloneIsntBroken(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.push(map[string]string{"a.md": "# A\n\nchanged\n"})
-	if err := l.freshClone(t.Context(), v); err != nil {
+	if err := l.freshClone(t.Context(), v, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := v.Blob(doc.Version); err == nil {
@@ -776,5 +776,42 @@ func TestFreshCloneIsntBroken(t *testing.T) {
 	}
 	if v.broken.Load() {
 		t.Error("a blob of an older commit marked the fresh copy broken")
+	}
+}
+
+// A fresh clone that lost the index's commit to a push during the clone is thrown away, and tried again
+// at the next chance, so the index needn't be rebuilt.
+func TestCompactionKeepsTheIndexCommit(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	for i := range maxPacks + 1 {
+		r.push(map[string]string{"a.md": "# A\n\nversion " + strings.Repeat("x", i) + "\n"})
+		v.gitMu.Lock()
+		_, err := v.mirror.Fetch(t.Context(), nil)
+		v.gitMu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := v.Index().Commit() // the index stays behind, as if the pushes came after the poller looked
+	l.compactLocked(t.Context(), v)
+	if !v.mirror.Has(commit) {
+		t.Fatal("the copy lost the index's commit")
+	}
+	if wait := time.Until(v.freshCloneAt.Add(time.Hour)); wait > movedOnRetry || wait < movedOnRetry-time.Minute {
+		t.Errorf("the next fresh clone comes in %v, want %v", wait, movedOnRetry)
+	}
+	v.freshCloneAt = time.Time{}
+	if err := l.Sync(t.Context(), v); err != nil {
+		t.Fatal(err)
+	}
+	if n := v.mirror.Packs(); n > maxPacks {
+		t.Errorf("%d pack files after the sync", n)
+	}
+	if v.Index().Commit() != r.head() {
+		t.Error("index behind after the sync")
 	}
 }

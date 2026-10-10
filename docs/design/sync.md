@@ -207,15 +207,22 @@ When GitHub's answer to a commit is lost (a dropped connection, a timeout, a 5xx
 landed anyway. Every commit carries a random `Speki-Request:` trailer, so before reporting a failure,
 `knowledge` asks GitHub, as the user, for the latest commits that touched the path and looks for it. If
 it's there, the change is reported as a success with that commit, so an agent doesn't retry an `edit`
-that would then apply twice. A definite refusal from GitHub is never looked for. An agent that hung up before speki could check can still retry; passing
-`version` to `edit` turns such a retry into a `conflict`.
+that would then apply twice. GitHub's own timeout answers ("This may be the result of a timeout", with
+HTTP 200) count as a lost answer, and the lookup is tried a second time after two seconds, in case GitHub
+is still finishing the commit. Those are recognised by their message only. Any other GraphQL error counts
+as a definite refusal and is never looked for, so a new kind of GitHub error that hides a landed commit
+would let a retried `edit` apply twice. An agent that hung up before speki could check can still retry;
+passing `version` to `edit` turns such a retry into a `conflict`.
 
 Syncs started for a write, before or after the commit, wait at most 10 seconds, and only apply changes.
-GitHub's own timeout answers ("This may be the result of a timeout", with HTTP 200) count as a lost
-answer, and the lookup is tried a second time after two seconds, in case GitHub is still finishing the
-commit. Writes add a pack file each without the poller needing to sync, so the poller also compacts a
-copy whose head check found nothing new. A full rebuild or a fresh clone is left to the poller: after a commit, the write
-answers with `index_pending`; before one, it answers `unavailable` ("rebuilding its index"). The sync after a commit carries on if the client goes away, for at most 10 seconds.
+A full rebuild or a fresh clone is left to the poller: after a commit, the write answers with
+`index_pending`; before one, it answers `unavailable` ("rebuilding its index"). The sync after a commit
+carries on if the client goes away, for at most 10 seconds.
+
+Writes add a pack file each without the poller needing to sync, so the poller also compacts a copy whose
+head check found nothing new. If a commit lands during that fresh clone, the new copy lacks the index's
+commit, and the index could only catch up by a full rebuild; so that copy is thrown away, and the next
+round tries again.
 
 After a successful commit, `knowledge`:
 

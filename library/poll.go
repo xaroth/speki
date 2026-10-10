@@ -197,12 +197,8 @@ func (l *Library) compact(ctx context.Context, v *Vault) {
 		return // busy: the next round looks again
 	}
 	defer v.syncMu.Unlock()
-	if v.removed || v.mirror == nil || v.mirror.Packs() <= maxPacks || time.Since(v.freshCloneAt) < time.Hour {
+	if v.removed || v.mirror == nil || v.index == nil {
 		return
 	}
-	v.freshCloneAt = time.Now()
-	err := l.freshClone(ctx, v)
-	if err != nil {
-		l.logger.Warn("fresh clone failed", "vault", v.Info().Name, "err", err)
-	}
+	l.compactLocked(ctx, v)
 }

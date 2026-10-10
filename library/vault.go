@@ -386,7 +386,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		// A copy that broke while in use: clone it again, next to the old one, and rebuild from it.
 		l.logger.Warn("git copy is broken; cloning it again", "vault", info.Name, "err", err)
 		result = "rebuilt"
-		err = l.freshClone(ctx, v)
+		err = l.freshClone(ctx, v, "")
 		if err == nil {
 			head, err = v.mirror.Head()
 		}
@@ -398,12 +398,8 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		return err
 	}
 
-	if !quick && v.mirror.Packs() > maxPacks && time.Since(v.freshCloneAt) > time.Hour {
-		v.freshCloneAt = time.Now()
-		err = l.freshClone(ctx, v)
-		if err != nil {
-			l.logger.Warn("fresh clone failed", "vault", v.Info().Name, "err", err)
-		}
+	if !quick {
+		l.compactLocked(ctx, v)
 	}
 
 	stats, err := v.index.Stats(context.WithoutCancel(ctx)) // the index caught up; say so even if ctx just ran out
@@ -474,17 +470,46 @@ func (l *Library) readFiles(v *Vault, files []gitsync.File, touch func()) iter.S
 	}
 }
 
+// movedOnRetry is how long after a spoiled fresh clone the next one is tried.
+const movedOnRetry = 10 * time.Minute
+
+// errMovedOn means a fresh clone no longer has the index's commit.
+var errMovedOn = errors.New("the branch moved on during the clone")
+
+// compactLocked replaces a copy with too many pack files by a fresh clone, at most once an hour, or ten
+// minutes after a commit landing during the clone spoiled the last try. Called with syncMu held.
+func (l *Library) compactLocked(ctx context.Context, v *Vault) {
+	if v.mirror.Packs() <= maxPacks || time.Since(v.freshCloneAt) < time.Hour {
+		return
+	}
+	v.freshCloneAt = time.Now()
+	err := l.freshClone(ctx, v, v.index.Commit())
+	switch {
+	case errors.Is(err, errMovedOn):
+		v.freshCloneAt = time.Now().Add(movedOnRetry - time.Hour)
+		l.logger.Info("fresh clone missed the index's commit; trying again later", "vault", v.Info().Name)
+	case err != nil:
+		l.logger.Warn("fresh clone failed", "vault", v.Info().Name, "err", err)
+	}
+}
+
 // freshClone replaces a copy that collected too many pack files. It clones next to the old copy and swaps
-// the directories, so a failure at any step leaves a working copy in place. Called with syncMu held.
-func (l *Library) freshClone(ctx context.Context, v *Vault) error {
+// the directories, so a failure at any step leaves a working copy in place. With keep set, the new copy
+// must have that commit (the index's), or it's thrown away with errMovedOn: a commit landed during the
+// clone, and the index could only catch up by a full rebuild. Called with syncMu held.
+func (l *Library) freshClone(ctx context.Context, v *Vault, keep string) error {
 	current := filepath.Join(v.dir, gitDir)
 	next, old := current+".next", current+".old"
 	_ = os.RemoveAll(next)
 	_ = os.RemoveAll(old)
-	_, err := l.openMirror(ctx, v, next)
+	m, err := l.openMirror(ctx, v, next)
 	if err != nil {
 		_ = os.RemoveAll(next)
 		return err
+	}
+	if keep != "" && !m.Has(keep) {
+		_ = os.RemoveAll(next)
+		return errMovedOn
 	}
 
 	v.gitMu.Lock()
@@ -500,7 +525,7 @@ func (l *Library) freshClone(ctx context.Context, v *Vault) error {
 		_ = os.RemoveAll(next)
 		return fmt.Errorf("swap fresh copy: %w", err)
 	}
-	m, err := l.openMirror(ctx, v, current) // a healthy copy opens without network access
+	m, err = l.openMirror(ctx, v, current) // a healthy copy opens without network access
 	if err != nil {
 		return err // v.mirror still reads from the old copy's open files; the next sync reopens
 	}
