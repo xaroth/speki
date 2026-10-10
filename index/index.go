@@ -68,7 +68,7 @@ func Open(ctx context.Context, dir string, logger *slog.Logger) (*Index, error) 
 	for _, n := range slices.Backward(gens) {
 		g, err := openGeneration(ctx, dir, n)
 		if errors.Is(err, errUnusable) {
-			logger.Warn("discarding unusable index", "file", generationPath(dir, n), "err", err)
+			logger.WarnContext(ctx, "discarding unusable index", "file", generationPath(dir, n), "err", err)
 			continue
 		}
 		if err != nil { // maybe temporary (too many open files, a cancelled context): keep the files

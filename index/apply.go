@@ -51,7 +51,7 @@ func (x *Index) Apply(ctx context.Context, commit string, changes []Change) erro
 	for _, c := range changes {
 		err = applyOne(ctx, tx, c)
 		if errors.Is(err, errBadFile) {
-			x.logger.Warn("skipping file", "path", c.Path, "err", err)
+			x.logger.WarnContext(ctx, "skipping file", "path", c.Path, "err", err)
 			continue
 		}
 		if err != nil {
@@ -156,7 +156,7 @@ func (x *Index) Build(ctx context.Context, commit string, files iter.Seq2[Change
 		return err
 	}
 	x.reloadVocabulary()
-	x.logger.Info("index built", "commit", commit, "documents", count, "took", time.Since(start).Round(time.Millisecond))
+	x.logger.InfoContext(ctx, "index built", "commit", commit, "documents", count, "took", time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
@@ -208,7 +208,7 @@ func fill(
 			for c := range in {
 				r, err := parse(c)
 				if err != nil { // the file itself is unusable
-					logger.Warn("skipping file", "path", c.Path, "err", err)
+					logger.WarnContext(ctx, "skipping file", "path", c.Path, "err", err)
 					continue
 				}
 				select {

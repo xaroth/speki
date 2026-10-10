@@ -248,7 +248,7 @@ func (r *Registry) discoverRepo(
 	}
 	if err != nil {
 		problems[repo.ID] = Problem{RepoID: repo.ID, Name: repo.FullName, Err: err.Error()}
-		r.logger.Warn("unusable vault configuration", "vault", repo.FullName, "err", err)
+		r.logger.WarnContext(ctx, "unusable vault configuration", "vault", repo.FullName, "err", err)
 		return v, wasVault, nil // an existing vault keeps its last good configuration
 	}
 	delete(problems, repo.ID)
