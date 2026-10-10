@@ -58,7 +58,8 @@ if err != nil {
 
 - Code that returns document content takes an `*access.Grant`. No exceptions without a comment explaining
   why.
-- Tokens, codes, cookies, document content and SQL never go into logs or error messages. The slog handler
+- Tokens, codes, cookies, configuration secrets (so the config as a whole), document content and SQL
+  never go into logs or error messages. The slog handler
   redacts known attribute names, but don't rely on it.
 - URLs that end up in tokens or metadata come from configuration, never from request headers.
 

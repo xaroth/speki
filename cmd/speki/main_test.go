@@ -136,7 +136,7 @@ func TestSecretsFromFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := service.Secret("-----BEGIN KEY-----\nabc\n-----END KEY-----")
+	want := "-----BEGIN KEY-----\nabc\n-----END KEY-----"
 
 	tests := []struct {
 		name    string
@@ -157,7 +157,7 @@ func TestSecretsFromFiles(t *testing.T) {
 			wantErr: "both set",
 		},
 		{name: "missing file", environ: []string{"SPEKI_GITHUB_PRIVATE_KEY_FILE=/nonexistent"}, wantErr: "PRIVATE_KEY_FILE"},
-		{name: "file key that isn't a secret", file: "listen_file: x\n", wantErr: "listen_file"},
+		{name: "file key for a setting that isn't text", file: "sync:\n  poll_interval_file: x\n", wantErr: "poll_interval_file"},
 		{
 			name:    "environment over a file in YAML",
 			file:    "github:\n  private_key_file: /run/secrets/not-mounted\n",
@@ -187,7 +187,7 @@ func TestSecretsFromFiles(t *testing.T) {
 				t.Fatalf("loadConfig: %v", err)
 			}
 			if cfg.GitHub.PrivateKey != want {
-				t.Errorf("private key = %q, want %q", cfg.GitHub.PrivateKey.Reveal(), want.Reveal())
+				t.Errorf("private key = %q, want %q", cfg.GitHub.PrivateKey, want)
 			}
 		})
 	}

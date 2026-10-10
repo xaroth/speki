@@ -57,7 +57,7 @@ func TestSeveralInstances(t *testing.T) {
 	})
 	mr := miniredis.RunT(t)
 	cfgA := testConfig(t, fake)
-	cfgA.Redis.URL = Secret("redis://" + mr.Addr())
+	cfgA.Redis.URL = "redis://" + mr.Addr()
 	cfgB := cfgA // the same keys, app and Redis
 	cfgB.Sync.DataDir = t.TempDir()
 	a := startService(t, cfgA)

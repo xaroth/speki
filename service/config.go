@@ -44,7 +44,7 @@ type Access struct {
 // Auth configures sign-in.
 type Auth struct {
 	// Keys is the key file speki seals its tokens with.
-	Keys Secret `yaml:"keys"`
+	Keys string `yaml:"keys"`
 	// ClientMetadataHosts are the hosts whose client metadata documents are accepted. Default claude.ai.
 	ClientMetadataHosts []string `yaml:"client_metadata_hosts"`
 }
@@ -52,9 +52,9 @@ type Auth struct {
 // GitHub identifies the GitHub App and where to reach GitHub.
 type GitHub struct {
 	AppID        int64  `yaml:"app_id"`
-	PrivateKey   Secret `yaml:"private_key"` // PEM
+	PrivateKey   string `yaml:"private_key"` // PEM
 	ClientID     string `yaml:"client_id"`
-	ClientSecret Secret `yaml:"client_secret"`
+	ClientSecret string `yaml:"client_secret"`
 	// AllowedAccounts are the numeric IDs of the accounts whose installations count. Empty means the
 	// account that owns the app.
 	AllowedAccounts []int64 `yaml:"allowed_accounts"`
@@ -74,7 +74,7 @@ type Sync struct {
 // single instance and keeps that state in memory.
 type Redis struct {
 	// URL is redis:// or rediss://, with any password in it.
-	URL Secret `yaml:"url"`
+	URL string `yaml:"url"`
 }
 
 // Telemetry configures logging and tracing.
@@ -133,7 +133,7 @@ func (c Config) validate() error {
 	}
 	if c.GitHub.PrivateKey == "" {
 		errs = append(errs, errors.New("github.private_key (or github.private_key_file) is required"))
-	} else if err := gh.CheckPrivateKey([]byte(c.GitHub.PrivateKey.Reveal())); err != nil {
+	} else if err := gh.CheckPrivateKey([]byte(c.GitHub.PrivateKey)); err != nil {
 		errs = append(errs, fmt.Errorf("github.private_key: %w", err))
 	}
 	for _, id := range c.GitHub.AllowedAccounts {
@@ -147,7 +147,7 @@ func (c Config) validate() error {
 	errs = append(errs, checkPublicURL(c.PublicURL))
 	if c.Auth.Keys == "" {
 		errs = append(errs, errors.New("auth.keys (or auth.keys_file) is required"))
-	} else if _, err := seal.ParseKeyring([]byte(c.Auth.Keys.Reveal())); err != nil {
+	} else if _, err := seal.ParseKeyring([]byte(c.Auth.Keys)); err != nil {
 		errs = append(errs, fmt.Errorf("auth.keys: %w", err))
 	}
 	for _, h := range c.Auth.ClientMetadataHosts {
