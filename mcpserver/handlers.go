@@ -1,0 +1,356 @@
+package mcpserver
+
+import (
+	"context"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/knowledge"
+)
+
+// VaultSummary describes a vault the user can read.
+type VaultSummary struct {
+	Vault       string `json:"vault" jsonschema:"the vault's name, owner/repo"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Guidelines  string `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
+	CanWrite    bool   `json:"can_write"`
+	Documents   int    `json:"documents"`
+}
+
+func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummary {
+	out := make([]VaultSummary, 0, len(vaults))
+	for _, v := range vaults {
+		s := VaultSummary{Vault: v.Name, Title: v.Title, Description: v.Description, CanWrite: v.CanWrite, Documents: v.Documents}
+		if guidelines {
+			s.Guidelines = v.Guidelines
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// GuideInput takes nothing.
+type GuideInput struct{}
+
+// GuideOutput is how to use speki, and the user's vaults.
+type GuideOutput struct {
+	Guide  string         `json:"guide"`
+	Vaults []VaultSummary `json:"vaults"`
+}
+
+func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (GuideOutput, string, error) {
+	vaults, err := s.kb.Vaults(ctx, g)
+	if err != nil {
+		return GuideOutput{}, "", err
+	}
+	out := GuideOutput{Guide: guideText, Vaults: vaultSummaries(vaults, true)}
+
+	var b strings.Builder
+	b.WriteString(guideText)
+	b.WriteString("\n## Your vaults\n")
+	if len(vaults) == 0 {
+		b.WriteString("\nNone is ready yet. Try again in a minute.\n")
+	}
+	for _, v := range out.Vaults {
+		fmt.Fprintf(&b, "\n### %s\n\n", oneLine(v.Vault))
+		writeVaultDetails(&b, v)
+		if v.Guidelines != "" {
+			fmt.Fprintf(&b, "<guidelines>\n%s\n</guidelines>\n", escapeMarkers(v.Guidelines))
+		}
+	}
+	return out, b.String(), nil
+}
+
+func writeVaultDetails(b *strings.Builder, v VaultSummary) {
+	if v.Title != "" {
+		fmt.Fprintf(b, "Title: %s\n", oneLine(v.Title))
+	}
+	if v.Description != "" {
+		fmt.Fprintf(b, "Description: %s\n", oneLine(v.Description))
+	}
+	access := "read only"
+	if v.CanWrite {
+		access = "read and write"
+	}
+	fmt.Fprintf(b, "Access: %s. Documents: %d\n", access, v.Documents)
+}
+
+// ListInput asks for vaults, or a folder.
+type ListInput struct {
+	Vault     string `json:"vault,omitempty" jsonschema:"the vault to list, owner/repo. Leave out to list your vaults"`
+	Path      string `json:"path,omitempty" jsonschema:"the folder to list, relative to the vault root. Leave out for the root"`
+	Recursive bool   `json:"recursive,omitempty" jsonschema:"list documents in subfolders too, instead of one entry per subfolder"`
+	Cursor    string `json:"cursor,omitempty" jsonschema:"next_cursor from the previous call, to get the next page"`
+}
+
+// DocumentSummary is a document in a listing.
+type DocumentSummary struct {
+	Path        string `json:"path"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Status      string `json:"status"`
+	Updated     string `json:"updated,omitempty"`
+	Version     string `json:"version"`
+}
+
+// ListOutput is the user's vaults, or one page of a folder.
+type ListOutput struct {
+	Vaults     []VaultSummary    `json:"vaults,omitempty"`
+	Folders    []string          `json:"folders,omitempty"`
+	Documents  []DocumentSummary `json:"documents,omitempty"`
+	NextCursor string            `json:"next_cursor,omitempty" jsonschema:"pass as cursor to get the next page; absent on the last page"`
+	Guidelines string            `json:"guidelines,omitempty" jsonschema:"the vault's writing guidelines, when listing its root"`
+}
+
+func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListOutput, string, error) {
+	if in.Vault == "" {
+		vaults, err := s.kb.Vaults(ctx, g)
+		if err != nil {
+			return ListOutput{}, "", err
+		}
+		out := ListOutput{Vaults: vaultSummaries(vaults, false)}
+		var b strings.Builder
+		if len(vaults) == 0 {
+			b.WriteString("No vault is ready yet. Try again in a minute.\n")
+		}
+		for _, v := range out.Vaults {
+			fmt.Fprintf(&b, "%s\n", oneLine(v.Vault))
+			writeVaultDetails(&b, v)
+			b.WriteString("\n")
+		}
+		return out, b.String(), nil
+	}
+
+	l, err := s.kb.List(ctx, g, knowledge.ListRequest{Vault: in.Vault, Path: in.Path, Recursive: in.Recursive, Cursor: in.Cursor})
+	if err != nil {
+		return ListOutput{}, "", err
+	}
+	out := ListOutput{Folders: l.Folders, NextCursor: l.NextCursor, Guidelines: l.Guidelines}
+	var b strings.Builder
+	for _, f := range l.Folders {
+		fmt.Fprintf(&b, "%s\n", oneLine(f))
+	}
+	for _, e := range l.Documents {
+		out.Documents = append(out.Documents, DocumentSummary{
+			Path: e.Path, Title: e.Title, Description: e.Description, Status: e.Status, Updated: e.Updated, Version: e.Version,
+		})
+		fmt.Fprintf(&b, "%s  %s  version %s\n", oneLine(e.Path), oneLine(e.Title), e.Version)
+	}
+	if len(l.Folders)+len(l.Documents) == 0 {
+		b.WriteString("This vault has no documents yet.\n")
+	}
+	if l.NextCursor != "" {
+		fmt.Fprintf(&b, "More entries follow: call list again with cursor %q.\n", l.NextCursor)
+	}
+	if l.Guidelines != "" {
+		fmt.Fprintf(&b, "<guidelines>\n%s\n</guidelines>\n", escapeMarkers(l.Guidelines))
+	}
+	return out, b.String(), nil
+}
+
+// SearchInput is a full-text search.
+type SearchInput struct {
+	Query             string   `json:"query" jsonschema:"words to search for. \"quoted phrases\" must appear as written; -word excludes documents with that word"`
+	Vaults            []string `json:"vaults,omitempty" jsonschema:"only these vaults (owner/repo). Leave out to search all your vaults"`
+	Path              string   `json:"path,omitempty" jsonschema:"only documents under this folder"`
+	Tags              []string `json:"tags,omitempty" jsonschema:"only documents that have all of these tags"`
+	ExcludeDeprecated bool     `json:"exclude_deprecated,omitempty" jsonschema:"leave out deprecated documents. By default they're included but ranked lower"`
+	Limit             int      `json:"limit,omitempty" jsonschema:"how many results, 1 to 50. Default 10"`
+}
+
+// SearchHit is one search result.
+type SearchHit struct {
+	Vault       string   `json:"vault"`
+	Path        string   `json:"path"`
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Status      string   `json:"status"`
+	Updated     string   `json:"updated,omitempty"`
+	Version     string   `json:"version"`
+	Snippet     string   `json:"snippet" jsonschema:"text around the best match, matched words in **bold**"`
+	Score       float64  `json:"score" jsonschema:"relevance; higher is better"`
+}
+
+// SearchOutput is what a search found.
+type SearchOutput struct {
+	Results   []SearchHit       `json:"results"`
+	Corrected map[string]string `json:"corrected,omitempty" jsonschema:"words found in none of your vaults, and what was searched for instead"`
+	Relaxed   bool              `json:"relaxed" jsonschema:"true when no document matched every word, and these results match only some"`
+}
+
+func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (SearchOutput, string, error) {
+	res, err := s.kb.Search(ctx, g, knowledge.SearchRequest{
+		Query:             in.Query,
+		Vaults:            in.Vaults,
+		Path:              in.Path,
+		Tags:              in.Tags,
+		ExcludeDeprecated: in.ExcludeDeprecated,
+		Limit:             in.Limit,
+	})
+	if err != nil {
+		return SearchOutput{}, "", err
+	}
+	out := SearchOutput{Results: make([]SearchHit, 0, len(res.Hits)), Corrected: res.Corrected, Relaxed: res.Relaxed}
+	var b strings.Builder
+	for _, word := range slices.Sorted(maps.Keys(res.Corrected)) {
+		fmt.Fprintf(&b, "No document has %q; searched for %q instead.\n", oneLine(word), oneLine(res.Corrected[word]))
+	}
+	if res.Relaxed {
+		b.WriteString("No document matched every word; these match some of them.\n")
+	}
+	if len(res.Hits) == 0 {
+		b.WriteString("No documents found. Try other words, or list a vault to browse it.\n")
+	}
+	for _, h := range res.Hits {
+		out.Results = append(out.Results, SearchHit{
+			Vault: h.Source, Path: h.Path, Title: h.Title, Description: h.Description, Tags: h.Tags,
+			Status: h.Status, Updated: h.Updated, Version: h.Version, Snippet: h.Snippet, Score: h.Score,
+		})
+		status := ""
+		if h.Status != "" && h.Status != "active" {
+			status = " [" + oneLine(h.Status) + "]"
+		}
+		fmt.Fprintf(&b, "\n%s %s  %s%s  version %s\n%s\n",
+			oneLine(h.Source), oneLine(h.Path), oneLine(h.Title), status, h.Version, oneLine(h.Snippet))
+	}
+	return out, b.String(), nil
+}
+
+// ReadInput asks for a document, or part of it.
+type ReadInput struct {
+	Vault     string `json:"vault" jsonschema:"the vault, owner/repo"`
+	Path      string `json:"path" jsonschema:"the document's path in the vault, e.g. services/esi-proxy.md"`
+	FromLine  int    `json:"from_line,omitempty" jsonschema:"first line to return, counting from 1 at the top of the file. Default 1"`
+	LineCount int    `json:"line_count,omitempty" jsonschema:"how many lines to return. Default: as many as fit in 1,000 lines and 64 KiB"`
+}
+
+// Metadata is a document's frontmatter, as speki understands it.
+type Metadata struct {
+	Title       string         `json:"title"`
+	Description string         `json:"description,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	Aliases     []string       `json:"aliases,omitempty"`
+	Status      string         `json:"status"`
+	Related     []string       `json:"related,omitempty"`
+	Created     string         `json:"created,omitempty"`
+	Updated     string         `json:"updated,omitempty"`
+	Extra       map[string]any `json:"extra,omitempty" jsonschema:"frontmatter keys speki doesn't own"`
+}
+
+// Heading is an entry in a document's outline.
+type Heading struct {
+	Level int    `json:"level"`
+	Text  string `json:"text"`
+	Line  int    `json:"line"`
+}
+
+// ReadOutput is a document, or part of it.
+type ReadOutput struct {
+	Vault      string    `json:"vault"`
+	Path       string    `json:"path"`
+	Version    string    `json:"version"`
+	Metadata   Metadata  `json:"metadata"`
+	Content    string    `json:"content" jsonschema:"the raw file text, frontmatter included"`
+	FromLine   int       `json:"from_line"`
+	LineCount  int       `json:"line_count"`
+	TotalLines int       `json:"total_lines"`
+	Outline    []Heading `json:"outline,omitempty" jsonschema:"the document's headings, when content isn't the whole document"`
+	Warnings   []string  `json:"warnings,omitempty" jsonschema:"problems with the frontmatter, from changes made outside speki"`
+}
+
+func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadOutput, string, error) {
+	p, err := s.kb.Read(ctx, g, knowledge.ReadRequest{Vault: in.Vault, Path: in.Path, FromLine: in.FromLine, LineCount: in.LineCount})
+	if err != nil {
+		return ReadOutput{}, "", err
+	}
+	d := p.Document
+	out := ReadOutput{
+		Vault:   p.Vault,
+		Path:    d.Path,
+		Version: d.Version,
+		Metadata: Metadata{
+			Title: d.Title, Description: d.Description, Tags: d.Tags, Aliases: d.Aliases, Status: d.Status,
+			Related: d.Related, Created: d.Created, Updated: d.Updated, Extra: d.Extra,
+		},
+		Content:    p.Content,
+		FromLine:   p.FromLine,
+		LineCount:  p.LineCount,
+		TotalLines: p.TotalLines,
+		Warnings:   p.Warnings,
+	}
+	for _, h := range p.Outline {
+		out.Outline = append(out.Outline, Heading{Level: h.Level, Text: h.Text, Line: h.Line})
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s\n", oneLine(p.Vault), oneLine(d.Path))
+	last := p.FromLine + p.LineCount - 1
+	if p.LineCount == 0 {
+		last = p.FromLine - 1
+	}
+	fmt.Fprintf(&b, "version %s, lines %d-%d of %d\n", d.Version, p.FromLine, last, p.TotalLines)
+	for _, w := range p.Warnings {
+		fmt.Fprintf(&b, "warning: %s\n", oneLine(w))
+	}
+	if len(out.Outline) > 0 {
+		b.WriteString("outline:\n")
+		for _, h := range out.Outline {
+			fmt.Fprintf(&b, "  line %d: %s %s\n", h.Line, strings.Repeat("#", h.Level), oneLine(h.Text))
+		}
+	}
+	fmt.Fprintf(&b, "<document>\n%s", escapeMarkers(p.Content))
+	if !strings.HasSuffix(p.Content, "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString("</document>\n")
+	return out, b.String(), nil
+}
+
+// HistoryInput asks for the latest commits.
+type HistoryInput struct {
+	Vault string `json:"vault" jsonschema:"the vault, owner/repo"`
+	Path  string `json:"path,omitempty" jsonschema:"only commits that changed this document. Leave out for the whole vault"`
+	Limit int    `json:"limit,omitempty" jsonschema:"how many commits, 1 to 50. Default 10"`
+}
+
+// CommitSummary is one commit.
+type CommitSummary struct {
+	SHA     string `json:"sha"`
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+	Message string `json:"message" jsonschema:"the first line of the commit message"`
+	Client  string `json:"client,omitempty" jsonschema:"the MCP client that made the change through speki"`
+}
+
+// HistoryOutput is the latest commits, newest first.
+type HistoryOutput struct {
+	Commits []CommitSummary `json:"commits"`
+}
+
+func (s *Server) history(ctx context.Context, g *access.Grant, in HistoryInput) (HistoryOutput, string, error) {
+	commits, err := s.kb.History(ctx, g, knowledge.HistoryRequest{Vault: in.Vault, Path: in.Path, Limit: in.Limit})
+	if err != nil {
+		return HistoryOutput{}, "", err
+	}
+	out := HistoryOutput{Commits: make([]CommitSummary, 0, len(commits))}
+	var b strings.Builder
+	if len(commits) == 0 {
+		b.WriteString("No commits found.\n")
+	}
+	for _, c := range commits {
+		cs := CommitSummary{SHA: c.SHA, Author: c.Author, Date: c.Date.UTC().Format(time.RFC3339), Message: c.Message, Client: c.Client}
+		out.Commits = append(out.Commits, cs)
+		via := ""
+		if c.Client != "" {
+			via = " via " + oneLine(c.Client)
+		}
+		fmt.Fprintf(&b, "%s %s %s%s: %s\n", cs.SHA, cs.Date, oneLine(cs.Author), via, oneLine(cs.Message))
+	}
+	return out, b.String(), nil
+}

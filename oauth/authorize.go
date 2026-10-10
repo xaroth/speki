@@ -60,13 +60,13 @@ type transaction struct {
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if len(q.Get("client_id")) > maxClientID || len(q.Get("state")) > maxState {
-		s.errorPage(w, http.StatusBadRequest, "This sign-in link is broken.", "The request is too long.")
+		s.errorPage(w, r, http.StatusBadRequest, "This sign-in link is broken.", "The request is too long.")
 		return
 	}
 	c, err := s.clients.resolve(r.Context(), q.Get("client_id"))
 	if err != nil {
-		s.logger.Info("unknown client", "err", err)
-		s.errorPage(w, http.StatusBadRequest, "This program isn't known to speki.",
+		s.logger.InfoContext(r.Context(), "unknown client", "err", err)
+		s.errorPage(w, r, http.StatusBadRequest, "This program isn't known to speki.",
 			"It isn't registered, or its description couldn't be checked.")
 		return
 	}
@@ -75,7 +75,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		redirectURI = c.RedirectURIs[0]
 	}
 	if !c.redirectAllowed(redirectURI) {
-		s.errorPage(w, http.StatusBadRequest, "This sign-in link is broken.", "The redirect address doesn't match the program's registration.")
+		s.errorPage(w, r, http.StatusBadRequest, "This sign-in link is broken.", "The redirect address doesn't match the program's registration.")
 		return
 	}
 
@@ -102,11 +102,11 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	cookie := randomToken()
 	consent, err := s.keys.Seal(seal.Consent, consentValue{Request: req, CookieHash: hash(cookie)}, s.now().Add(consentLifetime))
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	setCookie(w, consentCookie, cookie, consentLifetime)
-	s.page(w, http.StatusOK, "consent.html", map[string]any{
+	s.page(w, r, http.StatusOK, "consent.html", map[string]any{
 		"Client":   c.Name,
 		"Host":     c.Host,
 		"Redirect": redirectHost(redirectURI),
@@ -121,14 +121,14 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxForm)
 	err := r.ParseForm()
 	if err != nil {
-		s.errorPage(w, http.StatusBadRequest, "This sign-in link is broken.", "The form couldn't be read.")
+		s.errorPage(w, r, http.StatusBadRequest, "This sign-in link is broken.", "The form couldn't be read.")
 		return
 	}
 	var cv consentValue
 	err = s.keys.Open(seal.Consent, r.PostForm.Get("consent"), &cv)
 	cookie, cerr := r.Cookie(consentCookie)
 	if err != nil || cerr != nil || subtle.ConstantTimeCompare([]byte(hash(cookie.Value)), []byte(cv.CookieHash)) != 1 {
-		s.errorPage(w, http.StatusBadRequest, "This sign-in expired.", "Start signing in again from your program.")
+		s.errorPage(w, r, http.StatusBadRequest, "This sign-in expired.", "Start signing in again from your program.")
 		return
 	}
 	clearCookie(w, consentCookie)
@@ -142,7 +142,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	tx := transaction{Request: cv.Request, Write: r.PostForm.Get("access") == "write", Verifier: verifier}
 	sealed, err := s.keys.Seal(seal.Transaction, tx, s.now().Add(consentLifetime))
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
 	setCookie(w, txCookie+nonce, sealed, consentLifetime)
@@ -173,7 +173,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		err = s.keys.Open(seal.Transaction, cookie.Value, &tx)
 	}
 	if nonce == "" || err != nil {
-		s.errorPage(w, http.StatusBadRequest, "This sign-in expired.", "Start signing in again from your program.")
+		s.errorPage(w, r, http.StatusBadRequest, "This sign-in expired.", "Start signing in again from your program.")
 		return
 	}
 	clearCookie(w, txCookie+nonce)
@@ -184,21 +184,21 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 
 	tokens, err := s.github.Exchange(r.Context(), s.cfg.GitHub, q.Get("code"), tx.Verifier, s.callbackURL())
 	if err != nil {
-		s.logger.Warn("GitHub code exchange failed", "err", err)
-		s.errorPage(w, http.StatusBadGateway, "GitHub didn't accept the sign-in.", "Try again from your program.")
+		s.logger.WarnContext(r.Context(), "GitHub code exchange failed", "err", err)
+		s.errorPage(w, r, http.StatusBadGateway, "GitHub didn't accept the sign-in.", "Try again from your program.")
 		return
 	}
 	user, err := s.github.Me(r.Context(), tokens.AccessToken)
 	if err != nil {
-		s.logger.Warn("GitHub user lookup failed", "err", err)
-		s.errorPage(w, http.StatusBadGateway, "GitHub didn't answer.", "Try again in a moment.")
+		s.logger.WarnContext(r.Context(), "GitHub user lookup failed", "err", err)
+		s.errorPage(w, r, http.StatusBadGateway, "GitHub didn't answer.", "Try again in a moment.")
 		return
 	}
 	if s.cfg.CheckUser != nil {
 		err = s.cfg.CheckUser(r.Context(), tokens.AccessToken)
 		if err != nil {
-			s.logger.Info("sign-in refused", "login", user.Login, "reason", err)
-			s.errorPage(w, http.StatusForbidden, "You can't use this speki.", err.Error())
+			s.logger.InfoContext(r.Context(), "sign-in refused", "login", user.Login, "reason", err)
+			s.errorPage(w, r, http.StatusForbidden, "You can't use this speki.", err.Error())
 			return
 		}
 	}
@@ -219,10 +219,10 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		SignedIn:      s.now(),
 	}, s.now().Add(codeLifetime))
 	if err != nil {
-		s.serverError(w, err)
+		s.serverError(w, r, err)
 		return
 	}
-	s.logger.Info("signed in", "login", user.Login, "client", tx.Request.ClientName, "write", tx.Write)
+	s.logger.InfoContext(r.Context(), "signed in", "login", user.Login, "client", tx.Request.ClientName, "write", tx.Write)
 	redirectTo(w, r, tx.Request.RedirectURI, url.Values{"code": {code}, "state": {tx.Request.State}, "iss": {s.cfg.Issuer}})
 }
 
@@ -252,7 +252,7 @@ func redirectTo(w http.ResponseWriter, r *http.Request, base string, params url.
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
-func (s *Server) page(w http.ResponseWriter, status int, name string, data any) {
+func (s *Server) page(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -261,17 +261,17 @@ func (s *Server) page(w http.ResponseWriter, status int, name string, data any) 
 	w.WriteHeader(status)
 	err := templates.ExecuteTemplate(w, name, data)
 	if err != nil {
-		s.logger.Error("rendering page", "page", name, "err", err)
+		s.logger.ErrorContext(r.Context(), "rendering page", "page", name, "err", err)
 	}
 }
 
-func (s *Server) errorPage(w http.ResponseWriter, status int, title, detail string) {
-	s.page(w, status, "error.html", map[string]string{"Title": title, "Detail": detail})
+func (s *Server) errorPage(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
+	s.page(w, r, status, "error.html", map[string]string{"Title": title, "Detail": detail})
 }
 
-func (s *Server) serverError(w http.ResponseWriter, err error) {
-	s.logger.Error("sign-in failed", "err", err)
-	s.errorPage(w, http.StatusInternalServerError, "Something went wrong.", "Try again in a moment.")
+func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {
+	s.logger.ErrorContext(r.Context(), "sign-in failed", "err", err)
+	s.errorPage(w, r, http.StatusInternalServerError, "Something went wrong.", "Try again in a moment.")
 }
 
 func setCookie(w http.ResponseWriter, name, value string, maxAge time.Duration) {

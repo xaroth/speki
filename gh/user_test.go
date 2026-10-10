@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,6 +61,17 @@ func fakeUserGitHub(t *testing.T) *httptest.Server {
 				map[string]any{"id": 100, "permissions": map[string]any{"pull": true, "push": true}},
 				map[string]any{"id": 101, "permissions": map[string]any{"pull": true}},
 			}})
+		case "/repos/ours/kb/commits":
+			q := r.URL.Query()
+			if q.Get("sha") != "main" || q.Get("path") != "a.md" || q.Get("per_page") != "2" {
+				t.Errorf("commits query = %s", r.URL.RawQuery)
+			}
+			write(http.StatusOK, []any{
+				map[string]any{"sha": "c2", "author": map[string]any{"login": "octocat"},
+					"commit": map[string]any{"message": "Update a.md", "author": map[string]any{"name": "Octo", "date": "2026-10-09T14:02:11Z"}}},
+				map[string]any{"sha": "c1", "author": nil,
+					"commit": map[string]any{"message": "Create a.md", "author": map[string]any{"name": "Someone", "date": "2026-10-08T10:00:00Z"}}},
+			})
 		default:
 			write(http.StatusNotFound, map[string]any{"message": "Not Found"})
 		}
@@ -141,5 +153,24 @@ func TestUserLookups(t *testing.T) {
 	want := []RepoAccess{{RepoID: 100, Pull: true, Push: true}, {RepoID: 101, Pull: true}}
 	if diff := cmp.Diff(want, repos); diff != "" {
 		t.Errorf("repositories (-want +got):\n%s", diff)
+	}
+}
+
+func TestCommits(t *testing.T) {
+	c, _ := newUserTestClient(t)
+	got, err := c.Commits(t.Context(), "ghu_good", "ours/kb", "main", "a.md", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Commit{
+		{SHA: "c2", Author: "octocat", Date: time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC), Message: "Update a.md"},
+		{SHA: "c1", Author: "Someone", Date: time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC), Message: "Create a.md"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("commits (-want +got):\n%s", diff)
+	}
+	_, err = c.Commits(t.Context(), "ghu_revoked", "ours/kb", "main", "", 2)
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("revoked token: %v", err)
 	}
 }

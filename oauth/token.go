@@ -96,7 +96,7 @@ func (s *Server) codeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	fresh, err := s.store.SetNX(r.Context(), "code:"+c.ID, []byte{1}, usedCodeMemory)
 	if err != nil {
-		s.tokenServerError(w, err)
+		s.tokenServerError(w, r, err)
 		return
 	}
 	if !fresh {
@@ -105,7 +105,7 @@ func (s *Server) codeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.issue(c.User, c.Tokens, c.Scopes, c.ClientID, c.ClientName, c.SignedIn)
 	if err != nil {
-		s.tokenServerError(w, err)
+		s.tokenServerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -146,7 +146,7 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 	for {
 		resp, found, err := s.refreshResult(ctx, key, old)
 		if err != nil {
-			s.tokenServerError(w, err)
+			s.tokenServerError(w, r, err)
 			return
 		}
 		if found {
@@ -155,7 +155,7 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 		}
 		locked, err := s.store.SetNX(ctx, "refresh-lock:"+key, []byte{1}, refreshLockTime)
 		if err != nil {
-			s.tokenServerError(w, err)
+			s.tokenServerError(w, r, err)
 			return
 		}
 		if locked {
@@ -183,7 +183,7 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refres
 	// Another request may have finished between our look and our lock.
 	resp, found, err := s.refreshResult(ctx, key, old)
 	if err != nil {
-		s.tokenServerError(w, err)
+		s.tokenServerError(w, r, err)
 		return
 	}
 	if found {
@@ -200,7 +200,7 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refres
 		return
 	}
 	if err != nil {
-		s.logger.Warn("GitHub refresh failed", "err", err)
+		s.logger.WarnContext(ctx, "GitHub refresh failed", "err", err)
 		w.Header().Set("Retry-After", "5")
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "GitHub didn't answer; try again")
 		return
@@ -208,12 +208,12 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refres
 	user := gh.User{ID: rv.UserID, Login: rv.Login}
 	resp, err = s.issue(user, tokens, scopes, rv.ClientID, rv.Client, rv.SignedIn)
 	if err != nil {
-		s.tokenServerError(w, err)
+		s.tokenServerError(w, r, err)
 		return
 	}
 	err = s.keepRefreshResult(ctx, key, old, resp)
 	if err != nil {
-		s.logger.Warn("keeping refresh result failed", "err", err)
+		s.logger.WarnContext(ctx, "keeping refresh result failed", "err", err)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -338,7 +338,7 @@ func resultCipher(oldToken string, data []byte, encrypt bool) ([]byte, error) {
 	return aead.Open(nil, data[:aead.NonceSize()], data[aead.NonceSize():], nil)
 }
 
-func (s *Server) tokenServerError(w http.ResponseWriter, err error) {
-	s.logger.Error("token request failed", "err", err)
+func (s *Server) tokenServerError(w http.ResponseWriter, r *http.Request, err error) {
+	s.logger.ErrorContext(r.Context(), "token request failed", "err", err)
 	oauthError(w, http.StatusInternalServerError, "server_error", "try again")
 }

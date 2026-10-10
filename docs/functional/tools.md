@@ -156,18 +156,18 @@ sets `truncated`. Hitting the time limit is a `timeout` error.
   "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1",
   "metadata": { "title": "ESI proxy", "tags": ["esi", "proxy"], "status": "active" },
   "content": "---\ntitle: ESI proxy\n...",
-  "from_line": 1, "line_count": 212, "total_lines": 212,
-  "outline": null,
-  "warnings": [] }
+  "from_line": 1, "line_count": 212, "total_lines": 212 }
 ```
 
 `content` is the raw file, frontmatter included, so an agent can change it with `edit`. Line numbers count
 from the top of the file.
 
-When the document is longer than what was returned, `outline` lists its headings with line numbers, so the
-agent can read the part it needs.
+When the document is longer than what was returned, `outline` lists its headings with line numbers (the
+first 200), so the agent can read the part it needs. Otherwise the key is left out. A single line longer
+than 64 KiB is cut, with a warning.
 
-`warnings` lists frontmatter problems in documents changed outside speki.
+`warnings` lists frontmatter problems in documents changed outside speki, and is left out when there are
+none.
 
 ## write
 

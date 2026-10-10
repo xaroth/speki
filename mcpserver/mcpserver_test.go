@@ -49,7 +49,7 @@ func (fakeResolver) Resolve(_ context.Context, u access.User) (*access.Grant, er
 }
 
 func newTestServer() http.Handler {
-	return New(fakeAuth{}, fakeResolver{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil))).Handler()
+	return New(fakeAuth{}, fakeResolver{}, &fakeKB{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil))).Handler()
 }
 
 const initialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`

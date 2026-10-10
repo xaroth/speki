@@ -153,7 +153,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.keys.Seal(seal.Client, registration{Name: name, RedirectURIs: req.RedirectURIs}, time.Time{})
 	if err != nil {
-		s.logger.Error("sealing client registration", "err", err)
+		s.logger.ErrorContext(r.Context(), "sealing client registration", "err", err)
 		oauthError(w, http.StatusInternalServerError, "server_error", "registration failed")
 		return
 	}
