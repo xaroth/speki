@@ -41,8 +41,8 @@ func splitFrontmatter(raw []byte) (*frontmatter, int, error) {
 		l, after := line(raw, pos)
 		if t := trimEOL(l); t == "---" || t == "..." {
 			content := raw[next:pos]
-			if len(content) > MaxFrontmatterSize {
-				return nil, 0, fmt.Errorf("%w: frontmatter is larger than %d bytes", ErrUnusable, MaxFrontmatterSize)
+			if len(content) > maxFrontmatterSize {
+				return nil, 0, fmt.Errorf("%w: frontmatter is larger than %d bytes", errUnusable, maxFrontmatterSize)
 			}
 			f := &frontmatter{
 				open:    string(raw[:next]),

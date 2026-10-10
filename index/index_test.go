@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -901,5 +902,20 @@ func TestFillError(t *testing.T) {
 	}
 	if err := fillError(t.Context(), nil, readErr); !errors.Is(err, readErr) {
 		t.Errorf("with only a read error: %v", err)
+	}
+}
+
+// Close can race a build and applies: the index stays consistent and doesn't start work after closing.
+func TestCloseRacesWork(t *testing.T) {
+	for range 20 {
+		x := newIndex(t, fleet)
+		var wg sync.WaitGroup
+		wg.Go(func() { _ = x.Build(t.Context(), "c2", changes(fleet)) })
+		wg.Go(func() { _ = x.Apply(t.Context(), "c3", nil) })
+		wg.Go(x.Close)
+		wg.Wait()
+		if err := x.Build(t.Context(), "c4", changes(fleet)); !errors.Is(err, ErrClosed) {
+			t.Fatalf("Build after Close: %v", err)
+		}
 	}
 }

@@ -25,7 +25,7 @@ func (x *Index) reloadVocabulary() {
 	x.vocabPending = true
 	x.vocabMu.Unlock()
 
-	x.background.Go(func() {
+	x.goBackground(func() {
 		x.vocabLoad.Lock()
 		defer x.vocabLoad.Unlock()
 		x.vocabMu.Lock()

@@ -16,15 +16,14 @@ import (
 	"github.com/eve-online-tools/speki/vault"
 )
 
-// Reasons a user is turned away.
-var (
-	// ErrUnauthorized means GitHub rejected the user's token: it expired or was revoked.
-	ErrUnauthorized = errors.New("GitHub no longer accepts this sign-in")
-	// ErrNotMember means the user isn't an active member of any required organisation.
-	ErrNotMember = errors.New("you aren't a member of an organisation this speki requires")
-	// ErrNoVaults means the user can't read any vault.
-	ErrNoVaults = errors.New("you can't read any vault on this speki")
-)
+// ErrUnauthorized means GitHub rejected the user's token: it expired or was revoked.
+var ErrUnauthorized = errors.New("GitHub no longer accepts this sign-in")
+
+// ErrNotMember means the user isn't an active member of any required organisation.
+var ErrNotMember = errors.New("you aren't a member of an organisation this speki requires")
+
+// ErrNoVaults means the user can't read any vault.
+var ErrNoVaults = errors.New("you can't read any vault on this speki")
 
 // User is a signed-in user, from their speki token.
 type User struct {

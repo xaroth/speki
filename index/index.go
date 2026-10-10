@@ -40,6 +40,7 @@ type Index struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	background sync.WaitGroup
+	lifeMu     sync.Mutex // orders closing against starting background work and swapping generations
 	closed     atomic.Bool
 }
 
@@ -107,9 +108,12 @@ func (x *Index) Commit() string {
 // Close waits for background work, then closes the index, keeping its file for the next Open. It must
 // not be used afterwards.
 func (x *Index) Close() {
+	x.lifeMu.Lock()
 	if x.closed.Swap(true) {
+		x.lifeMu.Unlock()
 		return
 	}
+	x.lifeMu.Unlock()
 	x.cancel()
 	x.background.Wait()
 	x.current.Load().retire(false)
@@ -130,10 +134,26 @@ func (x *Index) acquire() (*generation, error) {
 }
 
 // swap makes g current and retires the previous generation, which is closed and deleted once its last
-// reader is done.
-func (x *Index) swap(g *generation) {
+// reader is done. After Close it closes g instead, keeping its file for the next Open.
+func (x *Index) swap(g *generation) error {
+	x.lifeMu.Lock()
+	defer x.lifeMu.Unlock()
+	if x.closed.Load() {
+		g.retire(false)
+		return ErrClosed
+	}
 	old := x.current.Swap(g)
 	old.retire(true)
+	return nil
+}
+
+// goBackground runs work in the background, tracked for Close; after Close it doesn't run it.
+func (x *Index) goBackground(work func()) {
+	x.lifeMu.Lock()
+	defer x.lifeMu.Unlock()
+	if !x.closed.Load() {
+		x.background.Go(work)
+	}
 }
 
 // generation is one index file with its connections.
@@ -239,27 +259,36 @@ func openGeneration(ctx context.Context, dir string, n int) (*generation, error)
 	if err != nil {
 		return nil, unusable(err)
 	}
-	var check string
-	err = g.writer.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&check)
-	if err == nil && check != "ok" {
-		err = fmt.Errorf("%w: quick_check: %s", errUnusable, check)
-	}
-	var version, commit string
-	if err == nil {
-		err = g.writer.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'schema'").Scan(&version)
-	}
-	if err == nil && version != schemaVersion {
-		err = fmt.Errorf("%w: schema version %s, want %s", errUnusable, version, schemaVersion)
-	}
-	if err == nil {
-		err = g.writer.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'commit'").Scan(&commit)
-	}
+	commit, err := checkGeneration(ctx, g.writer)
 	if err != nil {
 		g.close(false)
 		return nil, unusable(err)
 	}
 	g.commit.Store(commit)
 	return g, nil
+}
+
+// checkGeneration checks a generation's file and schema version, and returns its commit.
+func checkGeneration(ctx context.Context, db *sql.DB) (string, error) {
+	var check string
+	err := db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&check)
+	if err != nil {
+		return "", err
+	}
+	if check != "ok" {
+		return "", fmt.Errorf("%w: quick_check: %s", errUnusable, check)
+	}
+	var version string
+	err = db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'schema'").Scan(&version)
+	if err != nil {
+		return "", err
+	}
+	if version != schemaVersion {
+		return "", fmt.Errorf("%w: schema version %s, want %s", errUnusable, version, schemaVersion)
+	}
+	var commit string
+	err = db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'commit'").Scan(&commit)
+	return commit, err
 }
 
 // unusable marks the errors that mean a generation is unusable for good.
@@ -284,19 +313,26 @@ func createGeneration(ctx context.Context, dir string, n int) (*generation, erro
 	if err != nil {
 		return nil, err
 	}
-	err = initSchema(ctx, g.writer)
-	if err == nil {
-		_, err = g.writer.ExecContext(ctx, triggers)
-	}
-	if err == nil {
-		err = recordCommit(ctx, g.writer, "")
-	}
+	err = initEmpty(ctx, g.writer)
 	if err != nil {
 		g.close(true)
-		return nil, err
+		return nil, fmt.Errorf("create generation %d: %w", n, err)
 	}
 	g.commit.Store("")
 	return g, nil
+}
+
+// initEmpty sets up an empty index in db: the schema, the triggers and no commit.
+func initEmpty(ctx context.Context, db *sql.DB) error {
+	err := initSchema(ctx, db)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, triggers)
+	if err != nil {
+		return err
+	}
+	return recordCommit(ctx, db, "")
 }
 
 type execer interface {

@@ -143,9 +143,9 @@ func names(vs []Vault) []string {
 
 func mustDiscover(t *testing.T, r *Registry) Changes {
 	t.Helper()
-	c, err := r.Discover(t.Context())
+	c, err := r.discover(t.Context())
 	if err != nil {
-		t.Fatalf("Discover: %v", err)
+		t.Fatalf("discover: %v", err)
 	}
 	return c
 }
@@ -214,7 +214,7 @@ func TestDiscoverRemovalRules(t *testing.T) {
 			mustDiscover(t, r)
 
 			tt.change(f)
-			c, err := r.Discover(t.Context())
+			c, err := r.discover(t.Context())
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("err = %v, want error %v", err, tt.wantErr)
@@ -239,7 +239,7 @@ func TestOneInstallationFailingDoesNotStopOthers(t *testing.T) {
 	f.reposErr[1] = errors.New("502")
 	f.files["stranger/kb"] = "title: Renamed\ndescription: Knowledge.\n"
 	f.repos[2][0].PushedAt = time.Now()
-	c, err := r.Discover(t.Context())
+	c, err := r.discover(t.Context())
 
 	if err == nil {
 		t.Error("no error for the failed installation")

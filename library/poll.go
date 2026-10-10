@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -116,12 +117,10 @@ func (l *Library) inBackground(ctx context.Context, v *Vault, work func(context.
 
 // rebuild brings a vault up to date the slow way: a full rebuild, or a fresh clone first.
 func (l *Library) rebuild(ctx context.Context, v *Vault) {
-	select {
-	case l.opening <- struct{}{}:
-		defer func() { <-l.opening }()
-	case <-ctx.Done():
+	if l.opening.Acquire(ctx, 1) != nil {
 		return
 	}
+	defer l.opening.Release(1)
 	if v.syncMu.LockContext(ctx) != nil {
 		return
 	}
@@ -140,8 +139,9 @@ func stallContext(ctx context.Context, timeout time.Duration) (context.Context, 
 	last.Store(time.Now().UnixNano())
 	touch := func() { last.Store(time.Now().UnixNano()) }
 	done := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(min(timeout/4, 10*time.Second))
+	var watcher sync.WaitGroup
+	watcher.Go(func() {
+		ticker := time.NewTicker(max(min(timeout/4, 10*time.Second), time.Millisecond))
 		defer ticker.Stop()
 		for {
 			select {
@@ -156,10 +156,11 @@ func stallContext(ctx context.Context, timeout time.Duration) (context.Context, 
 				}
 			}
 		}
-	}()
+	})
 	stop := func() {
 		close(done)
 		cancel()
+		watcher.Wait()
 	}
 	return ctx, touch, stop
 }

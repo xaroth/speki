@@ -104,8 +104,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	case !validChallenge(req.CodeChallenge) || q.Get("code_challenge_method") != "S256":
 		s.redirectError(w, r, req, "invalid_request", "PKCE with S256 is required")
 		return
-	case q.Get("resource") != "" && q.Get("resource") != s.Resource():
-		s.redirectError(w, r, req, "invalid_target", "tokens are only issued for "+s.Resource())
+	case q.Get("resource") != "" && q.Get("resource") != s.resource():
+		s.redirectError(w, r, req, "invalid_target", "tokens are only issued for "+s.resource())
 		return
 	}
 
@@ -273,7 +273,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		CodeChallenge: tx.Request.CodeChallenge,
 		RedirectGiven: tx.Request.RedirectGiven,
 		Scopes:        scopes,
-		Resource:      s.Resource(),
+		Resource:      s.resource(),
 		SignedIn:      s.now(),
 	}, s.now().Add(codeLifetime))
 	if err != nil {

@@ -80,8 +80,8 @@ func (d *Document) Touch(now, created time.Time) ([]byte, error) {
 		closing = trimEOL(closing) + f.eol
 	}
 
-	if len(encoded) > MaxFrontmatterSize {
-		return nil, fmt.Errorf("%w: the frontmatter would be larger than %d bytes once speki sets the dates", ErrTooLarge, MaxFrontmatterSize)
+	if len(encoded) > maxFrontmatterSize {
+		return nil, fmt.Errorf("%w: the frontmatter would be larger than %d bytes once speki sets the dates", ErrTooLarge, maxFrontmatterSize)
 	}
 	var out bytes.Buffer
 	out.WriteString(f.open)
