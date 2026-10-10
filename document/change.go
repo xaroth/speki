@@ -17,7 +17,7 @@ import (
 func Check(current, next *Document) error {
 	var problems []error
 	if len(next.raw) > MaxSize {
-		problems = append(problems, fmt.Errorf("document is larger than %d bytes", MaxSize))
+		problems = append(problems, fmt.Errorf("%w: the document is larger than %d bytes", ErrTooLarge, MaxSize))
 	}
 	if next.front != nil && next.front.broken != "" {
 		// Even when the current document has the same problem: Touch must rewrite the block.
@@ -82,7 +82,7 @@ func (d *Document) Touch(now time.Time, created bool) ([]byte, error) {
 	}
 
 	if len(encoded) > MaxFrontmatterSize {
-		return nil, fmt.Errorf("frontmatter would be larger than %d bytes once speki sets the dates", MaxFrontmatterSize)
+		return nil, fmt.Errorf("%w: the frontmatter would be larger than %d bytes once speki sets the dates", ErrTooLarge, MaxFrontmatterSize)
 	}
 	var out bytes.Buffer
 	out.WriteString(f.open)
@@ -90,7 +90,7 @@ func (d *Document) Touch(now time.Time, created bool) ([]byte, error) {
 	out.WriteString(closing)
 	out.Write(body)
 	if out.Len() > MaxSize {
-		return nil, fmt.Errorf("document would be larger than %d bytes once speki sets the dates", MaxSize)
+		return nil, fmt.Errorf("%w: the document would be larger than %d bytes once speki sets the dates", ErrTooLarge, MaxSize)
 	}
 	return out.Bytes(), nil
 }
@@ -119,7 +119,7 @@ func encodeStable(doc *yaml.Node) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "", errors.New("frontmatter: its comments can't be kept in place; move or remove them")
+	return "", fmt.Errorf("%w; move or remove them", ErrUnstable)
 }
 
 func encode(doc *yaml.Node) (string, error) {

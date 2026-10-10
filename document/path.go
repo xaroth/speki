@@ -29,9 +29,10 @@ func Fold(p string) string {
 
 // CheckPath reports whether p is a path speki may create, and returns it in NFC. existing looks up a
 // folded path (see Fold) and returns the path git has for it, if any. It's called for the file and each
-// of its folders, so "Runbooks/x.md" is refused when "runbooks/" exists. Where git has a folder or file
-// that differs only in Unicode normalisation (folders made on macOS are often NFD), the returned path uses
-// git's spelling instead, so the document lands in that folder. A nil existing skips that check.
+// of its folders, so "Runbooks/x.md" is refused when "runbooks/" exists, and so is a file that exists in
+// another normalisation. Where git has a folder that differs only in Unicode normalisation (folders made on
+// macOS are often NFD), the returned path uses git's spelling of that folder instead, so the document lands
+// in it. A nil existing skips that check.
 func CheckPath(p string, existing func(folded string) (string, bool)) (string, error) {
 	if !utf8.ValidString(p) {
 		return "", errors.New("path: not valid UTF-8")
@@ -69,13 +70,22 @@ func CheckPath(p string, existing func(folded string) (string, bool)) (string, e
 		}
 		prefix := strings.Join(segments[:i+1], "/")
 		have, ok := existing(Fold(prefix))
+		folder := i < len(segments)-1
 		switch {
 		case !ok || have == prefix:
-		case norm.NFC.String(have) == norm.NFC.String(prefix): // the same name, stored decomposed: use git's bytes
-			copy(segments, strings.Split(have, "/"))
+		case folder && norm.NFC.String(have) == norm.NFC.String(prefix):
+			copy(segments, strings.Split(have, "/")) // the same folder, stored decomposed: use git's bytes
+		case norm.NFC.String(have) == norm.NFC.String(prefix):
+			return "", fmt.Errorf("path %q: %q already exists", p, have)
 		default:
 			return "", fmt.Errorf("path %q: %q already exists and differs only in letter case", p, have)
 		}
 	}
-	return strings.Join(segments, "/"), nil
+	p = strings.Join(segments, "/")
+	for s := range strings.SplitSeq(p, "/") { // git's spelling of a folder may be longer
+		if len(s) > maxSegmentBytes {
+			return "", fmt.Errorf("path %q: each part may be at most %d bytes", p, maxSegmentBytes)
+		}
+	}
+	return p, nil
 }

@@ -74,7 +74,7 @@ func trimEOL(s string) string {
 // decode parses the block into a YAML node tree, or records why it can't be used.
 func (f *frontmatter) decode() {
 	// Decode with plain \n line endings: comment nodes would otherwise keep a \r that Touch doubles
-	// when it writes \r\n back.
+	// when it writes \r\n back. A lone \r is a line break in YAML too, so no value changes.
 	content := bytes.ReplaceAll(f.content, []byte("\r\n"), []byte("\n"))
 	content = bytes.ReplaceAll(content, []byte("\r"), []byte("\n"))
 	var doc yaml.Node

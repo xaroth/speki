@@ -55,7 +55,7 @@ func TestCheckPath(t *testing.T) {
 		{path: "CAFÉ.md", wantErr: "café.md"},
 		{path: "menü/new.md", want: nfd("menü") + "/new.md"},      // the folder git stores in NFD
 		{path: nfd("menü/new.md"), want: nfd("menü") + "/new.md"}, // given in NFD too
-		{path: "menü/Brötchen.md", want: nfd("menü/Brötchen.md")}, // an existing NFD file: git's bytes
+		{path: "menü/Brötchen.md", wantErr: "already exists"},     // an existing NFD file
 		{path: "Menü/new.md", wantErr: "letter case"},
 	}
 	for _, tt := range tests {

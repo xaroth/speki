@@ -121,7 +121,8 @@ func CheckPath(p string, existing func(folded string) (string, bool)) (string, e
 ```
 
 The rules are in [documents.md](../functional/documents.md). `CheckPath` is for new paths. It normalises
-to NFC and returns an error naming the rule that failed, which goes straight to the agent. A folder or
-file name that git has in another normalisation is returned with git's bytes, so `café/new.md` lands in
-an existing NFD `café/`. A name that differs in letter case is refused. Existing documents keep the exact
+to NFC and returns an error naming the rule that failed, which goes straight to the agent. A folder name
+that git has in another normalisation is returned with git's bytes, so `café/new.md` lands in an existing
+NFD `café/`. A file that exists in another normalisation, or a name that differs in letter case, is
+refused. Existing documents keep the exact
 path git has, even when it isn't NFC.

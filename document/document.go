@@ -90,6 +90,12 @@ type Document struct {
 // ErrUnusable is returned by Parse for files speki can't index at all.
 var ErrUnusable = errors.New("unusable document")
 
+// ErrTooLarge is returned by Check and Touch for a document or frontmatter over its size limit.
+var ErrTooLarge = errors.New("too large")
+
+// ErrUnstable is returned by Touch when the frontmatter's comments can't be kept in place.
+var ErrUnstable = errors.New("frontmatter comments can't be kept in place")
+
 // Parse reads a document. It fails only when the file can't be used at all: it isn't UTF-8, or its
 // frontmatter block is too large. Every other problem ends up in Warnings.
 func Parse(docPath string, raw []byte) (*Document, error) {

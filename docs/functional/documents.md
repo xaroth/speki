@@ -35,8 +35,8 @@ A path speki will write:
 - has segments of at most 255 bytes and at most 10 folders deep
 - doesn't differ only in letter case from an existing path
 
-New paths are stored in Unicode NFC. Where the vault already has a folder or file with the same name in
-another normalisation (folders made on macOS are often stored decomposed), speki uses the vault's
+New paths are stored in Unicode NFC, and a new file can't have the same name as an existing one in another
+normalisation. Where the vault already has a folder with the same name in another normalisation (folders made on macOS are often stored decomposed), speki uses the vault's
 spelling, so the document lands in that folder rather than in a look-alike next to it. Lowercase names with `-` between words are the convention, but speki doesn't enforce it.
 
 ## Frontmatter fields

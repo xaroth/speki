@@ -3,6 +3,7 @@ package document
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -260,8 +261,12 @@ func TestTouchStaysWithinLimits(t *testing.T) {
 	if err := Check(nil, d); err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if _, err := d.Touch(now, true); err == nil {
-		t.Error("Touch made a document larger than MaxSize")
+	if _, err := d.Touch(now, true); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("Touch past MaxSize: %v", err)
+	}
+	big := mustParse(t, "a.md", []byte(head+strings.Repeat("x", MaxSize)))
+	if err := Check(nil, big); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("Check past MaxSize: %v", err)
 	}
 }
 

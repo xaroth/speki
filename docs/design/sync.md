@@ -141,8 +141,9 @@ update) for every write instead. Nothing outside
 
 Before committing, `knowledge` checks the target path against the mirror at the expected head with
 `Lookup`: a path that exists (as any kind of entry), or that differs only in letter case from an existing
-file or folder, is refused for creation. A name that differs only in Unicode normalisation takes git's
-spelling (see `CheckPath` in [document.md](document.md)), and then counts as existing if it's a file. When changing an existing file,
+file or folder, is refused for creation, and so is a file that differs only in Unicode normalisation. A
+folder that differs only in normalisation takes git's spelling (see `CheckPath` in
+[document.md](document.md)). When changing an existing file,
 speki writes back to the exact path bytes git has.
 
 Commit messages: the agent's message, or a default, is cut to one line of at most 200 characters. Lines that

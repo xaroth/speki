@@ -23,7 +23,8 @@ import (
 	"github.com/eve-online-tools/speki/document"
 )
 
-// MaxFileSize is the largest file speki reads from a repository: the largest document.
+// MaxFileSize is the largest file speki reads from a repository: the largest document. (gitsync may
+// import document; document must never import gitsync.)
 const MaxFileSize = document.MaxSize
 
 // lfsPointer starts every git LFS pointer file. A clone has only the pointer, not the content.
