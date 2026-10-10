@@ -234,11 +234,12 @@ generation's file.
       vaults are attached.
    4. `PRAGMA temp_store = MEMORY` and `cache_size = -8000` (8 MB) before the views, because changing
       `temp_store` throws the temp database away, views included. `PRAGMA query_only = 1` after them.
-   5. Limits: `SQLITE_LIMIT_ATTACHED` to the number attached, `LENGTH` 1,000,000, `SQL_LENGTH` 100,000,
-      `EXPR_DEPTH` 50, `COMPOUND_SELECT` 10, `LIKE_PATTERN_LENGTH` 100.
+   5. Limits: `SQLITE_LIMIT_ATTACHED` to the number attached, `LENGTH` 100,000, `COLUMN` 50,
+      `SQL_LENGTH` 100,000, `EXPR_DEPTH` 50, `COMPOUND_SELECT` 10, `LIKE_PATTERN_LENGTH` 100.
    6. Register the authorizer (below).
-3. Before any of that, reject the SQL if anything but whitespace and comments follows the first
-   statement. This check is speki's own scanner (strings, quoted names, both comment styles), because
+3. Before any of that, reject the SQL unless its first word is `SELECT`, `WITH` or `VALUES`, and if
+   anything but whitespace and comments follows the first statement. The first-word rule also covers
+   statements the authorizer never sees, such as `VACUUM` and `EXPLAIN`. This check is speki's own scanner (strings, quoted names, both comment styles), because
    go-sqlite3 runs every `;`-separated statement and returns the last one's rows.
 4. Run it with a context that ends at the 3-second limit. The driver interrupts SQLite when the context ends.
    This is the only bound on running time: SQLite has no limit on instructions executed.
@@ -246,9 +247,13 @@ generation's file.
 6. Close the connection, marked bad (`driver.ErrBadConn` from `Raw`) so the pool discards it. The idle
    limit alone isn't enough: `database/sql` hands a released connection straight to a waiting caller.
 
-Memory: `sqlite3_soft_heap_limit64` is set once for the process (512 MiB by default), so SQLite starts
-releasing cache memory under pressure, and four sandbox connections with 8 MB caches and in-memory temp
-storage stay within that. A query that needs more fails with `too_large`.
+Memory: the same C file sets `sqlite3_soft_heap_limit64` (512 MiB), so SQLite releases cache memory under
+pressure, and `sqlite3_hard_heap_limit64` (1 GiB), so an allocation past that fails with `SQLITE_NOMEM`.
+The hard limit is what stops one query from growing the process: in-memory sorts and recursive queries
+don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes within the time limit. A
+query that hits it fails with `too_large`. Both limits are for the whole process; index builds stay far
+below them. The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
+result check sees it.
 
 Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,
 `fts_config` and the content table `documents`, and run `PRAGMA data_version`. Those are on the lists
@@ -272,7 +277,7 @@ Allow:
 | Action | Condition |
 |---|---|
 | `SQLITE_SELECT` | always |
-| `SQLITE_READ` | a table of the index schema (`documents`, `tags`, `links`, `headings`, `resolved_links`) or one of the `fts` shadow tables (`fts_data`, `fts_idx`, `fts_config`, `fts_docsize`), in `v0`..`v9`; the five `temp` views by name; or an empty database name (CTE references) |
+| `SQLITE_READ` | `json_each` and `json_tree` in `main` (table-valued functions); a table of the index schema (`documents`, `tags`, `links`, `headings`, `resolved_links`) or one of the `fts` shadow tables (`fts_data`, `fts_idx`, `fts_config`, `fts_docsize`), in `v0`..`v9`; the five `temp` views by name; or an empty database name (CTE references) |
 | `SQLITE_FUNCTION` | function on the allow-list |
 | `SQLITE_RECURSIVE` | always. The time limit bounds it |
 | `SQLITE_PRAGMA` | `data_version` with no argument. FTS5 runs it internally |

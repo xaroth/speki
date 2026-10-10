@@ -8,6 +8,7 @@ int sqlite3_auto_extension(void (*entry)(void));
 int sqlite3_db_config(sqlite3 *db, int op, ...);
 const char *sqlite3_db_filename(sqlite3 *db, const char *name);
 long long sqlite3_soft_heap_limit64(long long n);
+long long sqlite3_hard_heap_limit64(long long n);
 
 #define SPEKI_DBCONFIG_DEFENSIVE 1010
 #define SPEKI_DBCONFIG_TRUSTED_SCHEMA 1017
@@ -34,8 +35,13 @@ import (
 	"sync"
 )
 
-// softHeapLimit is how much memory SQLite aims to stay under, in bytes, before it frees cache.
-const softHeapLimit = 512 << 20
+// SQLite's memory limits, for the whole process. Above the soft limit SQLite frees cache; at the hard
+// limit an allocation fails with SQLITE_NOMEM. The hard limit is what stops one query from taking the
+// process down: in-memory sorts and recursive queries can't spill to disk. Index builds stay far below it.
+const (
+	softHeapLimit = 512 << 20
+	hardHeapLimit = 1 << 30
+)
 
 var harden = sync.OnceValue(func() error {
 	rc := C.spekiRegisterHarden()
@@ -43,5 +49,9 @@ var harden = sync.OnceValue(func() error {
 		return fmt.Errorf("register the sandbox hardening hook: sqlite error %d", rc)
 	}
 	C.sqlite3_soft_heap_limit64(softHeapLimit)
+	setHardHeapLimit(hardHeapLimit)
 	return nil
 })
+
+// setHardHeapLimit changes the hard limit. Tests lower it to try a query that runs into it.
+func setHardHeapLimit(n int64) { C.sqlite3_hard_heap_limit64(C.longlong(n)) }

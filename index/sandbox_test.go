@@ -86,6 +86,16 @@ func TestQueryExamples(t *testing.T) {
 			want: "[runbooks/deploy.md Deploy 1] [runbooks/deploy.md Steps 2]",
 		},
 		{
+			name: "json_each over tags",
+			sql:  `SELECT j.value, count(*) FROM documents, json_each(documents.tags) j GROUP BY j.value ORDER BY j.value`,
+			want: "[runbook 3]",
+		},
+		{
+			name: "values and infinity",
+			sql:  `VALUES (1e999, -1e999)`,
+			want: "[+Inf -Inf]",
+		},
+		{
 			name: "recursive CTE",
 			sql:  `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3) SELECT group_concat(i) FROM n`,
 			want: "[1,2,3]",
@@ -150,7 +160,13 @@ func TestQueryEscapes(t *testing.T) {
 		{"vacuum into", "VACUUM INTO '/tmp/stolen.db'", ErrBadQuery},
 		{"analyze", "ANALYZE", ErrBadQuery},
 		{"reindex", "REINDEX", ErrBadQuery},
-		{"huge string", "SELECT printf('%.*c', 2000000, 'x')", ErrQueryTooLarge},
+		{"huge string", "SELECT printf('%.*c', 200000, 'x')", ErrQueryTooLarge},
+		{"growing string", "WITH RECURSIVE c(x, s) AS (SELECT 1, printf('%.*c', 90000, 'a') UNION ALL SELECT x + 1, s || x FROM c WHERE x < 20000) SELECT x, length(s) FROM c ORDER BY s DESC", ErrQueryTooLarge},
+		{"vacuum temp into", "VACUUM temp INTO '/tmp/stolen.db'", ErrBadQuery},
+		{"explain", "EXPLAIN SELECT 1", ErrBadQuery},
+		{"pragma data_version", "PRAGMA data_version", ErrBadQuery},
+		{"quote after a semicolon", "SELECT 1; 'x'", ErrBadQuery},
+		{"wide row", "SELECT " + strings.TrimSuffix(strings.Repeat("1, ", maxQueryColumns+1), ", "), ErrBadQuery},
 		{"empty", "  -- nothing\n", ErrBadQuery},
 	}
 	for _, tt := range tests {
@@ -319,4 +335,23 @@ func TestQueryWhileApplying(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// A query that needs more memory than SQLite may take fails as too large instead of growing the process.
+func TestQueryMemoryLimit(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	setHardHeapLimit(64 << 20)
+	defer setHardHeapLimit(hardHeapLimit)
+	_, err := runQuery(t, sb, sources, "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 5000) SELECT x, printf('%.*c', 90000, 'a') AS s FROM c ORDER BY s, x DESC")
+	if !errors.Is(err, ErrQueryTooLarge) {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestQueryErrorNamesVaults(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	_, err := runQuery(t, sb, sources, "SELECT * FROM v0.nosuch")
+	if err == nil || !strings.Contains(err.Error(), "ours/kb.nosuch") {
+		t.Errorf("error = %v", err)
+	}
 }

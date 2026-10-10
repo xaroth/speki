@@ -6,9 +6,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,8 @@ const (
 	MaxQuerySources = 10
 	maxQueryRows    = 500
 	maxQueryBytes   = 1 << 20
+	maxValueBytes   = 100_000 // one string or blob
+	maxQueryColumns = 50      // so a row is at most a few MB before the size check
 	sandboxConns    = 4
 )
 
@@ -155,7 +159,8 @@ func setUp(c *sqlite3.SQLiteConn, sources []Source, gens []*generation) error {
 	}
 	for limit, value := range map[int]int{
 		sqlite3.SQLITE_LIMIT_ATTACHED:            len(sources),
-		sqlite3.SQLITE_LIMIT_LENGTH:              1_000_000,
+		sqlite3.SQLITE_LIMIT_LENGTH:              maxValueBytes,
+		sqlite3.SQLITE_LIMIT_COLUMN:              maxQueryColumns,
 		sqlite3.SQLITE_LIMIT_SQL_LENGTH:          100_000,
 		sqlite3.SQLITE_LIMIT_EXPR_DEPTH:          50,
 		sqlite3.SQLITE_LIMIT_COMPOUND_SELECT:     10,
@@ -257,6 +262,8 @@ func authorize(n int) func(action int, arg1, arg2, db string) int {
 				return authOK
 			case db == "temp" && views[arg1]:
 				return authOK
+			case db == "main" && (arg1 == "json_each" || arg1 == "json_tree"): // table-valued functions
+				return authOK
 			case attached[db] && readable[arg1]:
 				return authOK
 			}
@@ -273,13 +280,21 @@ func authorize(n int) func(action int, arg1, arg2, db string) int {
 	}
 }
 
-// singleStatement refuses anything after the first statement but whitespace and comments.
+// singleStatement accepts one SELECT (WITH and VALUES included), followed by nothing but whitespace,
+// comments and a semicolon.
 func singleStatement(query string) error {
 	end, seen := -1, false
 	for i := 0; i < len(query); i++ {
 		c := query[i]
-		if end < 0 && !isSpace(c) && c != ';' && !strings.HasPrefix(query[i:], "--") && !strings.HasPrefix(query[i:], "/*") {
+		comment := strings.HasPrefix(query[i:], "--") || strings.HasPrefix(query[i:], "/*")
+		if !seen && !isSpace(c) && !comment {
 			seen = true
+			if !startsWithKeyword(query[i:], "select", "with", "values") {
+				return fmt.Errorf("%w: only SELECT statements are allowed", ErrBadQuery)
+			}
+		}
+		if end >= 0 && !isSpace(c) && !comment {
+			return fmt.Errorf("%w: only one statement is allowed", ErrBadQuery)
 		}
 		switch {
 		case c == '\'' || c == '"' || c == '`':
@@ -309,18 +324,27 @@ func singleStatement(query string) error {
 				i += j + 3
 			}
 		case c == ';':
-			if end >= 0 {
-				return fmt.Errorf("%w: only one statement is allowed", ErrBadQuery)
-			}
 			end = i
-		case end >= 0 && !isSpace(c):
-			return fmt.Errorf("%w: only one statement is allowed", ErrBadQuery)
 		}
 	}
 	if !seen {
 		return fmt.Errorf("%w: the query is empty", ErrBadQuery)
 	}
 	return nil
+}
+
+// startsWithKeyword reports whether s starts with one of the keywords, as a whole word, in any case.
+func startsWithKeyword(s string, keywords ...string) bool {
+	for _, k := range keywords {
+		if len(s) >= len(k) && strings.EqualFold(s[:len(k)], k) && (len(s) == len(k) || !isWordByte(s[len(k)])) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80
 }
 
 func isSpace(c byte) bool {
@@ -356,6 +380,11 @@ func readRows(ctx context.Context, rows *sql.Rows, sources []Source) (Rows, erro
 				size += len(v)
 			case string:
 				size += len(v)
+			case float64:
+				if math.IsNaN(v) || math.IsInf(v, 0) { // JSON has no such numbers
+					values[i] = strconv.FormatFloat(v, 'g', -1, 64)
+				}
+				size += 8
 			default:
 				size += 8
 			}
@@ -376,6 +405,9 @@ func readRows(ctx context.Context, rows *sql.Rows, sources []Source) (Rows, erro
 // paths matches file paths in SQLite messages.
 var paths = regexp.MustCompile(`(?:file:)?/[^\s'"]*`)
 
+// aliases matches the names vaults are attached under, where they qualify a table or column.
+var aliases = regexp.MustCompile(`\bv(\d+)\.`)
+
 // queryError turns a SQLite failure into an error for the agent: the cause wrapped in a sentinel, with
 // the internal database names replaced by vault names and file paths removed.
 func queryError(ctx context.Context, err error, sources []Source) error {
@@ -386,11 +418,14 @@ func queryError(ctx context.Context, err error, sources []Source) error {
 	if !errors.As(err, &serr) {
 		return err
 	}
-	msg := serr.Error()
-	for i := len(sources) - 1; i >= 0; i-- { // v10 before v1
-		msg = strings.ReplaceAll(msg, fmt.Sprintf("v%d.", i), sources[i].Name+".")
-	}
-	msg = paths.ReplaceAllString(msg, "<file>")
+	msg := paths.ReplaceAllString(serr.Error(), "<file>") // before vault names, which contain a slash
+	msg = aliases.ReplaceAllStringFunc(msg, func(m string) string {
+		n, err := strconv.Atoi(m[1 : len(m)-1])
+		if err != nil || n >= len(sources) {
+			return m
+		}
+		return sources[n].Name + "."
+	})
 	switch serr.Code {
 	case sqlite3.ErrInterrupt:
 		return fmt.Errorf("%w: it ran longer than allowed", ErrQueryTimeout)
