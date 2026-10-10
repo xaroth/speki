@@ -65,6 +65,7 @@ type failedClient struct {
 const (
 	metadataCacheSize  = 100
 	metadataCacheTime  = 10 * time.Minute
+	metadataStaleTime  = time.Hour // how long past metadataCacheTime a document is used while it can't be refetched
 	metadataFailedTime = time.Minute
 	metadataRetryTime  = 10 * time.Second
 	metadataSlotWait   = 2 * time.Second
@@ -115,41 +116,40 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 	}
 	f, failed := r.failed[clientID]
 	r.mu.Unlock()
+	usable := known && now.Before(cached.expires.Add(metadataStaleTime))
 	switch {
 	case known && now.Before(cached.expires):
 		return cached.client, nil
-	case failed && now.Before(f.expires) && known: // its host had a blip: the old document still holds
+	case usable && failed && now.Before(f.expires): // its host had a blip: the old document still holds
+		return cached.client, nil
+	case usable: // refetched in the background; until then the old document holds
+		r.flight.DoChan(clientID, r.refetch(ctx, u, clientID, known))
 		return cached.client, nil
 	case failed && now.Before(f.expires):
 		return client{}, f.err
 	}
 
-	// Requests for the same document share one fetch. The fetch is the server's, not the request's: a
-	// client that disconnects mustn't fail it for the others, but it needn't wait for it either.
-	ch := r.flight.DoChan(clientID, func() (any, error) {
-		cl, failure, err := r.fetchClient(context.WithoutCancel(ctx), u, clientID, known)
-		r.remember(clientID, cl, failure, err)
-		return fetched{cl, failure}, err
-	})
+	// Requests for the same document share one fetch. A request that leaves stops waiting for it.
 	var res singleflight.Result
 	select {
-	case res = <-ch:
+	case res = <-r.flight.DoChan(clientID, r.refetch(ctx, u, clientID, known)):
 	case <-ctx.Done():
 		return client{}, ctx.Err()
 	}
 	if res.Err != nil {
-		if known && res.Val.(fetched).failure != badDocument {
-			return cached.client, nil
-		}
 		return client{}, res.Err
 	}
-	return res.Val.(fetched).client, nil
+	return res.Val.(client), nil
 }
 
-// fetched is the outcome of a shared metadata fetch.
-type fetched struct {
-	client  client
-	failure failureKind
+// refetch returns a shared fetch of a metadata document. The fetch is the server's, not the request's:
+// a client that disconnects mustn't fail it for the others.
+func (r *clientResolver) refetch(ctx context.Context, u *url.URL, clientID string, known bool) func() (any, error) {
+	return func() (any, error) {
+		cl, failure, err := r.fetchClient(context.WithoutCancel(ctx), u, clientID, known)
+		r.remember(clientID, cl, failure, err)
+		return cl, err
+	}
 }
 
 // remember caches a fetched client, or a failure for as long as its kind deserves. Failures have their
@@ -354,7 +354,8 @@ func hidesText(r rune) bool {
 		(r >= 0x2066 && r <= 0x2069) || (r >= 0xe0000 && r <= 0xe007f)
 }
 
-// errNoDocument means the host answered that there's no such document, as opposed to not answering.
+// errNoDocument means the host answered that there's no such document (404 or 410), as opposed to not
+// answering or refusing.
 var errNoDocument = errors.New("no metadata document")
 
 // newMetadataFetcher returns a function that fetches client metadata documents from the allowed hosts
@@ -386,13 +387,8 @@ func newMetadataFetcher(hosts []string) func(ctx context.Context, url string) ([
 			return nil, err
 		}
 		defer resp.Body.Close()
-		switch {
-		case resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests:
-			return nil, fmt.Errorf("status %s", resp.Status)
-		case resp.StatusCode >= 400 && resp.StatusCode < 500:
-			return nil, fmt.Errorf("%w: status %s", errNoDocument, resp.Status)
-		case resp.StatusCode != http.StatusOK:
-			return nil, fmt.Errorf("status %s", resp.Status)
+		if err := statusError(resp); err != nil {
+			return nil, err
 		}
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, metadataMaxBytes+1))
 		if err != nil {
@@ -403,6 +399,18 @@ func newMetadataFetcher(hosts []string) func(ctx context.Context, url string) ([
 		}
 		return raw, nil
 	}
+}
+
+// statusError returns the error for a metadata response's status, nil for 200. Only a 404 or 410 says the
+// document is gone: a CDN's challenge or a bad deploy is a blip, not a removal.
+func statusError(resp *http.Response) error {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusNotFound, http.StatusGone:
+		return fmt.Errorf("%w: status %s", errNoDocument, resp.Status)
+	}
+	return fmt.Errorf("status %s", resp.Status)
 }
 
 // refusePrivate is a dialer Control hook: it refuses addresses that aren't public, after DNS resolution,

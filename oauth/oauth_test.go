@@ -857,8 +857,8 @@ func TestMetadataFetchFailures(t *testing.T) {
 	}
 }
 
-// A document that was fetched before is still used while its host can't be reached, and gets fetch
-// slots of its own. A document that's gone isn't used any more.
+// A document that was fetched before is refetched in the background, with fetch slots of its own, and
+// still used for a while when its host can't be reached. A document that's gone isn't used any more.
 func TestMetadataKnownClients(t *testing.T) {
 	h := newHarness(t)
 	const known = "https://claude.ai/c.json"
@@ -877,12 +877,33 @@ func TestMetadataKnownClients(t *testing.T) {
 		}
 		return json.Marshal(map[string]any{"client_id": u, "client_name": "Claude", "redirect_uris": []string{"https://claude.ai/cb"}})
 	}
-	expire := func() {
+	failWith := func(err error) {
+		mu.Lock()
+		fail = err
+		mu.Unlock()
+		h.s.clients.mu.Lock()
+		delete(h.s.clients.failed, known)
+		h.s.clients.mu.Unlock()
+	}
+	expire := func(ago time.Duration) {
 		h.s.clients.mu.Lock()
 		c := h.s.clients.cache[known]
-		c.expires = time.Now().Add(-time.Second)
+		c.expires = time.Now().Add(-ago)
 		h.s.clients.cache[known] = c
 		h.s.clients.mu.Unlock()
+	}
+	waitFor := func(what string, done func(cached bool, c cachedClient, failed bool) bool) {
+		t.Helper()
+		for start := time.Now(); time.Since(start) < 5*time.Second; time.Sleep(time.Millisecond) {
+			h.s.clients.mu.Lock()
+			c, cached := h.s.clients.cache[known]
+			_, failed := h.s.clients.failed[known]
+			h.s.clients.mu.Unlock()
+			if done(cached, c, failed) {
+				return
+			}
+		}
+		t.Fatalf("waiting for %s", what)
 	}
 	signIn := func() int {
 		return h.do(http.MethodGet, authorizeURL(known, "https://claude.ai/cb", nil), nil).Code
@@ -899,38 +920,55 @@ func TestMetadataKnownClients(t *testing.T) {
 	for len(h.s.clients.fetching) < metadataFetches {
 		time.Sleep(time.Millisecond)
 	}
-	expire()
+	expire(time.Second)
 	if code := signIn(); code != http.StatusOK {
-		t.Errorf("refetch while the other slots are taken: %d", code)
+		t.Errorf("sign-in with an expired document: %d", code)
 	}
-	if c := h.s.clients.cache[known]; !time.Now().Before(c.expires) {
-		t.Error("the document wasn't refetched while the other slots were taken")
-	}
+	waitFor("the refetch while the other slots are taken", func(_ bool, c cachedClient, _ bool) bool {
+		return time.Now().Before(c.expires)
+	})
 
-	mu.Lock()
-	fail = errors.New("connection reset")
-	mu.Unlock()
-	expire()
+	failWith(errors.New("connection reset"))
+	expire(time.Second)
 	if code := signIn(); code != http.StatusOK {
 		t.Errorf("sign-in while the host is unreachable: %d", code)
 	}
+	waitFor("the failed refetch", func(_ bool, _ cachedClient, failed bool) bool { return failed })
 	if code := signIn(); code != http.StatusOK {
 		t.Errorf("sign-in with the failure remembered: %d", code)
 	}
+	expire(metadataStaleTime + time.Second)
+	if code := signIn(); code == http.StatusOK {
+		t.Error("sign-in with a document an hour past its time succeeded while the host is unreachable")
+	}
 
-	mu.Lock()
-	fail = fmt.Errorf("%w: status 404 Not Found", errNoDocument)
-	mu.Unlock()
-	h.s.clients.mu.Lock()
-	delete(h.s.clients.failed, known)
-	h.s.clients.mu.Unlock()
-	expire()
+	failWith(nil)
+	expire(metadataStaleTime + time.Second)
+	if code := signIn(); code != http.StatusOK {
+		t.Errorf("sign-in once the host is back: %d", code)
+	}
+	failWith(fmt.Errorf("%w: status 404 Not Found", errNoDocument))
+	expire(time.Second)
+	signIn()
+	waitFor("the missing document to be dropped", func(cached bool, _ cachedClient, _ bool) bool { return !cached })
 	if code := signIn(); code == http.StatusOK {
 		t.Error("sign-in with a document that's gone succeeded")
 	}
-	f := h.s.clients.failed[known]
-	if time.Until(f.expires) <= metadataRetryTime {
+	if f := h.s.clients.failed[known]; time.Until(f.expires) <= metadataRetryTime {
 		t.Errorf("a missing document is remembered until %v", f.expires)
+	}
+}
+
+// Only a 404 or 410 says a metadata document is gone; other refusals are blips.
+func TestMetadataStatuses(t *testing.T) {
+	for code, gone := range map[int]bool{404: true, 410: true, 403: false, 401: false, 302: false, 503: false} {
+		err := statusError(&http.Response{StatusCode: code, Status: http.StatusText(code)})
+		if err == nil || errors.Is(err, errNoDocument) != gone {
+			t.Errorf("%d: %v", code, err)
+		}
+	}
+	if err := statusError(&http.Response{StatusCode: http.StatusOK}); err != nil {
+		t.Errorf("200: %v", err)
 	}
 }
 
@@ -1075,7 +1113,7 @@ func TestRefreshKeepsTheLockWhenTheResultIsLost(t *testing.T) {
 	}
 }
 
-// A request with a refresh token whose result was lost is told to sign in again, without asking GitHub
+// A request with a refresh token whose result was lost is told to try again later, without asking GitHub
 // with the spent token.
 func TestRefreshResultLost(t *testing.T) {
 	h := newHarness(t)
@@ -1090,9 +1128,30 @@ func TestRefreshResultLost(t *testing.T) {
 		t.Error("the lock was kept although the marker was written")
 	}
 	_, rec := h.tokens(form)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "lost the result") {
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "result was lost") {
 		t.Errorf("second refresh: %d %s", rec.Code, rec.Body)
 	}
+}
+
+// A marker that lands between the first look and the lock gets the same answer.
+func TestRefreshResultLostWhileLocking(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	h.s.store = markingStore{Memory: store.NewMemory()}
+	_, rec := h.tokens(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}})
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "result was lost") {
+		t.Errorf("refresh: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// markingStore writes a lost-result marker as a lock is taken.
+type markingStore struct{ *store.Memory }
+
+func (m markingStore) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	if rest, ok := strings.CutPrefix(key, "refresh-lock:"); ok {
+		_ = m.Set(ctx, "refresh-result:"+rest, []byte(resultLost), time.Minute)
+	}
+	return m.Memory.SetNX(ctx, key, value, ttl)
 }
 
 // failingSets fails the first left Set calls.

@@ -149,12 +149,8 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 	deadline := time.Now().Add(refreshLockTime)
 	for {
 		resp, found, err := s.refreshResult(ctx, key, old)
-		if errors.Is(err, errResultLost) {
-			oauthError(w, http.StatusBadRequest, "invalid_grant", "this refresh token was just used, and speki lost the result; sign in again")
-			return
-		}
 		if err != nil {
-			s.tokenServerError(w, r, err)
+			s.refreshResultError(w, r, err)
 			return
 		}
 		if found {
@@ -206,7 +202,7 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 	// Another request may have finished between our look and our lock.
 	resp, found, err := s.refreshResult(ctx, key, old)
 	if err != nil {
-		s.tokenServerError(w, r, err)
+		s.refreshResultError(w, r, err)
 		return
 	}
 	if found {
@@ -243,9 +239,9 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 		s.tokenServerError(w, r, err)
 		return
 	}
-	// The result must be kept before the lock runs out, or a waiting request takes the lock and refreshes
-	// again with the spent GitHub token.
-	kctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), lock.at.Add(refreshLockTime))
+	// The result should be kept before the lock runs out, or a waiting request takes the lock and refreshes
+	// again with the spent GitHub token. But a late GitHub answer still gets a moment to be kept.
+	kctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), maxTime(lock.at.Add(refreshLockTime), time.Now().Add(2*time.Second)))
 	defer cancel()
 	err = s.keepRefreshResult(kctx, key, old, resp)
 	if err != nil {
@@ -256,13 +252,26 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 		// doesn't try GitHub with a spent token; if even that can't be written, the store is down and
 		// the lock is kept until it runs out.
 		s.logger.WarnContext(ctx, "keeping refresh result failed", "err", err)
-		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 		defer cancel()
 		if s.store.Set(mctx, "refresh-result:"+key, []byte(resultLost), refreshResultTime) != nil {
 			keepLock = true
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// refreshResultError answers a failed look for a stored result. A lost result means another request
+// refreshed this token, and may have handed the new pair to the same client. So the client is told to
+// try again, by which time it may hold that pair, rather than to sign in again; once the marker expires,
+// GitHub's refusal of the spent token signs it out.
+func (s *Server) refreshResultError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errResultLost) {
+		w.Header().Set("Retry-After", "5")
+		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "this refresh token was just used, but its result was lost")
+		return
+	}
+	s.tokenServerError(w, r, err)
 }
 
 // writeRefreshResult answers with the result of a refresh another request made with the same token, if
@@ -355,6 +364,13 @@ func narrow(granted []string, requested string) ([]string, bool) {
 		}
 	}
 	return out, true
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 func minTime(a, b time.Time) time.Time {
