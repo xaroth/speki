@@ -248,12 +248,21 @@ generation's file.
 6. Close the connection, marked bad (`driver.ErrBadConn` from `Raw`) so the pool discards it. The idle
    limit alone isn't enough: `database/sql` hands a released connection straight to a waiting caller.
 
+The four connections are shared by all users. With one query per user and 3 seconds each, four people
+running slow queries hold up everyone else's queries for those seconds, which is fine at this team size.
+
+The attached index tables can be read directly, not only through the views: the authorizer can't tell a
+query's own reads of `v0.documents` from FTS5's reads of the same table, since go-sqlite3 doesn't pass
+the view a read comes from. That's no leak, since only the user's own vaults are attached. `schema.md`
+tells agents the views are the interface and the tables behind them may change.
+
 Memory: the same C file sets `sqlite3_soft_heap_limit64` (512 MiB), so SQLite releases cache memory under
 pressure, and `sqlite3_hard_heap_limit64` (1 GiB), so an allocation past that fails with `SQLITE_NOMEM`.
 The hard limit is what stops one query from growing the process: in-memory sorts and recursive queries
 don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes within the time limit. A
-query that hits it fails with `too_large`. Both limits are for the whole process; index builds stay far
-below them. The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
+query that hits it fails with `too_large`. Both limits are for the whole process. Index builds stay far
+below them on their own (about 40 MB at 50,000 documents), but a build that allocates while a query has
+just used up the shared budget fails with `SQLITE_NOMEM`, and the vault is synced again at the next poll. The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
 result check sees it.
 
 Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,

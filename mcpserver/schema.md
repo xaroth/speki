@@ -30,8 +30,11 @@ links: one row per link in a document, including `related` entries.
 headings: `vault`, `path`, `level` (1 to 6), `text`, `line` (counted from 1 at the top of the file).
 
 fts: the full-text index: `vault`, `path`, `title`, `aliases`, `tags`, `description`, `headings`, `body`.
-Match against a column with FTS5 syntax: `WHERE body MATCH 'cache AND invalidation'`. Stemming applies;
-typo correction, prefix matching and ranking don't. Those are what `search` is for.
+Match against a column with FTS5 syntax: `WHERE body MATCH 'cache AND invalidation'`. Stemming applies,
+and `cach*` matches as a prefix; typo correction and ranking don't. Those are what `search` is for.
+
+Query these views. The tables behind them can be read too, but they're speki's internals and change
+without notice.
 
 ## Examples
 

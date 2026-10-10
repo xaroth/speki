@@ -96,7 +96,8 @@ One row per link found in a document, including `related` entries.
 The full-text index, for combining text matching with other conditions. Columns: `vault`, `path`, `title`,
 `aliases`, `tags`, `description`, `headings`, `body`. Match against a column, with
 [FTS5 query syntax](https://sqlite.org/fts5.html#full_text_query_syntax): `WHERE fts.body MATCH 'cache'`.
-Stemming applies, but typo correction, prefix matching on the last word and ranking across columns don't.
+Stemming applies, and a word ending in `*` matches as a prefix, but typo correction and ranking across
+columns don't.
 Those are what `search` is for.
 
 ### Examples

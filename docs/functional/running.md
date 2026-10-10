@@ -141,6 +141,11 @@ on the status page. Plan disk, memory and startup time for it.
 To force a vault to be rebuilt, stop speki, delete `<data_dir>/<repository id>/`, and start it again. To
 rebuild everything, start with an empty data directory.
 
+Memory: give an instance at least 1.5 GiB. SQLite is allowed up to 1 GiB, which a large query can use
+for a moment before it's refused, and Go and the page caches need the rest. An instance serving one
+vault of 50,000 documents and ten of 10,000 sat at about 150 MB when measured; it's the peaks the limit is
+for. Below about 1.2 GiB, the kernel can kill the process before SQLite's own limit refuses the query.
+
 ## Endpoints
 
 | Path | Port | Purpose |
