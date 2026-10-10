@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -234,12 +235,17 @@ func (r *Registry) discoverRepo(
 		delete(problems, repo.ID)
 		return Vault{}, false, nil
 	}
-	if err != nil {
+	if errors.Is(err, gh.ErrTooLarge) {
+		err = fmt.Errorf("%s is larger than speki reads: %w", ConfigFile, err)
+	} else if err != nil {
 		return v, wasVault, err // try again next round
 	}
 	r.checked[repo.ID] = now
 
-	cfg, err := ParseConfig(raw)
+	cfg := Config{}
+	if err == nil {
+		cfg, err = ParseConfig(raw)
+	}
 	if err != nil {
 		problems[repo.ID] = Problem{RepoID: repo.ID, Name: repo.FullName, Err: err.Error()}
 		r.logger.Warn("unusable vault configuration", "vault", repo.FullName, "err", err)

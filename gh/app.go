@@ -89,7 +89,14 @@ func (c *Client) Repositories(ctx context.Context, installationID int64) ([]Repo
 	}
 }
 
-// File returns a file's content at ref. ErrNotFound means the file (or the repository) isn't there.
+// maxFileSize is the largest file File reads: it's for small configuration files.
+const maxFileSize = 64 << 10
+
+// ErrTooLarge means a file is larger than File reads.
+var ErrTooLarge = errors.New("file too large")
+
+// File returns a small file's content at ref. ErrNotFound means the file (or the repository) isn't
+// there, ErrTooLarge that it's over 64 KiB.
 func (c *Client) File(ctx context.Context, installationID int64, repo, ref, path string) ([]byte, error) {
 	client, err := c.installationClient(installationID)
 	if err != nil {
@@ -105,6 +112,10 @@ func (c *Client) File(ctx context.Context, installationID int64, repo, ref, path
 	}
 	if file == nil {
 		return nil, fmt.Errorf("get %s from %s: %w: it's a folder", path, repo, ErrNotFound)
+	}
+	// Over 1 MB, GitHub sends no content at all ("encoding": "none").
+	if file.GetSize() > maxFileSize || file.GetEncoding() == "none" {
+		return nil, fmt.Errorf("get %s from %s: %w: %d bytes, more than %d", path, repo, ErrTooLarge, file.GetSize(), maxFileSize)
 	}
 	content, err := file.GetContent()
 	if err != nil {
