@@ -70,10 +70,12 @@ plus an add. Paths are reported as the raw bytes git has.
 `createCommitOnBranch` has no file modes, so a change writes a file as `100644`: an executable `.md` file
 loses its executable bit when speki edits or moves it.
 
-Every walk of a tree looks each folder up itself, so a missing object is an error (`gitsync.ErrBroken`)
-rather than the quiet end of the walk, and a file name with a control character, which git allows, is
+Every walk of a tree, and `Diff`, looks each folder up itself (go-git's `DiffTree` treats a missing
+folder as empty, and refuses folder names with control characters). So a missing object is an error
+(`gitsync.ErrBroken`) rather than a quiet gap, and a path with a control character, which git allows, is
 simply not eligible. A copy that turns out broken while in use is cloned again, next to the old one, and
-the index rebuilt from it; a quick sync for a write leaves that to the poller.
+the index rebuilt from it; a quick sync for a write leaves that to the poller. A `read` that finds a blob
+missing marks the copy, and the next poll does the same.
 
 `Paths` sees every file, eligible or not. The write path uses it to make sure it doesn't overwrite
 something the index doesn't know about.

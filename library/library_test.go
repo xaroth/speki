@@ -728,3 +728,30 @@ func TestHeadCheckRecovers(t *testing.T) {
 		t.Errorf("error still shown after a good check: %q", st.Error)
 	}
 }
+
+// A read that finds the git copy missing objects gets it cloned again at the next poll.
+func TestBrokenCopyFoundByAReadIsCloned(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	doc, err := v.Index().Document(t.Context(), "a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	packs, _ := filepath.Glob(filepath.Join(v.dir, gitDir, "objects", "pack", "*"))
+	for _, p := range packs {
+		_ = os.Remove(p)
+	}
+	_, err = v.Blob(doc.Version)
+	if !errors.Is(err, gitsync.ErrBroken) {
+		t.Fatalf("Blob on a copy without objects: %v", err)
+	}
+	l.Poll(t.Context())
+	l.WaitIdle()
+	content, err := v.Blob(doc.Version)
+	if err != nil || string(content) != "# A\n" {
+		t.Errorf("Blob after the poll: %q, %v", content, err)
+	}
+}

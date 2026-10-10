@@ -75,6 +75,7 @@ type Vault struct {
 
 	syncMu       syncLock    // one open, sync, reclone or removal at a time; guards the fields below
 	scheduled    atomic.Bool // a rebuild, re-initialisation or reclone is queued in the background
+	broken       atomic.Bool // a read found the git copy missing objects: the poller clones it again
 	removed      bool
 	freshCloneAt time.Time    // last attempt, so a failing fresh clone isn't retried on every sync
 	gitMu        sync.RWMutex // fetches exclude reads of the git copy
@@ -149,7 +150,11 @@ func (v *Vault) Blob(sha string) ([]byte, error) {
 	if v.mirror == nil {
 		return nil, errors.New("no git copy")
 	}
-	return v.mirror.Blob(sha)
+	content, err := v.mirror.Blob(sha)
+	if errors.Is(err, gitsync.ErrBroken) {
+		v.broken.Store(true)
+	}
+	return content, err
 }
 
 // Paths returns every file path in the git copy at commit.
@@ -367,6 +372,9 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 			err = l.build(ctx, v, head)
 		}
 	}
+	if err == nil && v.broken.Load() {
+		err = fmt.Errorf("%w: a read found objects missing", gitsync.ErrBroken)
+	}
 	if errors.Is(err, gitsync.ErrBroken) {
 		if quick {
 			return ErrRebuildNeeded // the poller repairs it
@@ -376,6 +384,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		result = "rebuilt"
 		err = l.freshClone(ctx, v)
 		if err == nil {
+			v.broken.Store(false)
 			head, err = v.mirror.Head()
 		}
 		if err == nil {

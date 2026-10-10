@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 
 	"github.com/eve-online-tools/speki/document"
 )
@@ -137,7 +138,7 @@ var ErrBroken = errors.New("the git copy is broken")
 
 // broken marks errors about missing or corrupt objects with ErrBroken.
 func broken(err error) error {
-	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, plumbing.ErrInvalidType) {
+	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, plumbing.ErrInvalidType) || errors.Is(err, dotgit.ErrPackfileNotFound) {
 		return fmt.Errorf("%w: %w", ErrBroken, err)
 	}
 	return err
@@ -163,6 +164,64 @@ func walk(repo *git.Repository, tree *object.Tree, prefix string, fn func(name s
 		err = walk(repo, sub, name+"/", fn)
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// diffTrees calls fn for every file that differs between two trees, with a zero entry for the side it's
+// missing from. Subtrees with the same hash are skipped. Like walk, it looks subtrees up itself: go-git's
+// DiffTree treats a missing subtree as empty, and refuses folder names with control characters.
+func diffTrees(repo *git.Repository, from, to *object.Tree, prefix string, fn func(name string, before, after object.TreeEntry) error) error {
+	var names []string
+	entries := map[string][2]object.TreeEntry{}
+	for side, t := range []*object.Tree{from, to} {
+		if t == nil {
+			continue
+		}
+		for _, e := range t.Entries {
+			pair, seen := entries[e.Name]
+			if !seen {
+				names = append(names, e.Name)
+			}
+			pair[side] = e
+			entries[e.Name] = pair
+		}
+	}
+	for _, n := range names {
+		pair := entries[n]
+		before, after := pair[0], pair[1]
+		if before.Hash == after.Hash && before.Mode == after.Mode {
+			continue
+		}
+		name := prefix + n
+		var beforeDir, afterDir *object.Tree
+		var err error
+		if before.Mode == filemode.Dir {
+			beforeDir, err = object.GetTree(repo.Storer, before.Hash)
+			if err != nil {
+				return broken(fmt.Errorf("%s: %w", name, err))
+			}
+			before = object.TreeEntry{}
+		}
+		if after.Mode == filemode.Dir {
+			afterDir, err = object.GetTree(repo.Storer, after.Hash)
+			if err != nil {
+				return broken(fmt.Errorf("%s: %w", name, err))
+			}
+			after = object.TreeEntry{}
+		}
+		if beforeDir != nil || afterDir != nil {
+			err = diffTrees(repo, beforeDir, afterDir, name+"/", fn)
+			if err != nil {
+				return err
+			}
+		}
+		if before != (object.TreeEntry{}) || after != (object.TreeEntry{}) {
+			err = fn(name, before, after)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -268,28 +327,27 @@ func (m *Mirror) Diff(from, to string) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	diffs, err := object.DiffTree(fromTree, toTree)
-	if err != nil {
-		return nil, fmt.Errorf("diff %s..%s: %w", from, to, broken(err))
-	}
-
 	var changes []Change
-	for _, d := range diffs {
-		after, err := m.eligible(d.To.Name, d.To.TreeEntry)
+	err = diffTrees(m.repo, fromTree, toTree, "", func(name string, before, after object.TreeEntry) error {
+		ok, err := m.eligible(name, after)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if after {
-			changes = append(changes, Change{Path: d.To.Name, Blob: d.To.TreeEntry.Hash.String()})
-			continue
+		if ok {
+			changes = append(changes, Change{Path: name, Blob: after.Hash.String()})
+			return nil
 		}
-		before, err := m.eligible(d.From.Name, d.From.TreeEntry)
+		ok, err = m.eligible(name, before)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if before { // deleted, or no longer a file speki reads
-			changes = append(changes, Change{Path: d.From.Name})
+		if ok { // deleted, or no longer a file speki reads
+			changes = append(changes, Change{Path: name})
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("diff %s..%s: %w", from, to, err)
 	}
 	return changes, nil
 }
@@ -304,17 +362,21 @@ func (m *Mirror) Has(commit string) bool {
 func (m *Mirror) Blob(sha string) ([]byte, error) {
 	blob, err := m.repo.BlobObject(plumbing.NewHash(sha))
 	if err != nil {
-		return nil, fmt.Errorf("blob %s: %w", sha, err)
+		return nil, fmt.Errorf("blob %s: %w", sha, broken(err))
 	}
 	if blob.Size > MaxFileSize {
 		return nil, fmt.Errorf("blob %s: %d bytes, more than %d", sha, blob.Size, MaxFileSize)
 	}
 	r, err := blob.Reader()
 	if err != nil {
-		return nil, fmt.Errorf("blob %s: %w", sha, err)
+		return nil, fmt.Errorf("blob %s: %w", sha, broken(err))
 	}
 	defer r.Close()
-	return io.ReadAll(r)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("blob %s: %w", sha, broken(err))
+	}
+	return data, nil
 }
 
 // eligible reports whether a tree entry is a file speki reads. A zero entry (the missing side of a diff)
