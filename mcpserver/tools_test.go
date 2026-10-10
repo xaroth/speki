@@ -99,7 +99,7 @@ func (f *fakeKB) Query(_ context.Context, _ *access.Grant, req knowledge.QueryRe
 // connect starts the whole stack behind an HTTP server and connects a go-sdk client to it.
 func connect(t *testing.T, kb knowledgeBase) (*mcp.ClientSession, *Server) {
 	t.Helper()
-	s := New(fakeAuth{}, fakeResolver{}, kb, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := New(fakeAuth{}, fakeResolver{}, kb, Identity{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(telemetry.RequestID(s.Handler()))
 	t.Cleanup(srv.Close)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
@@ -361,7 +361,7 @@ func TestFence(t *testing.T) {
 }
 
 func TestHandleErrors(t *testing.T) {
-	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	g := access.NewGrant(access.User{Login: "alice"}, nil, nil)
 	ctx := context.WithValue(t.Context(), grantKey{}, g)
 	run := func(ctx context.Context, err error) error {
@@ -401,7 +401,7 @@ func TestHandleErrors(t *testing.T) {
 
 func TestToolCallsAreLogged(t *testing.T) {
 	var buf safeBuffer
-	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, "test", telemetry.NewLogger(&buf, slog.LevelInfo))
+	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{}, "test", telemetry.NewLogger(&buf, slog.LevelInfo))
 	srv := httptest.NewServer(telemetry.RequestID(s.Handler()))
 	defer srv.Close()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
@@ -455,7 +455,7 @@ func TestQueryTextIsCapped(t *testing.T) {
 		rows[i] = row
 	}
 	kb := &rowsKB{fakeKB: &fakeKB{}, rows: index.Rows{Columns: []string{"x"}, Rows: rows}}
-	s := New(fakeAuth{}, fakeResolver{}, kb, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := New(fakeAuth{}, fakeResolver{}, kb, Identity{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_, text, err := s.query(t.Context(), access.NewGrant(access.User{}, nil, nil), QueryInput{SQL: "SELECT 1"})
 	if err != nil {
 		t.Fatal(err)
@@ -473,4 +473,16 @@ type rowsKB struct {
 
 func (r *rowsKB) Query(context.Context, *access.Grant, knowledge.QueryRequest) (index.Rows, error) {
 	return r.rows, nil
+}
+
+// An instance's title and description open the guide.
+func TestGuideNamesTheInstance(t *testing.T) {
+	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{Title: "Home notes", Description: "My own\nnotes."}, "test", slog.New(slog.DiscardHandler))
+	out, text, err := s.guide(t.Context(), nil, GuideInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.Guide, "# Home notes\n\nMy own notes.\n\n# Using speki") || !strings.HasPrefix(text, out.Guide) {
+		t.Errorf("guide starts %q", out.Guide[:min(len(out.Guide), 60)])
+	}
 }

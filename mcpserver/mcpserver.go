@@ -5,8 +5,10 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -39,6 +41,7 @@ type resolver interface {
 
 // Server is the MCP endpoint.
 type Server struct {
+	id      Identity
 	auth    authenticator
 	access  resolver
 	kb      knowledgeBase
@@ -50,14 +53,56 @@ type Server struct {
 	limiters map[int64]*rate.Limiter
 }
 
+// Identity says which speki this is, for clients connected to more than one. The zero value is a plain
+// "speki".
+type Identity struct {
+	Name        string // speki-<Name> is the advertised name
+	Title       string
+	Description string // what belongs in this speki
+}
+
+func (id Identity) name() string {
+	if id.Name == "" {
+		return "speki"
+	}
+	return "speki-" + id.Name
+}
+
+func (id Identity) title() string {
+	if t := strings.TrimSpace(id.Title); t != "" {
+		return t
+	}
+	return "Speki knowledge base"
+}
+
+// description is the instance's description on one line, cleaned like any text shown to agents.
+func (id Identity) description() string {
+	return oneLine(strings.Join(strings.Fields(id.Description), " "))
+}
+
+// instructions open with the instance's description when it has one. Only that opening is formatted,
+// so the shared text may hold any character.
+func (id Identity) instructions() string {
+	desc := id.description()
+	if desc == "" {
+		return instructions
+	}
+	head := "Speki: " + desc
+	if strings.TrimSpace(id.Title) != "" {
+		head = fmt.Sprintf("Speki %q: %s", oneLine(id.title()), desc)
+	}
+	return head + "\n\n" + instanceSearch + instructionsRest
+}
+
 // New returns the MCP endpoint, with its tools.
-func New(auth authenticator, access resolver, kb knowledgeBase, version string, logger *slog.Logger) *Server {
+func New(auth authenticator, access resolver, kb knowledgeBase, id Identity, version string, logger *slog.Logger) *Server {
 	srv := mcp.NewServer(&mcp.Implementation{
-		Name:    "speki",
-		Title:   "Speki knowledge base",
+		Name:    id.name(),
+		Title:   id.title(),
 		Version: version,
-	}, &mcp.ServerOptions{Instructions: instructions})
+	}, &mcp.ServerOptions{Instructions: id.instructions()})
 	s := &Server{
+		id:       id,
 		auth:     auth,
 		access:   access,
 		kb:       kb,

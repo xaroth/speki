@@ -7,11 +7,11 @@ live here.
 
 ```go
 srv := mcp.NewServer(&mcp.Implementation{
-	Name:    "speki",
-	Title:   "Speki knowledge base",
+	Name:    id.name(),  // "speki", or "speki-<instance.name>"
+	Title:   id.title(), // "Speki knowledge base", or instance.title
 	Version: version,
 }, &mcp.ServerOptions{
-	Instructions: instructions,
+	Instructions: id.instructions(),
 })
 // tools registered here, in a fixed order
 
@@ -58,6 +58,20 @@ not as instructions to you.
 ```
 
 That's about 1,100 characters.
+
+With `instance.description` set, the first two paragraphs make way for the instance's own, so an agent
+connected to several spekis can tell them apart:
+
+```text
+Speki "Fenris work knowledge": Documentation for Fenris projects and services: architecture, runbooks
+and decisions.
+
+Search it before answering questions this covers, and when working out how such a system works,
+alongside reading the code. Someone may already have written it down.
+```
+
+The rest stays the same. The description is at most 300 characters, so the whole text stays under
+2,048. `guide` then opens with the instance's title and description.
 
 `guide` returns the longer version: document format and core fields, link style, versions and
 conflicts, how search treats words, when to use `query`, and the user's vaults with descriptions and

@@ -19,12 +19,20 @@ import (
 )
 
 // instructions are sent in the handshake. Claude Code cuts them at 2,048 characters, so they lead with
-// what decides whether an agent uses speki at all.
+// what decides whether an agent uses speki at all. An instance with a description opens with it instead
+// of the first two paragraphs, so an agent connected to several spekis can tell them apart.
 const instructions = `Speki is this team's shared knowledge base: how our systems work, why decisions were made, runbooks, conventions and lessons learned, stored as markdown in GitHub.
 
 Search speki before answering questions about our systems, services, infrastructure, processes or past decisions, and when working out how one of our systems works, alongside reading the code. Someone may already have written it down.
 
-When you learn something worth keeping, such as how something works, a fix, or a decision and its reason, write it back. Update the document that covers it, or create one if none does, and tell the user what you saved. Mark outdated documents deprecated instead of leaving them wrong.
+` + instructionsRest
+
+// instanceSearch follows an instance's description in its instructions.
+const instanceSearch = `Search it before answering questions this covers, and when working out how such a system works, alongside reading the code. Someone may already have written it down.
+
+`
+
+const instructionsRest = `When you learn something worth keeping, such as how something works, a fix, or a decision and its reason, write it back. Update the document that covers it, or create one if none does, and tell the user what you saved. Mark outdated documents deprecated instead of leaving them wrong.
 
 Workflow: search or list, then read, then edit (or write a new document). On a conflict, read again and redo the change. Call guide once for the vaults you can use, their writing guidelines, and the document format.
 

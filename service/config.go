@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/seal"
@@ -30,6 +33,7 @@ type Config struct {
 	Sync          Sync      `yaml:"sync"`
 	Redis         Redis     `yaml:"redis"`
 	Telemetry     Telemetry `yaml:"telemetry"`
+	Instance      Instance  `yaml:"instance"`
 
 	// Version is speki's version, shown to MCP clients. Not configuration: cmd/speki sets it.
 	Version string `yaml:"-"`
@@ -76,6 +80,29 @@ type Redis struct {
 	// URL is redis:// or rediss://, with any password in it.
 	URL string `yaml:"url"`
 }
+
+// Instance says what this speki is, for people and agents using more than one. All optional.
+type Instance struct {
+	// Name is a short identifier: the advertised implementation name becomes speki-<name>.
+	Name string `yaml:"name"`
+	// Title is shown to people and agents, on one line.
+	Title string `yaml:"title"`
+	// Description says what belongs here, so agents search and write in the right place.
+	Description string `yaml:"description"`
+}
+
+// instanceName is what Instance.Name must look like.
+var instanceName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// hiddenOrBreak reports whether r breaks a line, or is a control or format character that can hide or
+// reorder text. Instance texts go to every user's agent.
+func hiddenOrBreak(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// maxInstanceDescription is the longest Instance.Description, in characters. It goes into the MCP
+// instructions, which Claude Code cuts at 2,048 characters.
+const maxInstanceDescription = 300
 
 // Telemetry configures logging and tracing.
 type Telemetry struct {
@@ -160,6 +187,16 @@ func (c Config) validate() error {
 	}
 	if c.Sync.DiscoveryInterval < 0 {
 		errs = append(errs, errors.New("sync.discovery_interval must be positive"))
+	}
+	if c.Instance.Name != "" && !instanceName.MatchString(c.Instance.Name) {
+		errs = append(errs, fmt.Errorf("instance.name: %q must be lower-case letters, digits and dashes, at most 32", c.Instance.Name))
+	}
+	if strings.ContainsFunc(c.Instance.Title, hiddenOrBreak) || utf8.RuneCountInString(c.Instance.Title) > 100 {
+		errs = append(errs, errors.New("instance.title must be one line of at most 100 characters, without control or format characters"))
+	}
+	desc := strings.Join(strings.Fields(c.Instance.Description), " ") // line breaks fold to spaces, as YAML's > does
+	if strings.ContainsFunc(desc, hiddenOrBreak) || utf8.RuneCountInString(desc) > maxInstanceDescription {
+		errs = append(errs, fmt.Errorf("instance.description must be at most %d characters, without control or format characters", maxInstanceDescription))
 	}
 	_, err := telemetry.ParseLevel(c.Telemetry.LogLevel)
 	if err != nil {

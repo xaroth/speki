@@ -117,6 +117,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	setCookie(w, consentCookie, cookie, consentLifetime)
 	s.page(w, r, http.StatusOK, "consent.html", map[string]any{
+		"Name":       s.title(),
 		"Client":     c.Name,
 		"Host":       c.Host,
 		"Redirect":   redirectHost(redirectURI),
@@ -248,13 +249,14 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		case errors.As(err, &refusal):
 			s.logger.InfoContext(r.Context(), "sign-in refused", "login", user.Login, "reason", refusal.Reason)
 			s.signIns.WithLabelValues("refused").Inc()
-			s.errorPage(w, r, http.StatusForbidden, "You can't use this speki.", refusal.Reason)
+			s.errorPageAs(w, r, http.StatusForbidden, "You can't use this speki.", refusal.Reason, user.Login)
 			return
 		case err != nil: // GitHub's own words never reach the browser
 			s.logger.WarnContext(r.Context(), "checking a sign-in with GitHub failed", "login", user.Login, "err", err)
 			s.signIns.WithLabelValues("failed").Inc()
-			s.errorPage(w, r, http.StatusBadGateway, "Speki couldn't check your access with GitHub.",
-				"Try again in a moment. If it keeps failing, give this to whoever runs speki: request "+telemetry.RequestIDFrom(r.Context())+".")
+			s.errorPageAs(w, r, http.StatusBadGateway, "Speki couldn't check your access with GitHub.",
+				"Try again in a moment. If it keeps failing, give this to whoever runs speki: request "+telemetry.RequestIDFrom(r.Context())+".",
+				user.Login)
 			return
 		}
 	}
@@ -330,7 +332,21 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request, status int, name s
 }
 
 func (s *Server) errorPage(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
-	s.page(w, r, status, "error.html", map[string]string{"Title": title, "Detail": detail})
+	s.errorPageAs(w, r, status, title, detail, "")
+}
+
+// errorPageAs is errorPage after GitHub sign-in: it says which GitHub account was used, so a wrong one
+// is obvious.
+func (s *Server) errorPageAs(w http.ResponseWriter, r *http.Request, status int, title, detail, login string) {
+	s.page(w, r, status, "error.html", map[string]string{"Name": s.title(), "Title": title, "Detail": detail, "Login": login})
+}
+
+// title names this speki on its pages.
+func (s *Server) title() string {
+	if s.cfg.Title == "" {
+		return "speki"
+	}
+	return s.cfg.Title
 }
 
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {

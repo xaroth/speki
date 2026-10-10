@@ -155,6 +155,11 @@ Details per step:
   consent value whose cookie hash matches, which stops cross-site form posts and replays from another
   browser. The transaction cookie's name includes its nonce, so two sign-ins in one browser don't
   overwrite each other. The callback clears it.
+- The redirect to GitHub carries `prompt=select_account`, so GitHub shows its account picker even after
+  the app was approved. Someone with a personal and a work account then picks the right one, instead of
+  getting whichever the browser is signed in with.
+- The consent and error pages name the instance by `instance.title` when it's set. Error pages after the
+  GitHub sign-in say which GitHub login was used.
 - At the callback, speki refuses GitHub tokens without an expiry. It calls `GET /user` and, when
   organisations are required, checks membership right away, so someone outside the organisation gets a
   clear page instead of a client that fails on every call.

@@ -103,6 +103,18 @@ func TestNewRejectsBadConfig(t *testing.T) {
 			want: []string{"allowed_accounts"},
 		},
 		{
+			name: "bad instance",
+			cfg: with(func(c *Config) {
+				c.Instance = Instance{Name: "Work!", Title: "hidden\u202etext", Description: "tag\U000E0041"}
+			}),
+			want: []string{"instance.name", "instance.title", "instance.description"},
+		},
+		{
+			name: "long instance description",
+			cfg:  with(func(c *Config) { c.Instance.Description = strings.Repeat("x", 301) }),
+			want: []string{"instance.description"},
+		},
+		{
 			name: "negative interval",
 			cfg:  with(func(c *Config) { c.Sync.DiscoveryInterval = -1 }),
 			want: []string{"sync.discovery_interval"},

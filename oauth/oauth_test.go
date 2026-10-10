@@ -523,8 +523,20 @@ func TestConsentAndCallbackRejects(t *testing.T) {
 	state, _ := url.Parse(rec.Header().Get("Location"))
 	nonce := state.Query().Get("state")
 	rec = h.do(http.MethodGet, "/oauth/github/callback?code=good&state="+nonce, nil, cookie(rec, txCookie+nonce))
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "required organisation") {
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "required organisation") ||
+		!strings.Contains(rec.Body.String(), "@octocat") {
 		t.Errorf("refused user: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The sign-in pages name the instance when it has a title.
+func TestPagesNameTheInstance(t *testing.T) {
+	h := newHarness(t)
+	h.s.cfg.Title = "Home <notes>"
+	clientID := h.register("http://127.0.0.1/callback")
+	page := h.do(http.MethodGet, authorizeURL(clientID, "http://127.0.0.1/callback", nil), nil)
+	if !strings.Contains(page.Body.String(), "Sign in to Home &lt;notes&gt;") {
+		t.Errorf("consent page: %s", page.Body)
 	}
 }
 

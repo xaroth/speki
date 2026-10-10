@@ -49,10 +49,19 @@ func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (Guid
 	if err != nil {
 		return GuideOutput{}, "", err
 	}
-	out := GuideOutput{Guide: guideText, Vaults: vaultSummaries(vaults, true)}
+	guide := guideText
+	if strings.TrimSpace(s.id.Title) != "" || s.id.description() != "" {
+		// Which speki this is comes first, for agents connected to more than one.
+		head := "# " + oneLine(s.id.title()) + "\n\n"
+		if desc := s.id.description(); desc != "" {
+			head += desc + "\n\n"
+		}
+		guide = head + guideText
+	}
+	out := GuideOutput{Guide: guide, Vaults: vaultSummaries(vaults, true)}
 
 	var b strings.Builder
-	b.WriteString(guideText)
+	b.WriteString(guide)
 	b.WriteString("\n## Your vaults\n")
 	if len(vaults) == 0 {
 		b.WriteString("\nNone is ready yet. Try again in a minute.\n")

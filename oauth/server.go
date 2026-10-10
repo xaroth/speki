@@ -38,6 +38,8 @@ const (
 type Config struct {
 	// Issuer is speki's public URL. Every URL speki hands out is built from it, never from requests.
 	Issuer string
+	// Title names this speki on the sign-in pages. Empty means "speki".
+	Title string
 	// ClientMetadataHosts are the hosts whose client metadata documents are accepted.
 	ClientMetadataHosts []string
 	GitHub              gh.OAuthConfig
