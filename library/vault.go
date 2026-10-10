@@ -430,7 +430,7 @@ func (l *Library) apply(ctx context.Context, v *Vault, from, to string) error {
 	defer v.gitMu.RUnlock()
 	diff, err := v.mirror.Diff(from, to)
 	if err != nil {
-		return fmt.Errorf("diff %s..%s: %w", from, to, err)
+		return err // gitsync says which commits
 	}
 	changes := make([]index.Change, 0, len(diff))
 	for _, d := range diff {

@@ -157,10 +157,13 @@ func stallContext(ctx context.Context, timeout time.Duration) (context.Context, 
 			}
 		}
 	})
+	var once sync.Once
 	stop := func() {
-		close(done)
-		cancel()
-		watcher.Wait()
+		once.Do(func() {
+			close(done)
+			cancel()
+			watcher.Wait()
+		})
 	}
 	return ctx, touch, stop
 }

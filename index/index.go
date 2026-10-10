@@ -42,6 +42,7 @@ type Index struct {
 	background sync.WaitGroup
 	lifeMu     sync.Mutex // orders closing against starting background work and swapping generations
 	closed     atomic.Bool
+	closeOnce  sync.Once
 }
 
 // ErrClosed is returned by an index that has been closed.
@@ -106,17 +107,16 @@ func (x *Index) Commit() string {
 }
 
 // Close waits for background work, then closes the index, keeping its file for the next Open. It must
-// not be used afterwards.
+// not be used afterwards. Callers after the first wait until it's done.
 func (x *Index) Close() {
-	x.lifeMu.Lock()
-	if x.closed.Swap(true) {
+	x.closeOnce.Do(func() {
+		x.lifeMu.Lock()
+		x.closed.Store(true)
 		x.lifeMu.Unlock()
-		return
-	}
-	x.lifeMu.Unlock()
-	x.cancel()
-	x.background.Wait()
-	x.current.Load().retire(false)
+		x.cancel()
+		x.background.Wait()
+		x.current.Load().retire(false)
+	})
 }
 
 // acquire returns the current generation with a reference held. Call release when done.
