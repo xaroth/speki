@@ -250,7 +250,7 @@ func (l *Library) initialise(ctx context.Context, v *Vault) {
 	v.setState(StateBuilding, nil)
 	err := v.open(ctx, l)
 	if err == nil {
-		err = l.syncLocked(ctx, v)
+		err = l.syncLocked(ctx, v, false)
 	}
 	if err != nil {
 		v.setState(StateFailed, err)

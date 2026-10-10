@@ -469,7 +469,7 @@ func (l libraryVaults) Sync(ctx context.Context, repoID int64) error {
 	if !ok {
 		return fmt.Errorf("vault %d isn't served", repoID)
 	}
-	return l.lib.Sync(ctx, v)
+	return l.lib.SyncChanges(ctx, v) // knowledge syncs for writes, which mustn't wait for a rebuild
 }
 
 // sharedStore is the state instances share, and the channel they tell each other about changes on.

@@ -484,11 +484,19 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			continue
 		}
 		if err != nil {
-			return Result{}, commitError(st.vault.Name, err)
+			cerr := commitError(st.vault.Name, err)
+			var kerr *Error
+			if !errors.As(cerr, &kerr) { // the outcome is unknown: GitHub may have made the commit
+				if res, ok := b.landed(ctx, v, st.head, p); ok {
+					return res, nil
+				}
+			}
+			return Result{}, cerr
 		}
 
 		res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom}
-		sctx, cancel := context.WithTimeout(ctx, syncWait)
+		// The commit landed: finish the job even if the client went away, within syncWait.
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncWait)
 		err = b.vaults.Sync(sctx, v.RepoID)
 		cancel()
 		if err != nil {
@@ -503,6 +511,23 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		}
 		return res, nil
 	}
+}
+
+// landed checks whether a commit whose answer was lost made it anyway: the branch moved on from head,
+// and the document is now as the plan left it. Reporting that as a success keeps an agent from retrying
+// an edit that would then apply twice.
+func (b *Base) landed(ctx context.Context, v vault.Vault, head string, p plan) (Result, bool) {
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncWait)
+	defer cancel()
+	if b.vaults.Sync(sctx, v.RepoID) != nil {
+		return Result{}, false
+	}
+	c, ok := b.vaults.Copy(v.RepoID)
+	if !ok || c.Index().Commit() == head || !b.indexed(sctx, v.RepoID, p.path, p.version) {
+		return Result{}, false
+	}
+	b.logger.InfoContext(ctx, "a commit whose answer was lost landed", "vault", v.Name)
+	return Result{Version: p.version, Commit: c.Index().Commit(), LinkedFrom: p.linkedFrom}, true
 }
 
 // keptChanging is the conflict for a vault whose branch moved under every attempt. It carries the

@@ -456,3 +456,21 @@ func TestRenamedRepositoryIsFollowed(t *testing.T) {
 		t.Errorf("credentials from installations %v", installations)
 	}
 }
+
+// A sync for a waiting request stops waiting for the vault's lock when the request's time is up.
+func TestSyncChangesHonoursTheContext(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+
+	v.syncMu.Lock() // a long sync holds it
+	defer v.syncMu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	err := l.SyncChanges(ctx, v)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("SyncChanges = %v, want it to give up", err)
+	}
+}

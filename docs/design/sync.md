@@ -185,6 +185,16 @@ When the agent's version doesn't match the index, `knowledge` syncs once before 
 agent may have read a version GitHub has and the index doesn't yet. One write runs at a time per vault on
 an instance; between instances, the expected head keeps commits from overwriting each other.
 
+When GitHub's answer to a commit is lost (a dropped connection, a 502), the commit may have landed
+anyway. Before reporting a failure, `knowledge` syncs and checks whether the branch moved on and the
+document is as the change left it. If so, it reports success, so an agent doesn't retry an `edit` that
+would then apply twice. An agent that hung up before speki could check can still retry; passing
+`version` to `edit` turns such a retry into a `conflict`.
+
+Syncs started for a write give up waiting for the vault's sync lock when the request's time is up, and
+only apply changes. A full rebuild or a fresh clone is left to the poller, and the write answers with
+`index_pending`. The sync after a commit carries on if the client goes away, for at most 10 seconds.
+
 After a successful commit, `knowledge`:
 
 1. computes the new version: the git blob hash of the content it sent

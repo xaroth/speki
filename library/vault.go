@@ -72,7 +72,7 @@ type Vault struct {
 	failures int
 	retryAt  time.Time // when a failed vault, or a failing sync, is tried again
 
-	syncMu       sync.Mutex // one open, sync, reclone or removal at a time; guards the fields below
+	syncMu       syncLock // one open, sync, reclone or removal at a time; guards the fields below
 	removed      bool
 	freshCloneAt time.Time    // last attempt, so a failing fresh clone isn't retried on every sync
 	gitMu        sync.RWMutex // fetches exclude reads of the git copy
@@ -85,6 +85,23 @@ func newVault(info vault.Vault, dir string) *Vault {
 		dir:    dir,
 		info:   info,
 		status: Status{RepoID: info.RepoID, Name: info.Name, State: StateBuilding},
+		syncMu: make(syncLock, 1),
+	}
+}
+
+// syncLock is a mutex a caller can stop waiting for.
+type syncLock chan struct{}
+
+func (l syncLock) Lock()   { l <- struct{}{} }
+func (l syncLock) Unlock() { <-l }
+
+// LockContext takes the lock, or gives up when ctx ends.
+func (l syncLock) LockContext(ctx context.Context) error {
+	select {
+	case l <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -252,14 +269,30 @@ func (v *Vault) close() {
 	}
 }
 
+// ErrRebuildNeeded means a quick sync found the index can't be brought up to date by applying changes:
+// it needs a full rebuild, which is left to the poller.
+var ErrRebuildNeeded = errors.New("the index needs a full rebuild")
+
 // Sync brings a vault's copy and index up to date with GitHub.
 func (l *Library) Sync(ctx context.Context, v *Vault) error {
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
-	return l.syncLocked(ctx, v)
+	return l.syncLocked(ctx, v, false)
 }
 
-func (l *Library) syncLocked(ctx context.Context, v *Vault) (err error) {
+// SyncChanges is Sync for a request that's waiting: it gives up waiting for the vault's sync lock when ctx
+// ends, and only applies changes. A full rebuild or a fresh clone is left to the poller
+// (ErrRebuildNeeded), so a write doesn't wait for one.
+func (l *Library) SyncChanges(ctx context.Context, v *Vault) error {
+	err := v.syncMu.LockContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer v.syncMu.Unlock()
+	return l.syncLocked(ctx, v, true)
+}
+
+func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "library.Sync", trace.WithAttributes(attribute.String("speki.vault", v.Info().Name)))
 	result := "unchanged"
 	defer func() {
@@ -305,6 +338,8 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault) (err error) {
 	case commit != "" && v.mirror.Has(commit):
 		result = "applied"
 		err = l.apply(ctx, v, commit, head)
+	case quick:
+		return ErrRebuildNeeded
 	default:
 		result = "rebuilt"
 		err = l.build(ctx, v, head)
@@ -313,7 +348,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault) (err error) {
 		return err
 	}
 
-	if v.mirror.Packs() > maxPacks && time.Since(v.freshCloneAt) > time.Hour {
+	if !quick && v.mirror.Packs() > maxPacks && time.Since(v.freshCloneAt) > time.Hour {
 		v.freshCloneAt = time.Now()
 		err = l.freshClone(ctx, v)
 		if err != nil {

@@ -583,3 +583,25 @@ func TestWritePathChecks(t *testing.T) {
 		t.Errorf("committed %d times", len(f.github.requests))
 	}
 }
+
+// GitHub made the commit but its answer was lost: speki finds the commit and reports success, so the
+// agent doesn't retry an edit that would apply twice.
+func TestLostAnswerToACommit(t *testing.T) {
+	f := newFixture(t)
+	f.github.lostErr = errors.New("502 Bad Gateway")
+	res, err := f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "# About", NewText: "# About\n\nAn intro."})
+	if err != nil {
+		t.Fatalf("edit whose answer was lost: %v", err)
+	}
+	if res.Commit == "" || res.Version != f.version(t, "README.md") {
+		t.Errorf("result = %+v", res)
+	}
+
+	// A failure where nothing landed is still a failure.
+	f.github.lostErr = nil
+	f.github.err = errors.New("connection reset")
+	_, err = f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "An intro.", NewText: "Intro."})
+	if err == nil {
+		t.Error("a commit that never landed reported success")
+	}
+}
