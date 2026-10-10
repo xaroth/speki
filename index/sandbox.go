@@ -426,7 +426,7 @@ func encodedSize(s string) int {
 }
 
 // paths matches file paths in SQLite messages.
-var paths = regexp.MustCompile(`(?:file:)?/[^\s'"]*`)
+var paths = regexp.MustCompile(`(?:file:)?(?:/[^\s'"/]+)+/?`) // a lone slash, as in "SELECT / 1", isn't one
 
 // aliases matches the names vaults are attached under, where they qualify a table or column.
 var aliases = regexp.MustCompile(`\bv(\d+)\.`)
@@ -434,7 +434,10 @@ var aliases = regexp.MustCompile(`\bv(\d+)\.`)
 // queryError turns a SQLite failure into an error for the agent: the cause wrapped in a sentinel, with
 // the internal database names replaced by vault names and file paths removed.
 func queryError(ctx context.Context, err error, sources []Source) error {
-	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err() // the caller went away; that's not the query's doing
+	}
+	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: it ran longer than allowed", ErrQueryTimeout)
 	}
 	var serr sqlite3.Error

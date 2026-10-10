@@ -169,6 +169,10 @@ func TestQueryEscapes(t *testing.T) {
 		{"quote after a semicolon", "SELECT 1; 'x'", ErrBadQuery},
 		{"wide row", "SELECT " + strings.TrimSuffix(strings.Repeat("1, ", maxQueryColumns+1), ", "), ErrBadQuery},
 		{"empty", "  -- nothing\n", ErrBadQuery},
+		// A WITH may lead into a write; the authorizer and query_only stop those.
+		{"with delete", "WITH x AS (SELECT 1) DELETE FROM v0.documents", ErrBadQuery},
+		{"with insert", "WITH x AS (SELECT 1) INSERT INTO v0.tags SELECT 1, 'x' FROM x", ErrBadQuery},
+		{"with update", "WITH x AS (SELECT 1) UPDATE v0.documents SET title = 'x'", ErrBadQuery},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -373,5 +377,23 @@ func TestQueryLimitCountsEncodedSize(t *testing.T) {
 	}
 	if got := encodedSize(`a<"\`); got != len(`"a\u003c\"\\"`) {
 		t.Errorf("encodedSize = %d", got)
+	}
+}
+
+func TestQueryErrorsKeepTheirSlashes(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	_, err := runQuery(t, sb, sources, "SELECT / 1")
+	if err == nil || strings.Contains(err.Error(), "<file>") {
+		t.Errorf("a lone slash read as a file path: %v", err)
+	}
+}
+
+func TestCancelledQueryIsNotATimeout(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := sb.Query(ctx, sources, "SELECT 1")
+	if errors.Is(err, ErrQueryTimeout) || !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v", err)
 	}
 }
