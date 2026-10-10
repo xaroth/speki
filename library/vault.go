@@ -18,9 +18,8 @@ import (
 
 	"github.com/eve-online-tools/speki/gitsync"
 	"github.com/eve-online-tools/speki/index"
-	"github.com/eve-online-tools/speki/vault"
-
 	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/eve-online-tools/speki/vault"
 )
 
 const (

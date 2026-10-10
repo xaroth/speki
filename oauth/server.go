@@ -13,11 +13,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/seal"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Scopes speki grants.
