@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -496,6 +497,7 @@ func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (Que
 		cells[i] = oneLine(c)
 	}
 	b.WriteString(strings.Join(cells, "\t") + "\n")
+	size, shown := 0, 0
 	for _, row := range out.Rows {
 		for i, v := range row {
 			if v == nil {
@@ -504,12 +506,30 @@ func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (Que
 				cells[i] = oneLine(fmt.Sprint(v))
 			}
 		}
-		b.WriteString(strings.Join(cells, "\t") + "\n")
+		line := strings.Join(cells, "\t") + "\n"
+		size += jsonSize(line)
+		if size > maxQueryText { // the text goes out JSON-encoded too, beside the structured rows
+			break
+		}
+		b.WriteString(line)
+		shown++
 	}
 	fmt.Fprintf(&b, "%d rows", len(out.Rows))
+	if shown < len(out.Rows) {
+		fmt.Fprintf(&b, ", the first %d shown here; the structured result has them all", shown)
+	}
 	if out.Truncated {
 		b.WriteString(", truncated: add a LIMIT or narrow the query to see the rest")
 	}
 	b.WriteString("\n")
 	return out, b.String(), nil
+}
+
+// maxQueryText caps the text rendering of a query result, as it'll be encoded.
+const maxQueryText = 1 << 20
+
+// jsonSize is how many bytes s takes encoded as a JSON string.
+func jsonSize(s string) int {
+	raw, _ := json.Marshal(s) // a string always marshals
+	return len(raw)
 }

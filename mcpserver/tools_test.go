@@ -446,3 +446,31 @@ func (s *safeBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+// The text rendering of a query is capped on its own: it goes out beside the structured rows.
+func TestQueryTextIsCapped(t *testing.T) {
+	row := []any{strings.Repeat("<", 60_000)}
+	rows := make([][]any, 30)
+	for i := range rows {
+		rows[i] = row
+	}
+	kb := &rowsKB{fakeKB: &fakeKB{}, rows: index.Rows{Columns: []string{"x"}, Rows: rows}}
+	s := New(fakeAuth{}, fakeResolver{}, kb, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_, text, err := s.query(t.Context(), access.NewGrant(access.User{}, nil, nil), QueryInput{SQL: "SELECT 1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jsonSize(text) > maxQueryText+200 || !strings.Contains(text, "the structured result has them all") {
+		t.Errorf("text of %d encoded bytes: %q", jsonSize(text), text[len(text)-120:])
+	}
+}
+
+// rowsKB answers queries with fixed rows.
+type rowsKB struct {
+	*fakeKB
+	rows index.Rows
+}
+
+func (r *rowsKB) Query(context.Context, *access.Grant, knowledge.QueryRequest) (index.Rows, error) {
+	return r.rows, nil
+}
