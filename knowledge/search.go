@@ -63,6 +63,8 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	switch {
 	case errors.Is(err, index.ErrEmptyQuery):
 		return index.Results{}, errorf(Invalid, "the query has no words to search for, only exclusions. Add a word")
+	case errors.Is(err, index.ErrTooManyWords):
+		return index.Results{}, errorf(Invalid, "%s. Search for the few words that matter most", err)
 	case errors.Is(err, index.ErrClosed):
 		return index.Results{}, errorf(NotFound, "a vault was removed during the search. Search again")
 	case err != nil:

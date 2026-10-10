@@ -101,7 +101,7 @@ Full-text search across the user's vaults, best match first.
 | `exclude_deprecated` | bool | false. Deprecated documents are included but ranked lower |
 | `limit` | 1 to 50 | 10 |
 
-Search is forgiving. "configuring" finds "configured", "kubernets" finds "kubernetes", and "doctr" finds
+Search is forgiving. "configuring" finds "configured", "kubrenetes" finds "kubernetes", and "doctr" finds
 "doctrine". Matches in titles, aliases and tags count for more than matches in the body. See
 [search-and-query.md](search-and-query.md).
 
@@ -112,7 +112,7 @@ Search is forgiving. "configuring" finds "configured", "kubernets" finds "kubern
     "status": "active", "updated": "...", "version": "...",
     "snippet": "... the proxy **caches** ESI responses for ...", "score": 12.4 }
 ],
-  "corrected": { "kubernets": "kubernetes" },
+  "corrected": { "kubrenetes": "kubernetes" },
   "relaxed": false }
 ```
 

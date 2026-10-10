@@ -2,7 +2,7 @@ package index
 
 // schemaVersion changes whenever schema does. An index with another version is rebuilt; there are no
 // migrations, because rebuilding from git is always possible.
-const schemaVersion = "1"
+const schemaVersion = "2"
 
 // schema creates one vault's index, without the triggers. Documents are only ever inserted and deleted,
 // never updated.
@@ -31,6 +31,7 @@ CREATE TABLE documents (
 );
 CREATE INDEX documents_name ON documents (name);
 CREATE INDEX documents_updated ON documents (updated);
+CREATE INDEX documents_deprecated ON documents (id) WHERE status = 'deprecated'; -- for ranking
 
 CREATE TABLE tags (
 	doc_id INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
@@ -65,9 +66,10 @@ CREATE VIRTUAL TABLE fts USING fts5 (
 	prefix = '2 3'
 );
 
--- Substring matches on names.
+-- Substring matches on names: titles, aliases and file names (not folders, or "ops" would match
+-- everything under ops/).
 CREATE VIRTUAL TABLE names USING fts5 (
-	title, aliases, path,
+	title, aliases, name,
 	content = 'documents', content_rowid = 'id',
 	tokenize = 'trigram'
 );
@@ -99,8 +101,8 @@ const triggers = `
 CREATE TRIGGER documents_insert AFTER INSERT ON documents BEGIN
 	INSERT INTO fts (rowid, title, aliases, tags, description, headings, body)
 		VALUES (new.id, new.title, new.aliases, new.tags, new.description, new.headings, new.body);
-	INSERT INTO names (rowid, title, aliases, path)
-		VALUES (new.id, new.title, new.aliases, new.path);
+	INSERT INTO names (rowid, title, aliases, name)
+		VALUES (new.id, new.title, new.aliases, new.name);
 	INSERT INTO words (rowid, title, aliases, tags, description, headings, body)
 		VALUES (new.id, new.title, new.aliases, new.tags, new.description, new.headings, new.body);
 END;
@@ -108,8 +110,8 @@ END;
 CREATE TRIGGER documents_delete AFTER DELETE ON documents BEGIN
 	INSERT INTO fts (fts, rowid, title, aliases, tags, description, headings, body)
 		VALUES ('delete', old.id, old.title, old.aliases, old.tags, old.description, old.headings, old.body);
-	INSERT INTO names (names, rowid, title, aliases, path)
-		VALUES ('delete', old.id, old.title, old.aliases, old.path);
+	INSERT INTO names (names, rowid, title, aliases, name)
+		VALUES ('delete', old.id, old.title, old.aliases, old.name);
 	INSERT INTO words (words, rowid, title, aliases, tags, description, headings, body)
 		VALUES ('delete', old.id, old.title, old.aliases, old.tags, old.description, old.headings, old.body);
 END;

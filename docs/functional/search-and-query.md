@@ -14,15 +14,17 @@ Both only see the vaults the user can read.
 - Words are matched by their stem: "configuring", "configured" and "configuration" all match each other.
 - The last word also matches as a prefix, so "doctr" finds "doctrine". This helps when only the start of a
   name is known.
-- Words that appear nowhere in the user's vaults are replaced by the closest known words: "kubernets"
-  becomes "kubernetes". The result says which words were corrected.
-- `"quoted phrases"` must appear as written, after stemming.
+- Words that appear nowhere in the user's vaults are replaced by the closest known words: "kubrenetes"
+  becomes "kubernetes". The result says which words were corrected. A word that matches by its stem isn't
+  corrected: "runs" finds "run".
+- `"quoted phrases"` and `"quoted words"` must appear as written, after stemming: no prefix matching and no
+  correction.
 - `-word` excludes documents containing the word.
 - All words have to match somewhere in the document (title, tags, aliases, description, headings or
   body). If that gives no results, speki tries again requiring any word, and sets `relaxed` in the result.
 
 Titles, file names and aliases are also matched by substring, so "auth" finds a document titled
-"OAuthProvider".
+"OAuthProvider". Such matches rank below every full-text match.
 
 ### Ranking
 

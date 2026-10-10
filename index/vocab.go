@@ -85,6 +85,19 @@ func (v *vocabulary) suggest(w string, maxDistance int) []suggestion {
 	seen := make(map[int32]bool)
 	var out []suggestion
 	n := utf8.RuneCountInString(w)
+	if n <= 4 {
+		// A short word can share no trigram with its correction ("cot" and "cat"): compare it with every
+		// word of a nearby length instead, which is cheap for words this short.
+		for i, cand := range v.words {
+			if abs(utf8.RuneCountInString(cand)-n) > maxDistance {
+				continue
+			}
+			if d := distance(w, cand, maxDistance); d <= maxDistance {
+				out = append(out, suggestion{word: cand, distance: d, docs: v.docs[i]})
+			}
+		}
+		return out
+	}
 	for _, t := range trigramsOf(w) {
 		for _, i := range v.trigrams[t] {
 			if seen[i] {

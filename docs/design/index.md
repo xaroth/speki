@@ -177,23 +177,28 @@ func (x *Index) Search(ctx context.Context, q Query) ([]Hit, error)
 2. Correct words. For each word, ask `words_vocab` whether it exists, in the same read transaction as the
    search, so a word added by the agent's own write a moment ago counts. A word that exists in none of the
    searched vaults is replaced by the best candidate from the in-memory vocabularies: edit distance 1 for
-   words up to 5 letters, 2 for longer ones, highest document count wins. A trigram map over each vocabulary
+   words up to 5 letters, 2 for longer ones, highest document count wins. A word that matches anything by its
+   stem (`runs` where documents say `run`) isn't corrected, and quoted words never are. A trigram map over each vocabulary
    keeps candidate lookups well under a millisecond. The in-memory vocabulary may be a moment behind, which
    only means a brand-new word isn't suggested as a correction yet.
-3. Build the FTS5 expression: each word quoted, the last one with `*`, phrases as phrases, joined with `AND`,
-   exclusions with `NOT`. Tag, status and path-prefix filters go into the SQL, not the expression.
-4. Run:
+3. Build the FTS5 expression: each word quoted, the last unquoted one with `*`, phrases as phrases, joined
+   with `AND`, and the exclusions as one group: `(...) NOT ("a" OR "b")`. Repeated words count once; more
+   than 32 distinct words or phrases is `invalid`. Tag, status and path-prefix filters go into the SQL, not
+   the expression.
+4. Rank inside the full-text table, deprecated documents halved there through a partial index on them,
+   so they can't push an active document out of the top, and join only the best:
 
    ```sql
-   SELECT d.path, d.title, d.description, d.tags, d.status, d.updated, d.version,
-          snippet(fts, 5, '**', '**', '…', 32) AS snippet,
-          bm25(fts, 10, 10, 6, 4, 3, 1) * CASE d.status WHEN 'deprecated' THEN 0.5 ELSE 1 END AS score
-   FROM fts JOIN documents d ON d.id = fts.rowid
-   WHERE fts MATCH ?
-   ORDER BY score LIMIT ?;
+   WITH ranked AS (
+     SELECT rowid AS id, bm25(fts, 10, 10, 6, 4, 3, 1) *
+            CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
+     FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?)
+   SELECT d.path, d.title, ..., ranked.rank AS score FROM ranked JOIN documents d ON d.id = ranked.id
+   ORDER BY score;
    ```
 
-   plus a query on `names` for substring hits on the raw words, scored below any full-text hit in a title.
+   plus a query on `names` (titles, aliases and file names, not folders) for substring hits on the raw
+   words. Those rank below every full-text hit in their vault.
 5. `knowledge` merges per vault, then across vaults by score (bm25 is negative, lower is better; the result
    shows its absolute value), and keeps the top `limit`.
 6. If there are no results and the query had more than one word, it runs again with `OR` and marks the
