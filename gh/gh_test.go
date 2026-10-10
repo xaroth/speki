@@ -21,7 +21,6 @@ import (
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-cmp/cmp"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -109,28 +108,27 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func newTestClient(t *testing.T) (*Client, *fakeGitHub, *prometheus.Registry) {
+func newTestClient(t *testing.T) (*Client, *fakeGitHub) {
 	t.Helper()
 	fake := &fakeGitHub{t: t}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
-	reg := prometheus.NewRegistry()
-	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL}, reg)
+	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return c, fake, reg
+	return c, fake
 }
 
 func TestNewRejectsBadKey(t *testing.T) {
-	_, err := New(Config{AppID: 1, PrivateKey: []byte("not a key")}, prometheus.NewRegistry())
+	_, err := New(Config{AppID: 1, PrivateKey: []byte("not a key")})
 	if err == nil {
 		t.Fatal("New accepted a bad key")
 	}
 }
 
 func TestAppOwner(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
 	id, err := c.AppOwner(t.Context())
 	if err != nil {
 		t.Fatalf("AppOwner: %v", err)
@@ -141,7 +139,7 @@ func TestAppOwner(t *testing.T) {
 }
 
 func TestInstallationsPaginates(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
 	got, err := c.Installations(t.Context())
 	if err != nil {
 		t.Fatalf("Installations: %v", err)
@@ -156,7 +154,7 @@ func TestInstallationsPaginates(t *testing.T) {
 }
 
 func TestRepositoriesAndFile(t *testing.T) {
-	c, fake, _ := newTestClient(t)
+	c, fake := newTestClient(t)
 
 	repos, err := c.Repositories(t.Context(), 1)
 	if err != nil {
@@ -191,7 +189,7 @@ func TestRepositoriesAndFile(t *testing.T) {
 }
 
 func TestGoneInstallation(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
 	_, err := c.Repositories(t.Context(), 9)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
@@ -203,7 +201,7 @@ func TestGoneInstallation(t *testing.T) {
 }
 
 func TestRefusedTokenIsNotGone(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
 	_, err := c.Repositories(t.Context(), 8)
 	if err == nil || errors.Is(err, ErrNotFound) {
 		t.Errorf("403 on token creation: err = %v, want a plain error", err)
@@ -211,7 +209,7 @@ func TestRefusedTokenIsNotGone(t *testing.T) {
 }
 
 func TestBranchHead(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
 
 	head, err := c.BranchHead(t.Context(), 1, "eve-online-tools/kb", "main", "")
 	if err != nil {
@@ -241,7 +239,7 @@ func TestBranchHead(t *testing.T) {
 }
 
 func TestRepositoryID(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
 	id, err := c.RepositoryID(t.Context(), 1, "eve-online-tools/kb")
 	if err != nil || id != 100 {
 		t.Errorf("RepositoryID = %d, %v", id, err)
@@ -252,46 +250,32 @@ func TestRepositoryID(t *testing.T) {
 	}
 }
 
-func TestMetrics(t *testing.T) {
-	c, _, reg := newTestClient(t)
-	_, err := c.AppOwner(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := c.metrics
-	if got := testutil.ToFloat64(m.requests.WithLabelValues("app", "200")); got != 1 {
-		t.Errorf("app requests = %v, want 1", got)
-	}
-	if got := testutil.ToFloat64(m.remaining.WithLabelValues("app")); got != 4999 {
-		t.Errorf("remaining = %v, want 4999", got)
-	}
-	n, err := testutil.GatherAndCount(reg, "speki_github_requests_total")
-	if err != nil || n == 0 {
-		t.Errorf("metric not registered: %d, %v", n, err)
-	}
-}
-
 // An installation call counts once, as installation, and its token request as app; the app's budget
 // isn't overwritten by the installation's.
 func TestMetricsByKind(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
+	tests := []struct {
+		kind, status string
+		want         float64
+	}{{"app", "201", 1}, {"app", "200", 0}, {"installation", "200", 1}}
+	before := make([]float64, len(tests)) // the counters are shared by the whole test binary
+	for i, tt := range tests {
+		before[i] = testutil.ToFloat64(githubRequests.WithLabelValues(tt.kind, tt.status))
+	}
+	githubRemaining.WithLabelValues("app").Set(4999)
 	_, err := c.RepositoryID(t.Context(), 1, "eve-online-tools/kb")
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := c.metrics
-	for _, tt := range []struct {
-		kind, status string
-		want         float64
-	}{{"app", "201", 1}, {"app", "200", 0}, {"installation", "200", 1}} {
-		if got := testutil.ToFloat64(m.requests.WithLabelValues(tt.kind, tt.status)); got != tt.want {
+	for i, tt := range tests {
+		if got := testutil.ToFloat64(githubRequests.WithLabelValues(tt.kind, tt.status)) - before[i]; got != tt.want {
 			t.Errorf("%s %s requests = %v, want %v", tt.kind, tt.status, got, tt.want)
 		}
 	}
-	if got := testutil.ToFloat64(m.remaining.WithLabelValues("app")); got == 3000 {
+	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("app")); got == 3000 {
 		t.Error("the app's budget shows the installation's")
 	}
-	if got := testutil.ToFloat64(m.remaining.WithLabelValues("installation")); got != 3000 {
+	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 3000 {
 		t.Errorf("installation remaining = %v, want 3000", got)
 	}
 }
@@ -299,16 +283,13 @@ func TestMetricsByKind(t *testing.T) {
 // The installation gauge shows the lowest recent budget, and a budget below 10% is warned about once.
 func TestRateBudget(t *testing.T) {
 	var logged bytes.Buffer
-	m, err := newMetrics(prometheus.NewRegistry(), slog.New(slog.NewTextHandler(&logged, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := newMetrics(slog.New(slog.NewTextHandler(&logged, nil)))
 	header := func(remaining string) http.Header {
 		return http.Header{"X-Ratelimit-Remaining": {remaining}, "X-Ratelimit-Limit": {"5000"}}
 	}
 	m.record("installation", 1, header("100"))
 	m.record("installation", 2, header("4000"))
-	if got := testutil.ToFloat64(m.remaining.WithLabelValues("installation")); got != 100 {
+	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 100 {
 		t.Errorf("installation remaining = %v, want the lowest, 100", got)
 	}
 	m.record("installation", 1, header("50"))
@@ -325,7 +306,7 @@ func TestRateBudget(t *testing.T) {
 	m.installs[2] = reading{remaining: 20, at: time.Now(), reset: time.Now().Add(-time.Second)}
 	m.mu.Unlock()
 	m.record("installation", 3, header("3900"))
-	if got := testutil.ToFloat64(m.remaining.WithLabelValues("installation")); got != 3900 {
+	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 3900 {
 		t.Errorf("installation remaining = %v after the low readings aged out or were refilled, want 3900", got)
 	}
 }
@@ -333,16 +314,17 @@ func TestRateBudget(t *testing.T) {
 // A failed installation token request counts as the app's, not as an installation call, and its
 // response body is closed.
 func TestTokenFailureCounts(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
+	app403 := testutil.ToFloat64(githubRequests.WithLabelValues("app", "403"))
+	installErrors := testutil.ToFloat64(githubRequests.WithLabelValues("installation", "error"))
 	_, err := c.RepositoryID(t.Context(), 8, "eve-online-tools/kb")
 	if err == nil {
 		t.Fatal("RepositoryID succeeded without a token")
 	}
-	m := c.metrics
-	if got := testutil.ToFloat64(m.requests.WithLabelValues("app", "403")); got != 1 {
+	if got := testutil.ToFloat64(githubRequests.WithLabelValues("app", "403")) - app403; got != 1 {
 		t.Errorf("app 403 requests = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(m.requests.WithLabelValues("installation", "error")); got != 0 {
+	if got := testutil.ToFloat64(githubRequests.WithLabelValues("installation", "error")) - installErrors; got != 0 {
 		t.Errorf("installation errors = %v, want 0", got)
 	}
 	body := &closeCounter{Reader: strings.NewReader("{}")}
@@ -369,7 +351,7 @@ func (c *closeCounter) Close() error {
 }
 
 func TestFileTooLarge(t *testing.T) {
-	c, _, _ := newTestClient(t)
+	c, _ := newTestClient(t)
 	_, err := c.File(t.Context(), 1, "eve-online-tools/big", "main", "speki.yaml")
 	if !errors.Is(err, ErrTooLarge) {
 		t.Errorf("a 2 MB file: %v, want ErrTooLarge", err)

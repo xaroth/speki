@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/eve-online-tools/speki/gh"
@@ -58,7 +57,6 @@ type Library struct {
 	opening    *semaphore.Weighted // limits concurrent clones and builds
 	background sync.WaitGroup
 	closed     atomic.Bool
-	syncs      *prometheus.CounterVec
 }
 
 // New returns an empty library.
@@ -75,10 +73,6 @@ func New(github githubAPI, opts Options, logger *slog.Logger) *Library {
 		logger:  logger,
 		vaults:  make(map[int64]*Vault),
 		opening: semaphore.NewWeighted(int64(opts.Opening)),
-		syncs: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "speki_sync_total",
-			Help: "Vault syncs, by result: unchanged, applied, rebuilt, deferred (a rebuild left to the poller) or failed.",
-		}, []string{"result"}),
 	}
 }
 
@@ -184,6 +178,7 @@ func (l *Library) Update(ctx context.Context, changes vault.Changes) {
 			l.background.Go(func() { l.remove(v) })
 		}
 	}
+	l.publish()
 }
 
 // Reconcile removes the vaults the library has that aren't in vaults, the complete list discovery found.

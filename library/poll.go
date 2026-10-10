@@ -38,6 +38,7 @@ func (l *Library) Poll(ctx context.Context) {
 		})
 	}
 	_ = g.Wait()
+	l.publish()
 }
 
 func (l *Library) check(ctx context.Context, v *Vault) {

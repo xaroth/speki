@@ -52,7 +52,7 @@ sits at the top level, named after what it does. No `internal/`, no `util`, no l
 |---|---|---|
 | `cmd/speki` | The process: flags, reading the config file and environment, the logger, signals, exit codes | `service`, `telemetry` |
 | `service` | Speki as one runnable thing: `service.Config`, validation and defaults, building every component, the HTTP servers, startup and shutdown order | everything below |
-| `telemetry` | slog handler with redaction and request IDs, OpenTelemetry tracer and server spans. Each package registers its own metrics; `service` owns the Prometheus registry | |
+| `telemetry` | slog handler with redaction and request IDs, OpenTelemetry tracer and server spans. Each package declares its own metrics with `promauto` on the default registry | |
 | `seal` | Keyring, sealing and opening typed blobs with AES-256-GCM | |
 | `store` | `Memory` and `Redis`: single-use codes, refresh locks and results, and change notices between instances | |
 | `gh` | GitHub API: app JWT, installation tokens, user OAuth, user and installation lookups, commits, history | |
@@ -215,7 +215,7 @@ dependency for a fake happens through `Config`, not through globals or build tag
 
 1. Check the configuration and fill in defaults. `New` returns an error naming every bad key at once, and
    `cmd/speki` prints it and exits.
-2. Set up the metrics registry and tracer, the keyring, the store (memory or Redis), the GitHub client, and
+2. Set up the tracer, the keyring, the store (memory or Redis), the GitHub client, and
    every other component. Nothing connects to anything yet.
 3. Start the HTTP servers. `/healthz` answers right away. `/readyz` and `/mcp` answer 503 until step 5.
 4. Remove leftovers of interrupted index builds. Open every vault that already has a usable copy and

@@ -14,8 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 
@@ -41,7 +39,6 @@ const shutdownTimeout = 25 * time.Second
 type Service struct {
 	cfg      Config
 	logger   *slog.Logger
-	metrics  *prometheus.Registry
 	github   *gh.Client
 	library  *library.Library
 	sandbox  *index.Sandbox
@@ -95,18 +92,12 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		return nil, fmt.Errorf("configuration: %w", err)
 	}
 
-	metrics := prometheus.NewRegistry()
-	metrics.MustRegister(
-		collectors.NewGoCollector(),
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	)
-
 	github, err := gh.New(gh.Config{
 		AppID:      cfg.GitHub.AppID,
 		PrivateKey: []byte(cfg.GitHub.PrivateKey),
 		APIURL:     cfg.GitHub.APIURL,
 		Logger:     logger,
-	}, metrics)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("configuration: %w", err)
 	}
@@ -116,7 +107,6 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		GitURL:  cfg.GitHub.GitURL,
 		Tokens:  func(id int64) gitsync.TokenSource { return github.InstallationTokens(id) },
 	}, logger)
-	metrics.MustRegister(lib.Collector())
 
 	keys, err := seal.ParseKeyring([]byte(cfg.Auth.Keys))
 	if err != nil {
@@ -144,7 +134,6 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 			return err
 		},
 	}, keys, github, shared, logger)
-	metrics.MustRegister(auth.Collector())
 
 	sandbox, err := index.NewSandbox()
 	if err != nil {
@@ -157,12 +146,10 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		Title:       cfg.Instance.Title,
 		Description: cfg.Instance.Description,
 	}, cfg.Version, logger)
-	metrics.MustRegister(mcp.Collector())
 
 	return &Service{
 		cfg:        cfg,
 		logger:     logger,
-		metrics:    metrics,
 		github:     github,
 		library:    lib,
 		sandbox:    sandbox,
@@ -423,7 +410,7 @@ func (s *Service) whenReady(next http.Handler) http.Handler {
 // reachable through the public one.
 func (s *Service) internalHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", promhttp.HandlerFor(s.metrics, promhttp.HandlerOpts{}))
+	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.HandleFunc("GET /status", s.status)
 	return mux
 }

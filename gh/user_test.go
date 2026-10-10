@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // fakeUserGitHub answers the OAuth and user endpoints for the user token "ghu_good".
@@ -83,7 +82,7 @@ func fakeUserGitHub(t *testing.T) *httptest.Server {
 func newUserTestClient(t *testing.T) (*Client, OAuthConfig) {
 	t.Helper()
 	srv := fakeUserGitHub(t)
-	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL}, prometheus.NewRegistry())
+	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
