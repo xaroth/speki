@@ -10,11 +10,11 @@ import (
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/time/rate"
 
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/oauth"
-	"github.com/eve-online-tools/speki/telemetry"
 )
 
 // maxBody is the largest request speki reads.
@@ -39,30 +39,39 @@ type resolver interface {
 
 // Server is the MCP endpoint.
 type Server struct {
-	auth   authenticator
-	access resolver
-	logger *slog.Logger
-	mcp    *mcp.Server
+	auth    authenticator
+	access  resolver
+	kb      knowledgeBase
+	logger  *slog.Logger
+	mcp     *mcp.Server
+	metrics *metrics
 
 	mu       sync.Mutex
 	limiters map[int64]*rate.Limiter
 }
 
-// New returns the MCP endpoint.
-func New(auth authenticator, access resolver, version string, logger *slog.Logger) *Server {
+// New returns the MCP endpoint, with its tools.
+func New(auth authenticator, access resolver, kb knowledgeBase, version string, logger *slog.Logger) *Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "speki",
 		Title:   "Speki knowledge base",
 		Version: version,
-	}, &mcp.ServerOptions{})
-	return &Server{
+	}, &mcp.ServerOptions{Instructions: instructions})
+	s := &Server{
 		auth:     auth,
 		access:   access,
+		kb:       kb,
 		logger:   logger,
 		mcp:      srv,
+		metrics:  newMetrics(),
 		limiters: make(map[int64]*rate.Limiter),
 	}
+	s.addTools()
+	return s
 }
+
+// Collector returns the tool call metrics, for registering.
+func (s *Server) Collector() prometheus.Collector { return s.metrics }
 
 // Handler returns the whole /mcp stack, outermost first: cross-origin check, body limit, token check,
 // rate limit, grant, MCP.
@@ -112,8 +121,7 @@ func (s *Server) grant(next http.Handler) http.Handler {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		case err != nil:
-			s.logger.Error("resolving access failed", "login", id.Login, "err", err,
-				"request_id", telemetry.RequestIDFrom(r.Context()))
+			s.logger.ErrorContext(r.Context(), "resolving access failed", "login", id.Login, "err", err)
 			http.Error(w, "speki couldn't check your access with GitHub; try again", http.StatusBadGateway)
 			return
 		}

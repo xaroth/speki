@@ -22,6 +22,7 @@ import (
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/gitsync"
+	"github.com/eve-online-tools/speki/knowledge"
 	"github.com/eve-online-tools/speki/library"
 	"github.com/eve-online-tools/speki/mcpserver"
 	"github.com/eve-online-tools/speki/oauth"
@@ -101,6 +102,16 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		CheckUser: resolver.CheckMember,
 	}, keys, github, store.NewMemory(), logger)
 
+	kb := knowledge.New(func(id int64) (knowledge.Copy, bool) {
+		v, ok := lib.Vault(id)
+		if !ok {
+			return nil, false // not a typed nil inside the interface
+		}
+		return v, true
+	}, github, logger)
+	mcp := mcpserver.New(auth, resolver, kb, cfg.Version, logger)
+	metrics.MustRegister(mcp.Collector())
+
 	return &Service{
 		cfg:        cfg,
 		logger:     logger,
@@ -108,7 +119,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		github:     github,
 		library:    lib,
 		auth:       auth,
-		mcp:        mcpserver.New(auth, resolver, cfg.Version, logger),
+		mcp:        mcp,
 		started:    make(chan struct{}),
 		discovered: make(chan struct{}),
 	}, nil

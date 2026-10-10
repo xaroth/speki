@@ -85,18 +85,21 @@ The rule that matters most for security: content is only handed out after checki
 // Grant is what one signed-in user may do right now, resolved from GitHub and the token's scope.
 type Grant struct {
 	user     User
-	readable map[int64]bool // repository IDs
+	readable []vault.Vault // sorted by name
 	writable map[int64]bool
 }
 
-func NewGrant(u User, readable, writable []int64) *Grant // used by Resolver and tests
+func NewGrant(u User, readable []vault.Vault, writable []int64) *Grant // used by Resolver and tests
 
-func (g *Grant) User() User          // GitHub ID, login, GitHub token, client name
-func (g *Grant) CanRead(repoID int64) bool
+func (g *Grant) User() User                          // GitHub ID, login, GitHub token, client name
+func (g *Grant) Vault(name string) (vault.Vault, bool) // a readable vault, by name
+func (g *Grant) Readable() []vault.Vault
 func (g *Grant) CanWrite(repoID int64) bool
 func (g *Grant) ReadOnlySession() bool
-func (g *Grant) Readable() []int64
 ```
+
+Agents name vaults, so `knowledge` looks a vault up through `grant.Vault(name)`: a vault the user can't
+read doesn't resolve, and the answer is the same `not_found` as for a vault that doesn't exist.
 
 Vaults are keyed by repository ID internally, so a renamed or transferred repository keeps its grant,
 its cache entries and its files. People and agents use the `owner/repo` name.
@@ -139,10 +142,10 @@ status code, and clients only start a new sign-in on a 401.
 1. The `/mcp` stack above runs. `Resolve` finds the user's GitHub permissions in its 60-second cache, keyed
    by a hash of the GitHub token, and applies the token's scope.
 2. The `search` tool handler converts its input and calls `knowledge.Search(ctx, grant, request)`.
-3. `knowledge` picks the vaults: the requested ones, each checked with `grant.CanRead`, or all readable
-   ones.
-4. `library` runs the search on each vault's index in parallel. `knowledge` merges the results and
-   returns the top ones.
+3. `knowledge` picks the vaults: the requested ones, each looked up with `grant.Vault`, or all readable
+   ones, and takes each one's index from `library`.
+4. `index.Search` runs the search on every index in parallel and merges the results. It searches all of
+   them at once because typo correction needs every vault's vocabulary.
 5. The handler turns the result into structured content plus a text rendering.
 
 `edit` takes these steps after the grant:

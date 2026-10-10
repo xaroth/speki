@@ -29,7 +29,10 @@ type fakeGitHub struct {
 	dir    string
 }
 
-const fakeRepo = "ours/kb"
+const (
+	fakeRepo      = "ours/kb"
+	fakeUserToken = "ghu_test"
+)
 
 func newFakeGitHub(t *testing.T, files map[string]string) *fakeGitHub {
 	t.Helper()
@@ -76,7 +79,34 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(v)
 	}
+	if strings.HasPrefix(r.URL.Path, "/user") || strings.HasPrefix(r.URL.Path, "/repos/"+fakeRepo+"/commits") {
+		if r.Header.Get("Authorization") != "Bearer "+fakeUserToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			write(map[string]any{"message": "Bad credentials"})
+			return
+		}
+	}
 	switch r.URL.Path {
+	case "/login/oauth/access_token":
+		_ = r.ParseForm()
+		if r.Form.Get("code") != "github-code" || r.Form.Get("client_secret") != "secret" {
+			write(map[string]any{"error": "bad_verification_code"})
+			return
+		}
+		write(map[string]any{"access_token": fakeUserToken, "expires_in": 28800,
+			"refresh_token": "ghr_test", "refresh_token_expires_in": 15897600})
+	case "/user":
+		write(map[string]any{"id": 7, "login": "octocat"})
+	case "/user/installations":
+		write(map[string]any{"total_count": 1, "installations": []any{map[string]any{"id": 1}}})
+	case "/user/installations/1/repositories":
+		write(map[string]any{"total_count": 1, "repositories": []any{
+			map[string]any{"id": 100, "permissions": map[string]any{"pull": true}},
+		}})
+	case "/repos/" + fakeRepo + "/commits":
+		write([]any{map[string]any{"sha": "c1", "author": map[string]any{"login": "octocat"},
+			"commit": map[string]any{"message": "Add fleet notes\n\nSpeki-Client: Claude Code\n",
+				"author": map[string]any{"name": "Octo", "date": "2026-10-09T14:02:11Z"}}}})
 	case "/app":
 		write(map[string]any{"id": 1, "owner": map[string]any{"id": 42}})
 	case "/app/installations":
@@ -131,6 +161,7 @@ func testConfig(t *testing.T, fake *fakeGitHub) Config {
 			ClientID:     "Iv1.test",
 			ClientSecret: "secret",
 			APIURL:       fake.api.URL,
+			OAuthURL:     fake.api.URL,
 			GitURL:       strings.TrimSuffix(fake.gitURL, "/"),
 		},
 		Auth: Auth{Keys: testKeys()},
