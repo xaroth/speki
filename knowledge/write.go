@@ -144,7 +144,7 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 			return plan{}, err
 		}
 		text := string(raw)
-		n := strings.Count(text, req.OldText)
+		n := countOverlapping(text, req.OldText)
 		switch {
 		case n == 0:
 			return plan{}, errorf(Invalid, "old_text doesn't appear in %s. Read it again and copy the text exactly; whitespace and line endings count", cur.Path)
@@ -203,6 +203,9 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 		newPath, err := st.newPath(to, cur.Path)
 		if err != nil {
 			return plan{}, err
+		}
+		if newPath == cur.Path { // to was the same path in another normalisation
+			return plan{}, errorf(Invalid, "%s and %s are the same path", from, to)
 		}
 		raw, err := st.copy.Blob(cur.Version)
 		if err != nil {
@@ -314,6 +317,11 @@ func (st state) newPath(path, moving string) (string, error) {
 	if err != nil {
 		return "", errorf(Invalid, "%s", err)
 	}
+	for i := strings.IndexByte(checked, '/'); i > 0; i = next(checked, i) {
+		if taken[checked[:i]] == "a file" {
+			return "", errorf(AlreadyExists, "%s is a file in the vault, so nothing can go under it. Pick another path", checked[:i])
+		}
+	}
 	switch taken[checked] {
 	case "a file":
 		return "", errorf(AlreadyExists, "%s exists in the vault but isn't a document speki reads (it may be over 1 MiB). Pick another path", checked)
@@ -321,6 +329,29 @@ func (st state) newPath(path, moving string) (string, error) {
 		return "", errorf(AlreadyExists, "%s is a folder in the vault. Pick another path", checked)
 	}
 	return checked, nil
+}
+
+// countOverlapping counts the places sub appears in s, overlapping ones too: "ab ab" appears twice in
+// "ab ab ab", and an edit of it would be ambiguous.
+func countOverlapping(s, sub string) int {
+	n := 0
+	for i := 0; ; i++ {
+		j := strings.Index(s[i:], sub)
+		if j < 0 {
+			return n
+		}
+		n++
+		i += j
+	}
+}
+
+// next returns the index of the next "/" in p after i, or -1.
+func next(p string, i int) int {
+	j := strings.IndexByte(p[i+1:], '/')
+	if j < 0 {
+		return -1
+	}
+	return i + 1 + j
 }
 
 // prepareDocument checks the new content of a document against its current content (nil for a new

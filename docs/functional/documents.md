@@ -31,7 +31,10 @@ A path speki will write:
 - is relative, with `/` as separator, and has no `.` or `..` segments
 - has no segment starting with `.`
 - isn't `speki.yaml`
-- has no characters from `[]#^|:?*<>"\` and no control characters
+- has no characters from `[]#^|:?*<>"\`, no control characters, and no invisible ones (zero-width
+  spaces, direction marks)
+- has no part named like a Windows device (`con`, `nul`, `aux`, `prn`, `com1`, `lpt1` and so on) and
+  no part ending in a space or a dot, so Obsidian users on Windows can open it
 - has segments of at most 255 bytes and at most 10 folders deep
 - doesn't differ only in letter case from an existing path
 

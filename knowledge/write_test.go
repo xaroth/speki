@@ -558,3 +558,28 @@ func TestGrantIsCheckedFirst(t *testing.T) {
 	_, err = f.base.Edit(ctx, readOnly, EditRequest{Vault: "ours/kb", Path: "a.md"})
 	wantCode(t, err, ReadOnlySession)
 }
+
+func TestWritePathChecks(t *testing.T) {
+	f := newFixture(t)
+	f.copies[1] = newCopy(t, map[string]string{"README.md": "# R\n", "notes.txt": "x", "café.md": "# Café\n", "body.md": "# B\n\nab ab ab\n"})
+	ctx := t.Context()
+
+	// Nothing goes under a file.
+	for _, p := range []string{"README.md/x.md", "notes.txt/a.md"} {
+		_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: p, Content: "# X\n"})
+		wantCode(t, err, AlreadyExists)
+	}
+	_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "café.md", To: "README.md/café.md", Version: f.version(t, "café.md")})
+	wantCode(t, err, AlreadyExists)
+
+	// A move to the same path in another normalisation isn't a move.
+	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "café.md", To: norm.NFD.String("café.md"), Version: f.version(t, "café.md")})
+	wantCode(t, err, Invalid)
+
+	// Overlapping matches count: "ab ab" appears twice in "ab ab ab".
+	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "body.md", OldText: "ab ab", NewText: "x"})
+	wantCode(t, err, Invalid)
+	if len(f.github.requests) != 0 {
+		t.Errorf("committed %d times", len(f.github.requests))
+	}
+}
