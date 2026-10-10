@@ -28,26 +28,9 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 		return index.Results{}, errorf(CodeInvalid, "the query is empty. Give one or more words to search for")
 	}
 
-	var sources []index.Source
-	if len(req.Vaults) == 0 {
-		for _, v := range g.Readable() {
-			c, ok := b.vaults.Copy(v.RepoID)
-			if ok {
-				sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
-			}
-		}
-	}
-	seen := map[int64]bool{}
-	for _, name := range req.Vaults {
-		v, c, err := b.open(g, name)
-		if err != nil {
-			return index.Results{}, err
-		}
-		if seen[v.RepoID] { // named twice: searched once, or every hit would come back twice
-			continue
-		}
-		seen[v.RepoID] = true
-		sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
+	sources, err := b.sources(g, req.Vaults)
+	if err != nil {
+		return index.Results{}, err
 	}
 
 	prefix := strings.Trim(req.Path, "/")

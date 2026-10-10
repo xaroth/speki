@@ -1,6 +1,13 @@
 package knowledge
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrRebuilding is what Vaults.Sync returns when a vault's index needs a full rebuild before it can catch
+// up, which isn't done for a waiting request.
+var ErrRebuilding = errors.New("the vault's index is being rebuilt")
 
 // Code says what kind of failure an Error is. Agents see it first, and act on it.
 type Code string
@@ -30,6 +37,11 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
+
+// signedOut is the error for a user whose GitHub token GitHub no longer accepts.
+func signedOut() *Error {
+	return errorf(CodeUnavailable, "GitHub no longer accepts the user's sign-in. Ask them to reconnect speki")
+}
 
 func errorf(code Code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}

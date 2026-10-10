@@ -108,6 +108,34 @@ func (b *Base) open(g *access.Grant, name string) (vault.Vault, Copy, error) {
 	return v, c, nil
 }
 
+// sources returns the indexes to search or query: the named vaults, each once however often it's named,
+// or every vault the user may read when names is empty.
+func (b *Base) sources(g *access.Grant, names []string) ([]index.Source, error) {
+	var sources []index.Source
+	if len(names) == 0 {
+		for _, v := range g.Readable() {
+			c, ok := b.vaults.Copy(v.RepoID)
+			if ok {
+				sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
+			}
+		}
+		return sources, nil
+	}
+	seen := map[int64]bool{}
+	for _, name := range names {
+		v, c, err := b.open(g, name)
+		if err != nil {
+			return nil, err
+		}
+		if seen[v.RepoID] { // named twice: searched once, or every hit would come back twice
+			continue
+		}
+		seen[v.RepoID] = true
+		sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
+	}
+	return sources, nil
+}
+
 func noVault(name string) *Error {
 	return errorf(CodeNotFound, "there's no vault named %q that you can read. Call list without arguments to see your vaults", name)
 }
