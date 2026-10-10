@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -361,4 +363,52 @@ func TestHandleErrors(t *testing.T) {
 	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "unavailable")); got != 0 {
 		t.Errorf("a canceled call counted as unavailable")
 	}
+}
+
+func TestToolCallsAreLogged(t *testing.T) {
+	var buf safeBuffer
+	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, "test", telemetry.NewLogger(&buf, slog.LevelInfo))
+	srv := httptest.NewServer(telemetry.RequestID(s.Handler()))
+	defer srv.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{
+		Endpoint:             srv.URL,
+		HTTPClient:           &http.Client{Transport: bearer{"alice"}},
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+	call(t, cs, "read", map[string]any{"vault": "ours/kb", "path": "a.md"})
+
+	var line map[string]any
+	for l := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(l), &m) == nil && m["msg"] == "tool call" {
+			line = m
+		}
+	}
+	if line["tool"] != "read" || line["login"] != "alice" || line["vault"] != "ours/kb" || line["path"] != "a.md" ||
+		line["outcome"] != "ok" || line["request_id"] == nil || line["duration_ms"] == nil {
+		t.Errorf("log line = %v", line)
+	}
+}
+
+// safeBuffer is a bytes.Buffer the server and the test can use at once.
+type safeBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

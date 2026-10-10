@@ -134,6 +134,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	clearCookie(w, consentCookie)
 	if r.PostForm.Get("decision") != "allow" {
+		s.signIns.WithLabelValues("declined").Inc()
 		s.redirectError(w, r, cv.Request, "access_denied", "the user declined")
 		return
 	}
@@ -179,6 +180,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	clearCookie(w, txCookie+nonce)
 	if q.Get("error") != "" {
+		s.signIns.WithLabelValues("declined").Inc()
 		s.redirectError(w, r, tx.Request, "access_denied", "GitHub authorization was declined")
 		return
 	}
@@ -186,17 +188,20 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	tokens, err := s.github.Exchange(r.Context(), s.cfg.GitHub, q.Get("code"), tx.Verifier, s.callbackURL())
 	if errors.Is(err, gh.ErrAppConfig) {
 		s.logger.ErrorContext(r.Context(), "GitHub code exchange failed", "err", err)
+		s.signIns.WithLabelValues("failed").Inc()
 		s.errorPage(w, r, http.StatusBadGateway, "Speki can't sign you in right now.", "Its GitHub app is misconfigured. Tell the person who runs speki.")
 		return
 	}
 	if err != nil {
 		s.logger.WarnContext(r.Context(), "GitHub code exchange failed", "err", err)
+		s.signIns.WithLabelValues("failed").Inc()
 		s.errorPage(w, r, http.StatusBadGateway, "GitHub didn't accept the sign-in.", "Try again from your program.")
 		return
 	}
 	user, err := s.github.Me(r.Context(), tokens.AccessToken)
 	if err != nil {
 		s.logger.WarnContext(r.Context(), "GitHub user lookup failed", "err", err)
+		s.signIns.WithLabelValues("failed").Inc()
 		s.errorPage(w, r, http.StatusBadGateway, "GitHub didn't answer.", "Try again in a moment.")
 		return
 	}
@@ -204,6 +209,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		err = s.cfg.CheckUser(r.Context(), tokens.AccessToken)
 		if err != nil {
 			s.logger.InfoContext(r.Context(), "sign-in refused", "login", user.Login, "reason", err)
+			s.signIns.WithLabelValues("refused").Inc()
 			s.errorPage(w, r, http.StatusForbidden, "You can't use this speki.", err.Error())
 			return
 		}
@@ -228,6 +234,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.signIns.WithLabelValues("ok").Inc()
 	s.logger.InfoContext(r.Context(), "signed in", "login", user.Login, "client", tx.Request.ClientName, "write", tx.Write)
 	redirectTo(w, r, tx.Request.RedirectURI, url.Values{"code": {code}, "state": {tx.Request.State}, "iss": {s.cfg.Issuer}})
 }

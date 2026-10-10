@@ -25,6 +25,8 @@ const (
 	syncWait = 10 * time.Second
 	// maxHeadline is the longest commit message speki writes, in bytes.
 	maxHeadline = 200
+	// noticeTimeout bounds telling other instances about a commit.
+	noticeTimeout = 3 * time.Second
 )
 
 // Result is what a change did.
@@ -440,6 +442,12 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			b.logger.WarnContext(ctx, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
 		}
 		res.IndexPending = err != nil || !b.indexed(ctx, v.RepoID, p.path, p.version)
+		nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeTimeout) // the commit landed: tell others
+		err = b.notices.Publish(nctx, v.RepoID, sha)
+		cancel()
+		if err != nil {
+			b.logger.WarnContext(ctx, "telling other instances about a commit failed", "vault", v.Name, "err", err)
+		}
 		return res, nil
 	}
 }

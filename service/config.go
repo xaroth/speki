@@ -26,6 +26,7 @@ type Config struct {
 	Access        Access    `yaml:"access"`
 	Auth          Auth      `yaml:"auth"`
 	Sync          Sync      `yaml:"sync"`
+	Redis         Redis     `yaml:"redis"`
 	Telemetry     Telemetry `yaml:"telemetry"`
 
 	// Version is speki's version, shown to MCP clients. Not configuration: cmd/speki sets it.
@@ -67,10 +68,19 @@ type Sync struct {
 	DiscoveryInterval time.Duration `yaml:"discovery_interval"`
 }
 
-// Telemetry configures logging.
+// Redis is the shared store that lets several instances run side by side. Without it, speki runs as a
+// single instance and keeps that state in memory.
+type Redis struct {
+	// URL is redis:// or rediss://, with any password in it.
+	URL Secret `yaml:"url"`
+}
+
+// Telemetry configures logging and tracing.
 type Telemetry struct {
 	// LogLevel is debug, info, warn or error.
 	LogLevel string `yaml:"log_level"`
+	// Tracing sends OpenTelemetry traces where the standard OTEL_EXPORTER_OTLP_* variables say.
+	Tracing bool `yaml:"tracing"`
 }
 
 // withDefaults returns c with zero values replaced by defaults.

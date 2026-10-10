@@ -34,5 +34,11 @@ sync:
   poll_interval: 60s
   discovery_interval: 5m
 
+# Set to run more than one instance: they share sign-in state and tell each other about changes.
+# redis:
+#   url_file: /run/secrets/redis-url   # redis:// or rediss://, password included
+
 telemetry:
   log_level: info
+  # OpenTelemetry traces, sent where the standard OTEL_EXPORTER_OTLP_* variables say.
+  # tracing: false

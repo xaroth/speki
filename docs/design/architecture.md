@@ -52,9 +52,9 @@ sits at the top level, named after what it does. No `internal/`, no `util`, no l
 |---|---|---|
 | `cmd/speki` | The process: flags, reading the config file and environment, the logger, signals, exit codes | `service`, `telemetry` |
 | `service` | Speki as one runnable thing: `service.Config`, validation and defaults, building every component, the HTTP servers, startup and shutdown order | everything below |
-| `telemetry` | slog handler with redaction, request IDs, OpenTelemetry tracer, Prometheus registry | |
+| `telemetry` | slog handler with redaction and request IDs, OpenTelemetry tracer and server spans. Each package registers its own metrics; `service` owns the Prometheus registry | |
 | `seal` | Keyring, sealing and opening typed blobs with AES-256-GCM | |
-| `store` | `Memory` and `Redis` implementations of the small interfaces other packages declare | |
+| `store` | `Memory` and `Redis`: single-use codes, refresh locks and results, and change notices between instances | |
 | `gh` | GitHub API: app JWT, installation tokens, user OAuth, user and installation lookups, commits, history | |
 | `document` | Parsing and writing documents: frontmatter, core fields, validation, links, headings, path rules | |
 | `vault` | The `Vault` type, `speki.yaml` parsing, the registry of current vaults and its discovery loop | `gh` |

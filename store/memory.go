@@ -1,9 +1,10 @@
 // Package store holds speki's short-lived shared state: used authorization codes, refresh locks and
-// refresh results. One instance keeps it in memory; several share it through Redis (added later).
-// Packages that need it declare small interfaces for the methods they use.
+// refresh results, and passes change notices between instances. One instance keeps it in memory; several
+// share it through Redis. Packages that need it declare small interfaces for the methods they use.
 package store
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -68,6 +69,16 @@ func (m *Memory) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+// Release removes key only while it still holds value.
+func (m *Memory) Release(_ context.Context, key string, value []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e, ok := m.values[key]; ok && bytes.Equal(e.value, value) {
+		delete(m.values, key)
+	}
+	return nil
+}
+
 // cleanLocked drops expired entries, at most once a minute, and returns the current time.
 func (m *Memory) cleanLocked() time.Time {
 	now := m.now()
@@ -82,3 +93,15 @@ func (m *Memory) cleanLocked() time.Time {
 	m.cleaned = now
 	return now
 }
+
+// Publish does nothing: with one instance there's nobody to tell.
+func (m *Memory) Publish(context.Context, int64, string) error { return nil }
+
+// Subscribe waits for ctx to end: with one instance no notice ever comes.
+func (m *Memory) Subscribe(ctx context.Context, _ func(int64, string)) error {
+	<-ctx.Done()
+	return nil
+}
+
+// Close does nothing.
+func (m *Memory) Close() error { return nil }

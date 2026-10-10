@@ -22,6 +22,8 @@ import (
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/store"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const issuer = "https://speki.example.com"
@@ -256,6 +258,9 @@ func TestFullFlowWithRegisteredClient(t *testing.T) {
 	clientID := h.register("http://127.0.0.1:5555/callback")
 
 	code := h.signIn(clientID, "http://127.0.0.1:6000/callback", "write") // loopback: any port
+	if n := testutil.ToFloat64(h.s.signIns.WithLabelValues("ok")); n != 1 {
+		t.Errorf("speki_signins_total{result=ok} = %v", n)
+	}
 	resp, rec := h.tokens(url.Values{
 		"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID},
 		"redirect_uri": {"http://127.0.0.1:6000/callback"}, "code_verifier": {verifier}, "resource": {issuer + "/mcp"},

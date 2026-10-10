@@ -22,6 +22,10 @@ type Config struct {
 }
 ```
 
+`redis.url` is a secret (`redis://` or `rediss://`, password included), so it can come from
+`redis.url_file`. Without it, the store and change notices are in memory. With it, `service.New` connects
+and fails at startup when Redis doesn't answer.
+
 Zero values mean "use the default", and `service.New` fills them in before checking the result. It
 collects every problem (a missing app ID, a `public_url` that isn't `https`, a duration of zero) into one
 error, so an operator fixes them all in one go. Secrets have a `Secret` type whose `String` and `LogValue`
@@ -58,7 +62,7 @@ characters, otherwise generated. It's in every log line, in error messages to cl
 when tracing is on.
 
 Every tool call logs one line at the end: request ID, GitHub login, client name, tool, vault, path,
-`outcome` (the error code, or `ok`) and duration. Background work logs per vault: discovery changes, sync results, index builds with
+`outcome` (the error code, `ok`, or `canceled` when the client went away) and duration. Background work logs per vault: discovery changes, sync results, index builds with
 duration and document count, failures.
 
 ## Metrics
@@ -72,9 +76,8 @@ Names:
 
 | Metric | Type | Labels |
 |---|---|---|
-| `speki_tool_calls_total` | counter | `tool`, `outcome` |
+| `speki_tool_calls_total` | counter | `tool`, `outcome` (as in the log line) |
 | `speki_tool_duration_seconds` | histogram | `tool` |
-| `speki_query_duration_seconds` | histogram | |
 | `speki_github_requests_total` | counter | `kind` (app, installation, user), `status` |
 | `speki_github_rate_remaining` | gauge | `kind` |
 | `speki_vault_up` | gauge | `vault`. 1 when the vault is served and its last sync succeeded |

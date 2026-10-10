@@ -108,7 +108,14 @@ means a few users get checked against GitHub again.
 
 With `redis` configured, any number of instances can run behind a load balancer without sticky sessions.
 They share that state through Redis, and when one instance writes to a vault, it tells the others, so
-they pick up the change within seconds instead of at the next poll.
+they pick up the change within seconds instead of at the next poll. Every instance needs the same
+configuration: the same `public_url`, GitHub App and key file, and the same Redis. An instance that can't
+reach Redis at startup refuses to start. If Redis goes away later, sign-in and refresh fail until it's
+back, and changes reach the other instances at their next poll.
+
+Speki's keys in Redis are small and short-lived (minutes), all prefixed `speki:`. Configure Redis not to
+evict them early (`maxmemory-policy noeviction` or `volatile-ttl`): an evicted key could let an
+authorization code be used twice. Persistence isn't needed.
 
 Every instance clones and indexes every vault itself. Plan disk and memory for that per instance
 (see below).
@@ -124,8 +131,10 @@ data on disk, a restarted instance serves its vaults within seconds, even when G
 only catches up on what changed. On an empty disk, speki becomes ready quickly but each vault appears only
 after it's cloned and indexed, about a minute for a vault of 50,000 documents, four vaults at a time.
 
-A vault that fails to index (bad `speki.yaml`, GitHub unreachable) is logged, shown on the status page,
-and retried at the next discovery round. The other vaults aren't affected. A vault larger than speki is
+A vault that fails to index (bad `speki.yaml`, GitHub unreachable) is logged and shown on the status page.
+A bad `speki.yaml` is read again when the repository is next pushed to. A clone or sync that fails is
+retried with backoff, from two minutes up to every 30 minutes, and the vault keeps serving its last good
+index meanwhile. The other vaults aren't affected. A vault larger than speki is
 built for (over 50,000 documents or 500 MB of markdown) is indexed anyway, with a warning in the logs and
 on the status page. Plan disk, memory and startup time for it.
 
@@ -141,7 +150,7 @@ rebuild everything, start with an empty data directory.
 | `/.well-known/oauth-authorization-server` | `listen` | OAuth metadata |
 | `/oauth/...` | `listen` | Sign-in, consent, token and registration endpoints |
 | `/healthz` | `listen` | 200 while the process runs |
-| `/readyz` | `listen` | 200 once the first indexing round has finished |
+| `/readyz` | `listen` | 200 once the first round of vault discovery has finished (vaults on disk are served before that) |
 | `/metrics` | `metrics_listen` | Prometheus metrics |
 | `/status` | `metrics_listen` | Every vault's state, commit, last sync and last error, as JSON |
 

@@ -13,10 +13,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/eve-online-tools/speki/telemetry"
 )
 
 // ErrEmptyQuery is returned for a query with nothing to search for.
@@ -77,6 +81,8 @@ type term struct {
 
 // Search looks for text in every source and merges the results, best first.
 func Search(ctx context.Context, sources []Source, text string, opt Options) (Results, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "index.Search", trace.WithAttributes(attribute.Int("speki.vaults", len(sources))))
+	defer span.End()
 	if opt.Limit <= 0 {
 		opt.Limit = 10
 	}

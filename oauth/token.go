@@ -153,13 +153,14 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
-		locked, err := s.store.SetNX(ctx, "refresh-lock:"+key, []byte{1}, refreshLockTime)
+		owner := []byte(randomToken())
+		locked, err := s.store.SetNX(ctx, "refresh-lock:"+key, owner, refreshLockTime)
 		if err != nil {
 			s.tokenServerError(w, r, err)
 			return
 		}
 		if locked {
-			s.refreshLocked(w, r, rv, scopes, key, old)
+			s.refreshLocked(w, r, rv, scopes, key, old, owner)
 			return
 		}
 		if time.Now().After(deadline) {
@@ -176,9 +177,9 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 }
 
 // refreshLocked does the refresh, holding the lock for the old token.
-func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refreshValue, scopes []string, key, old string) {
+func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refreshValue, scopes []string, key, old string, owner []byte) {
 	ctx := r.Context()
-	defer func() { _ = s.store.Delete(context.WithoutCancel(ctx), "refresh-lock:"+key) }()
+	defer func() { _ = s.store.Release(context.WithoutCancel(ctx), "refresh-lock:"+key, owner) }()
 
 	// Another request may have finished between our look and our lock.
 	resp, found, err := s.refreshResult(ctx, key, old)

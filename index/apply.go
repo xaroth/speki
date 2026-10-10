@@ -15,7 +15,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/eve-online-tools/speki/document"
+
+	"github.com/eve-online-tools/speki/telemetry"
 )
 
 // Change is one file to put in the index, or take out of it.
@@ -29,6 +34,8 @@ type Change struct {
 // see the index before or after, never halfway. A file that can't be indexed is skipped and logged, so
 // one bad file can't stop a vault from updating.
 func (x *Index) Apply(ctx context.Context, commit string, changes []Change) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "index.Apply", trace.WithAttributes(attribute.Int("speki.changes", len(changes))))
+	defer span.End()
 	g, err := x.acquire()
 	if err != nil {
 		return err

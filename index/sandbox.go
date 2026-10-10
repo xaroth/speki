@@ -15,6 +15,10 @@ import (
 	"time"
 
 	"github.com/mattn/go-sqlite3"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/eve-online-tools/speki/telemetry"
 )
 
 // Query limits.
@@ -70,6 +74,8 @@ func (s *Sandbox) Close() error { return s.db.Close() }
 // Query runs one SELECT against the sources, which appear in the views' vault column by name. ctx bounds
 // the whole call, waiting for a connection included.
 func (s *Sandbox) Query(ctx context.Context, sources []Source, query string) (Rows, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "index.Query", trace.WithAttributes(attribute.Int("speki.vaults", len(sources))))
+	defer span.End()
 	if len(sources) > MaxQuerySources {
 		return Rows{}, fmt.Errorf("%w: at most %d vaults per query", ErrBadQuery, MaxQuerySources)
 	}

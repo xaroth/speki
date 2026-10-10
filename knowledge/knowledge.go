@@ -43,11 +43,17 @@ type querier interface {
 	Query(ctx context.Context, sources []index.Source, sql string) (index.Rows, error)
 }
 
+// notifier tells other instances that a vault changed, so they sync before their next poll.
+type notifier interface {
+	Publish(ctx context.Context, repoID int64, commit string) error
+}
+
 // Base answers the tools' questions.
 type Base struct {
 	vaults  Vaults
 	github  gitHub
 	sandbox querier
+	notices notifier
 	logger  *slog.Logger
 	now     func() time.Time
 
@@ -57,11 +63,12 @@ type Base struct {
 }
 
 // New returns a Base.
-func New(vaults Vaults, github gitHub, sandbox querier, logger *slog.Logger) *Base {
+func New(vaults Vaults, github gitHub, sandbox querier, notices notifier, logger *slog.Logger) *Base {
 	return &Base{
 		vaults:  vaults,
 		github:  github,
 		sandbox: sandbox,
+		notices: notices,
 		logger:  logger,
 		now:     time.Now,
 		locks:   map[int64]chan struct{}{},

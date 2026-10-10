@@ -153,6 +153,9 @@ func TestAddSyncAndRemove(t *testing.T) {
 	if got := search(t, v, "zeppelin"); len(got) != 0 {
 		t.Errorf("old text still found: %v", got)
 	}
+	if n := testutil.ToFloat64(l.syncs.WithLabelValues("applied")); n != 1 {
+		t.Errorf("speki_sync_total{result=applied} = %v", n)
+	}
 
 	// Nothing new: the lookup is answered from the ETag and nothing is synced.
 	before := v.Status().LastSync
