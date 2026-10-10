@@ -191,12 +191,19 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refres
 		return
 	}
 
-	// The GitHub call must end before the lock does, or a second refresh could start alongside it.
-	gctx, cancel := context.WithTimeout(ctx, githubRefreshTimeout)
+	// Once GitHub is asked, its old refresh token may be spent. So the refresh and keeping its result
+	// go on when the client disconnects: its retry then finds the result instead of a dead token. The
+	// GitHub call must end before the lock does, or a second refresh could start alongside it.
+	gctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), githubRefreshTimeout)
 	defer cancel()
 	tokens, err := s.github.Refresh(gctx, s.cfg.GitHub, rv.Refresh)
 	if errors.Is(err, gh.ErrBadGrant) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "sign in again")
+		return
+	}
+	if errors.Is(err, gh.ErrAppConfig) {
+		s.logger.ErrorContext(ctx, "GitHub refresh failed", "err", err)
+		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "speki's GitHub app is misconfigured; tell the operator")
 		return
 	}
 	if err != nil {
@@ -211,7 +218,7 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refres
 		s.tokenServerError(w, r, err)
 		return
 	}
-	err = s.keepRefreshResult(ctx, key, old, resp)
+	err = s.keepRefreshResult(context.WithoutCancel(ctx), key, old, resp)
 	if err != nil {
 		s.logger.WarnContext(ctx, "keeping refresh result failed", "err", err)
 	}

@@ -106,6 +106,12 @@ func TestExchangeAndRefresh(t *testing.T) {
 	if !errors.Is(err, ErrBadGrant) {
 		t.Errorf("bad code: %v", err)
 	}
+	wrongSecret := o
+	wrongSecret.ClientSecret = "wrong"
+	_, err = c.Exchange(ctx, wrongSecret, "good", "verifier", "https://speki/cb")
+	if !errors.Is(err, ErrAppConfig) || errors.Is(err, ErrBadGrant) {
+		t.Errorf("wrong client secret: %v", err)
+	}
 	_, err = c.Exchange(ctx, o, "forever", "verifier", "https://speki/cb")
 	if err == nil || errors.Is(err, ErrBadGrant) {
 		t.Errorf("token without expiry: %v", err)

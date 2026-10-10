@@ -32,6 +32,8 @@ type fakeGitHub struct {
 	next      int
 	slow      chan struct{} // when set, Refresh waits for it
 	down      bool          // when set, Refresh fails as if GitHub were unreachable
+	appConfig bool          // when set, GitHub refuses the app's client secret
+	during    func()        // when set, Refresh calls it after GitHub spent the old token
 }
 
 func (f *fakeGitHub) tokens() gh.UserTokens {
@@ -53,7 +55,7 @@ func (f *fakeGitHub) Exchange(_ context.Context, _ gh.OAuthConfig, code, verifie
 	return f.tokens(), nil
 }
 
-func (f *fakeGitHub) Refresh(_ context.Context, _ gh.OAuthConfig, refresh string) (gh.UserTokens, error) {
+func (f *fakeGitHub) Refresh(ctx context.Context, _ gh.OAuthConfig, refresh string) (gh.UserTokens, error) {
 	if f.slow != nil {
 		<-f.slow
 	}
@@ -62,10 +64,19 @@ func (f *fakeGitHub) Refresh(_ context.Context, _ gh.OAuthConfig, refresh string
 	if f.down {
 		return gh.UserTokens{}, errors.New("connection refused")
 	}
+	if f.appConfig {
+		return gh.UserTokens{}, fmt.Errorf("%w: incorrect_client_credentials", gh.ErrAppConfig)
+	}
 	if f.refreshes[refresh] {
 		return gh.UserTokens{}, gh.ErrBadGrant // GitHub refresh tokens work once
 	}
 	f.refreshes[refresh] = true
+	if f.during != nil {
+		f.during()
+	}
+	if ctx.Err() != nil { // the answer never reaches speki
+		return gh.UserTokens{}, ctx.Err()
+	}
 	return f.tokens(), nil
 }
 
@@ -325,6 +336,36 @@ func TestConcurrentRefreshesBothSucceed(t *testing.T) {
 	a, b := <-results, <-results
 	if a.code != http.StatusOK || b.code != http.StatusOK || a.resp.AccessToken != b.resp.AccessToken {
 		t.Errorf("concurrent refreshes: %d, %d, same answer %v", a.code, b.code, a.resp.AccessToken == b.resp.AccessToken)
+	}
+}
+
+// A client that disconnects while speki waits for GitHub retries with the same token. GitHub has spent
+// the old refresh token by then, so the retry only works if speki finished the refresh anyway.
+func TestRefreshSurvivesADroppedConnection(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	h.github.during = cancel
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.handler.ServeHTTP(httptest.NewRecorder(), req)
+	h.github.during = nil
+
+	resp, rec := h.tokens(form)
+	if rec.Code != http.StatusOK || resp.AccessToken == "" {
+		t.Errorf("retry after a dropped connection: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRefreshWithBadAppConfigIsTemporary(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	h.github.appConfig = true
+	_, rec := h.tokens(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}})
+	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "invalid_grant") {
+		t.Errorf("bad app config: %d %s", rec.Code, rec.Body)
 	}
 }
 
