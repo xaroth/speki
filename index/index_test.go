@@ -109,7 +109,9 @@ func TestSearch(t *testing.T) {
 	}{
 		// Stemming: configuring, configured and configuration all match.
 		{query: "configured", want: []string{"services/oauth.md", "ops/fleet-roles.md", "ops/fleet-doctrine.md", "old/nomad.md"}},
-		{query: "kubernets", want: []string{"ops/fleet-doctrine.md"}, corrected: map[string]string{"kubernets": "kubernetes"}},
+		{query: "kubrenetes", want: []string{"ops/fleet-doctrine.md"}, corrected: map[string]string{"kubrenetes": "kubernetes"}},
+		// Same stem as "kubernetes": found by stemming, nothing to correct.
+		{query: "kubernets", want: []string{"ops/fleet-doctrine.md"}},
 		{query: "doctr", want: []string{"ops/fleet-doctrine.md", "ops/fleet-roles.md"}},
 		{query: "auth", want: []string{"services/oauth.md"}},
 		{query: `"cache invalidation"`, want: []string{"notes/cache.md"}},
@@ -629,4 +631,100 @@ func TestUnusableErrors(t *testing.T) {
 			t.Errorf("unusable(%v) = %v, want %v", tt.err, got, tt.want)
 		}
 	}
+}
+
+func TestSearchRankingAndInput(t *testing.T) {
+	files := corpus()
+	for i := range 40 { // deprecated, matching a little better than the active one, but not twice as well
+		files[fmt.Sprintf("old/airship-%02d.md", i)] = "---\ntitle: Airship\nstatus: deprecated\n---\nAirship notes.\n"
+	}
+	for i := range 100 { // so that "airship" is a rare word, and BM25 tells the documents apart
+		files[fmt.Sprintf("filler/%03d.md", i)] = fmt.Sprintf("# Filler %d\n\nNothing of interest here.\n", i)
+	}
+	maps.Copy(files, map[string]string{
+		"new/airship.md":  "---\ntitle: Airship guide\n---\nNotes on the hangar.\n",
+		"body/zep.md":     "# Notes\n\nA zeppelin.\n",
+		"words/run.md":    "# Jobs\n\nWe run the job nightly.\n",
+		"words/rune-1.md": "# Rune one\n\nA rune.\n",
+		"words/rune-2.md": "# Rune two\n\nA rune.\n",
+		"words/rune-3.md": "# Rune three\n\nA rune.\n",
+		"words/rune-4.md": "# Rune four\n\nA rune.\n",
+		"words/rune-5.md": "# Rune five\n\nA rune.\n",
+		"names/micro.md":  "---\ntitle: Microservices\n---\nSmall things.\n",
+		"names/cat.md":    "# Cat\n\nThe cat sat.\n",
+	})
+	src := []Source{{Name: "kb", Index: newIndex(t, files)}}
+
+	t.Run("deprecated documents don't crowd out an active one", func(t *testing.T) {
+		got := hitPaths(search(t, src, "airship", Options{}))
+		if len(got) == 0 || got[0] != "new/airship.md" {
+			t.Errorf("the active document isn't first: %v", got)
+		}
+	})
+	t.Run("a word found by its stem isn't corrected", func(t *testing.T) {
+		res := search(t, src, "runs", Options{})
+		if len(res.Corrected) != 0 || !slices.Contains(hitPaths(res), "words/run.md") {
+			t.Errorf("hits %v, corrected %v", hitPaths(res), res.Corrected)
+		}
+	})
+	t.Run("substring matches rank below full-text matches", func(t *testing.T) {
+		// "service" is in most documents, so BM25 gives full-text matches only a tiny score.
+		common := map[string]string{
+			"names/micro.md":   "---\ntitle: Microservices\n---\nSmall things.\n",
+			"names/service.md": "---\ntitle: Service\n---\nAbout the service.\n",
+		}
+		for i := range 20 {
+			common[fmt.Sprintf("common/%02d.md", i)] = fmt.Sprintf("# Note %d\n\nThe service runs.\n", i)
+		}
+		res := search(t, []Source{{Name: "kb", Index: newIndex(t, common)}}, "service", Options{Limit: 50})
+		got := hitPaths(res)
+		if len(got) == 0 || got[len(got)-1] != "names/micro.md" {
+			t.Errorf("the substring match isn't last: %v", got)
+		}
+	})
+	t.Run("folder names aren't matched as names", func(t *testing.T) {
+		got := hitPaths(search(t, src, "words", Options{}))
+		for _, p := range got {
+			if strings.HasPrefix(p, "words/") {
+				t.Errorf("a document matched by its folder name: %v", got)
+				break
+			}
+		}
+	})
+	t.Run("a quoted word matches as written", func(t *testing.T) {
+		if got := hitPaths(search(t, src, "zeppel", Options{})); !slices.Contains(got, "body/zep.md") {
+			t.Fatalf("unquoted, the last word matches as a prefix: %v", got)
+		}
+		res := search(t, src, `"zeppel"`, Options{})
+		if len(res.Hits) != 0 || len(res.Corrected) != 0 {
+			t.Errorf("hits %v, corrected %v", hitPaths(res), res.Corrected)
+		}
+	})
+	t.Run("three-letter typos", func(t *testing.T) {
+		res := search(t, src, "cot sat", Options{})
+		if res.Corrected["cot"] != "cat" {
+			t.Errorf("corrected = %v", res.Corrected)
+		}
+	})
+	t.Run("query size", func(t *testing.T) {
+		var many []string
+		for i := range maxTerms + 1 {
+			many = append(many, fmt.Sprintf("w%d", i))
+		}
+		_, err := Search(t.Context(), src, strings.Join(many, " "), Options{})
+		if !errors.Is(err, ErrTooManyWords) {
+			t.Errorf("%d words: %v", len(many), err)
+		}
+		_, err = Search(t.Context(), src, strings.Repeat("fleet ", 500), Options{})
+		if err != nil {
+			t.Errorf("one word 500 times: %v", err)
+		}
+		excl := "fleet"
+		for i := range maxTerms - 1 {
+			excl += fmt.Sprintf(" -x%d", i)
+		}
+		if _, err := Search(t.Context(), src, excl, Options{}); err != nil {
+			t.Errorf("many exclusions: %v", err)
+		}
+	})
 }

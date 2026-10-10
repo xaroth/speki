@@ -26,6 +26,12 @@ import (
 // ErrEmptyQuery is returned for a query with nothing to search for.
 var ErrEmptyQuery = errors.New("the query has no words to search for")
 
+// ErrTooManyWords means a query has more distinct words than a search looks for.
+var ErrTooManyWords = fmt.Errorf("the query has more than %d different words", maxTerms)
+
+// maxTerms is the most distinct words and phrases a query may have.
+const maxTerms = 32
+
 // Source is one index to search, with the name results carry.
 type Source struct {
 	Name  string
@@ -66,9 +72,6 @@ type Results struct {
 // bm25 column weights, in the order of the fts table's columns.
 const bm25Weights = "10, 10, 6, 4, 3, 1"
 
-// candidatesPerHit is how many ranked candidates an unfiltered search considers per hit it returns.
-const candidatesPerHit = 3
-
 // nameHitScore ranks substring matches on names below full-text matches.
 const nameHitScore = 0.01
 
@@ -76,6 +79,7 @@ const nameHitScore = 0.01
 type term struct {
 	text    string // lowercased, without diacritics; words of a phrase separated by spaces
 	phrase  bool
+	quoted  bool // written in quotes: matched as written, no prefix and no correction
 	exclude bool
 }
 
@@ -90,6 +94,9 @@ func Search(ctx context.Context, sources []Source, text string, opt Options) (Re
 	terms := parseQuery(text)
 	if !slices.ContainsFunc(terms, func(t term) bool { return !t.exclude }) {
 		return Results{}, ErrEmptyQuery
+	}
+	if len(terms) > maxTerms {
+		return Results{}, ErrTooManyWords
 	}
 
 	gens := make([]*generation, 0, len(sources))
@@ -163,15 +170,18 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 	// document row means reading its body, which costs far more than ranking. Deprecated documents are
 	// halved after that, so keep enough candidates for them to drop out of the top. Filters can throw
 	// away any number of candidates, so a filtered search joins everything that matches.
-	ranked := `SELECT rowid AS id, bm25(fts, ` + bm25Weights + `) AS rank FROM fts WHERE fts MATCH ?`
+	// Deprecated documents are halved inside the ranking, through a small index, so they can't crowd
+	// active ones out of the top.
+	ranked := `SELECT rowid AS id, bm25(fts, ` + bm25Weights + `) *
+			CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
+		FROM fts WHERE fts MATCH ?`
 	rankArgs := []any{expr}
 	if filter == "" {
 		ranked += ` ORDER BY rank LIMIT ?`
-		rankArgs = append(rankArgs, opt.Limit*candidatesPerHit)
+		rankArgs = append(rankArgs, opt.Limit)
 	}
 	q := `WITH ranked AS (` + ranked + `)
-		SELECT d.id, d.path, d.title, d.description, d.tags, d.status, d.updated, d.version,
-			ranked.rank * CASE d.status WHEN 'deprecated' THEN 0.5 ELSE 1 END AS score
+		SELECT d.id, d.path, d.title, d.description, d.tags, d.status, d.updated, d.version, ranked.rank AS score
 		FROM ranked JOIN documents d ON d.id = ranked.id
 		WHERE 1` + filter + `
 		ORDER BY score LIMIT ?`
@@ -205,12 +215,17 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 	if err != nil {
 		return nil, err
 	}
+	// Substring matches rank below every full-text match in this vault.
+	nameScore := nameHitScore
+	for _, h := range hits {
+		nameScore = min(nameScore, h.Score/2)
+	}
 	for _, f := range byName {
 		h := f.Hit
 		if slices.ContainsFunc(hits, func(x Hit) bool { return x.Path == h.Path }) {
 			continue
 		}
-		h.Score = nameHitScore
+		h.Score = nameScore
 		if h.Status == "deprecated" {
 			h.Score /= 2
 		}
@@ -328,7 +343,7 @@ func parseQuery(text string) []term {
 			phrase, after, _ := strings.Cut(rest, `"`)
 			text = after
 			if words := splitWords(phrase); len(words) > 0 {
-				terms = append(terms, term{text: strings.Join(words, " "), phrase: len(words) > 1, exclude: exclude})
+				terms = addTerm(terms, term{text: strings.Join(words, " "), phrase: len(words) > 1, quoted: true, exclude: exclude})
 			}
 			continue
 		}
@@ -339,10 +354,18 @@ func parseQuery(text string) []term {
 		chunk := text[:end]
 		text = text[end:]
 		for _, w := range splitWords(chunk) {
-			terms = append(terms, term{text: w, exclude: exclude})
+			terms = addTerm(terms, term{text: w, exclude: exclude})
 		}
 	}
 	return terms
+}
+
+// addTerm adds t unless the same term is already there.
+func addTerm(terms []term, t term) []term {
+	if slices.Contains(terms, t) {
+		return terms
+	}
+	return append(terms, t)
 }
 
 func splitWords(s string) []string {
@@ -373,7 +396,7 @@ func positiveTerms(terms []term) int {
 func lastWord(terms []term) int {
 	for i, t := range slices.Backward(terms) {
 		if !t.exclude {
-			if t.phrase {
+			if t.quoted {
 				return -1
 			}
 			return i
@@ -391,7 +414,7 @@ func correct(ctx context.Context, gens []*generation, terms []term) (map[string]
 	for i := range terms {
 		t := &terms[i]
 		n := utf8.RuneCountInString(t.text)
-		if t.phrase || t.exclude || n < 3 || strings.ContainsFunc(t.text, unicode.IsDigit) {
+		if t.quoted || t.exclude || n < 3 || strings.ContainsFunc(t.text, unicode.IsDigit) {
 			continue // numbers aren't typos: 2026 shouldn't become 2025
 		}
 		known, err := knownAnywhere(ctx, gens, t.text, i == last)
@@ -419,19 +442,30 @@ func correct(ctx context.Context, gens []*generation, terms []term) (map[string]
 }
 
 // knownAnywhere asks each index whether it has word, or, for the word typed last, a word starting with it.
+// A word that matches by its stem ("runs" where documents say "run") counts as known too: correcting it
+// to a nearby word would override stemming.
 func knownAnywhere(ctx context.Context, gens []*generation, word string, asPrefix bool) (bool, error) {
-	q, args := "SELECT 1 FROM words_vocab WHERE term = ?", []any{word}
+	queries := []struct {
+		q    string
+		args []any
+	}{{"SELECT 1 FROM words_vocab WHERE term = ?", []any{word}}}
 	if asPrefix {
-		q, args = "SELECT 1 FROM words_vocab WHERE term >= ? AND term < ? LIMIT 1", []any{word, word + endOfRange}
+		queries[0].q, queries[0].args = "SELECT 1 FROM words_vocab WHERE term >= ? AND term < ? LIMIT 1", []any{word, word + endOfRange}
 	}
-	for _, g := range gens {
-		var one int
-		err := g.reader.QueryRowContext(ctx, q, args...).Scan(&one)
-		if err == nil {
-			return true, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return false, err
+	queries = append(queries, struct {
+		q    string
+		args []any
+	}{"SELECT 1 FROM fts WHERE fts MATCH ? LIMIT 1", []any{quote(word)}})
+	for _, q := range queries {
+		for _, g := range gens {
+			var one int
+			err := g.reader.QueryRowContext(ctx, q.q, q.args...).Scan(&one)
+			if err == nil {
+				return true, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return false, err
+			}
 		}
 	}
 	return false, nil
@@ -483,8 +517,8 @@ func ftsExpression(terms []term, anyWord bool) string {
 		join = " OR "
 	}
 	expr := "(" + strings.Join(pos, join) + ")"
-	for _, n := range neg {
-		expr += " NOT " + n
+	if len(neg) > 0 { // one group, not one NOT per word, which nests the expression a level each
+		expr += " NOT (" + strings.Join(neg, " OR ") + ")"
 	}
 	return expr
 }
