@@ -801,9 +801,10 @@ func TestCompactionKeepsTheIndexCommit(t *testing.T) {
 	if !v.mirror.Has(commit) {
 		t.Fatal("the copy lost the index's commit")
 	}
-	if !v.freshCloneAt.IsZero() {
-		t.Error("a spoiled fresh clone waits an hour before the next try")
+	if wait := time.Until(v.freshCloneAt.Add(time.Hour)); wait > movedOnRetry || wait < movedOnRetry-time.Minute {
+		t.Errorf("the next fresh clone comes in %v, want %v", wait, movedOnRetry)
 	}
+	v.freshCloneAt = time.Time{}
 	if err := l.Sync(t.Context(), v); err != nil {
 		t.Fatal(err)
 	}

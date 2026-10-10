@@ -470,11 +470,14 @@ func (l *Library) readFiles(v *Vault, files []gitsync.File, touch func()) iter.S
 	}
 }
 
+// movedOnRetry is how long after a spoiled fresh clone the next one is tried.
+const movedOnRetry = 10 * time.Minute
+
 // errMovedOn means a fresh clone no longer has the index's commit.
 var errMovedOn = errors.New("the branch moved on during the clone")
 
-// compactLocked replaces a copy with too many pack files by a fresh clone, at most once an hour unless a
-// commit landing during the clone spoiled the last try. Called with syncMu held.
+// compactLocked replaces a copy with too many pack files by a fresh clone, at most once an hour, or ten
+// minutes after a commit landing during the clone spoiled the last try. Called with syncMu held.
 func (l *Library) compactLocked(ctx context.Context, v *Vault) {
 	if v.mirror.Packs() <= maxPacks || time.Since(v.freshCloneAt) < time.Hour {
 		return
@@ -483,7 +486,8 @@ func (l *Library) compactLocked(ctx context.Context, v *Vault) {
 	err := l.freshClone(ctx, v, v.index.Commit())
 	switch {
 	case errors.Is(err, errMovedOn):
-		v.freshCloneAt = time.Time{} // the next sync or poll round tries again
+		v.freshCloneAt = time.Now().Add(movedOnRetry - time.Hour)
+		l.logger.Info("fresh clone missed the index's commit; trying again later", "vault", v.Info().Name)
 	case err != nil:
 		l.logger.Warn("fresh clone failed", "vault", v.Info().Name, "err", err)
 	}

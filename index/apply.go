@@ -73,6 +73,19 @@ func (x *Index) Apply(ctx context.Context, commit string, changes []Change) erro
 	return nil
 }
 
+// fillError combines a build's insert error with the error of its reading and parsing. A failed insert
+// isn't the file's fault: the whole build fails, and is tried again. The cancellation it caused itself
+// is left out; anything else is kept, so a broken git copy is still noticed.
+func fillError(ctx context.Context, insertErr, readErr error) error {
+	switch {
+	case readErr == nil || insertErr != nil && ctx.Err() == nil && errors.Is(readErr, context.Canceled):
+		return insertErr
+	case insertErr == nil:
+		return fmt.Errorf("build: %w", readErr)
+	}
+	return errors.Join(insertErr, fmt.Errorf("build: %w", readErr))
+}
+
 // errBadFile marks a file that can't be indexed because of its content, which retrying won't change.
 var errBadFile = errors.New("unusable file")
 
@@ -213,12 +226,9 @@ func fill(
 		}
 		count++
 	}
-	err = g.Wait()
-	if insertErr != nil { // not the file's fault: the whole build fails, and is tried again
-		return 0, insertErr
-	}
+	err = fillError(ctx, insertErr, g.Wait())
 	if err != nil {
-		return 0, fmt.Errorf("build: %w", err)
+		return 0, err
 	}
 	_, err = tx.ExecContext(ctx, rebuildFullText)
 	if err != nil {

@@ -786,3 +786,24 @@ func TestSearchRankingAndInput(t *testing.T) {
 		}
 	})
 }
+
+// A build whose inserting fails keeps any other error next to it, so a broken git copy is noticed, but
+// not the cancellation the failed insert caused.
+func TestFillError(t *testing.T) {
+	insertErr := errors.New("insert a.md: disk full")
+	readErr := errors.New("blob missing")
+	if err := fillError(t.Context(), insertErr, fmt.Errorf("x: %w", readErr)); !errors.Is(err, readErr) || !errors.Is(err, insertErr) {
+		t.Errorf("with a read error: %v", err)
+	}
+	if err := fillError(t.Context(), insertErr, context.Canceled); err == nil || err.Error() != insertErr.Error() {
+		t.Errorf("with the build's own cancellation: %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := fillError(ctx, insertErr, context.Canceled); !errors.Is(err, context.Canceled) {
+		t.Errorf("with the caller's cancellation: %v", err)
+	}
+	if err := fillError(t.Context(), nil, readErr); !errors.Is(err, readErr) {
+		t.Errorf("with only a read error: %v", err)
+	}
+}
