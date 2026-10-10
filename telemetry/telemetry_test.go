@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -81,5 +82,30 @@ func TestRequestID(t *testing.T) {
 				t.Errorf("kept invalid incoming ID %q", tt.incoming)
 			}
 		})
+	}
+}
+
+func TestLogLinesCarryRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	log := NewLogger(&buf, slog.LevelInfo).With("component", "test")
+	var ctx context.Context
+	RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		ctx = r.Context()
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	log.InfoContext(ctx, "in a request")
+	log.Info("outside")
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %q", lines)
+	}
+	var in, out map[string]any
+	_ = json.Unmarshal([]byte(lines[0]), &in)
+	_ = json.Unmarshal([]byte(lines[1]), &out)
+	if in["request_id"] != RequestIDFrom(ctx) || in["request_id"] == "" || in["component"] != "test" {
+		t.Errorf("request line = %v", in)
+	}
+	if _, ok := out["request_id"]; ok {
+		t.Errorf("line without a request has an ID: %v", out)
 	}
 }
