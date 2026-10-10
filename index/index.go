@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/mattn/go-sqlite3"
+
 	_ "github.com/mattn/go-sqlite3" // registers the sqlite3 driver
 )
 

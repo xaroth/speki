@@ -17,9 +17,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/eve-online-tools/speki/seal"
-
 	"golang.org/x/sync/singleflight"
+
+	"github.com/eve-online-tools/speki/seal"
 )
 
 // client is a registered MCP client.

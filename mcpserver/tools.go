@@ -2,20 +2,20 @@ package mcpserver
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/knowledge"
 	"github.com/eve-online-tools/speki/telemetry"
+
+	_ "embed"
 )
 
 // instructions are sent in the handshake. Claude Code cuts them at 2,048 characters, so they lead with

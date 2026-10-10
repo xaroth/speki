@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/store"
-
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const issuer = "https://speki.example.com"

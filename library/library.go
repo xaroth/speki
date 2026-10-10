@@ -18,12 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/semaphore"
+
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/gitsync"
 	"github.com/eve-online-tools/speki/vault"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/sync/semaphore"
 )
 
 // github is what the library needs from GitHub.

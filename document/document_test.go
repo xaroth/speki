@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"golang.org/x/text/unicode/norm"
 )
 
 func readFixture(t *testing.T, name string) []byte {
