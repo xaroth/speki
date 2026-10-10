@@ -103,11 +103,15 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		return nil, fmt.Errorf("configuration: %w", err)
 	}
 
-	lib := library.New(github, library.Options{
-		DataDir: cfg.Sync.DataDir,
-		GitURL:  cfg.GitHub.GitURL,
-		Tokens:  func(id int64) gitsync.TokenSource { return github.InstallationTokens(id) },
-	}, logger)
+	lib := library.New(
+		github,
+		library.Options{
+			DataDir: cfg.Sync.DataDir,
+			GitURL:  cfg.GitHub.GitURL,
+			Tokens:  func(id int64) gitsync.TokenSource { return github.InstallationTokens(id) },
+		},
+		logger,
+	)
 
 	keys, err := seal.ParseKeyring([]byte(cfg.Auth.Keys))
 	if err != nil {
@@ -117,36 +121,59 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolver := access.NewResolver(github, lib.Vaults, cfg.Access.RequiredOrgs)
-	auth := oauth.New(oauth.Config{
-		Issuer:              cfg.PublicURL,
-		Title:               cfg.Instance.Title,
-		ClientMetadataHosts: cfg.Auth.ClientMetadataHosts,
-		GitHub: gh.OAuthConfig{
-			ClientID:     cfg.GitHub.ClientID,
-			ClientSecret: cfg.GitHub.ClientSecret,
-			URL:          cfg.GitHub.OAuthURL,
+	resolver := access.NewResolver(
+		github,
+		lib.Vaults,
+		cfg.Access.RequiredOrgs,
+	)
+	auth := oauth.New(
+		oauth.Config{
+			Issuer:              cfg.PublicURL,
+			Title:               cfg.Instance.Title,
+			ClientMetadataHosts: cfg.Auth.ClientMetadataHosts,
+			GitHub: gh.OAuthConfig{
+				ClientID:     cfg.GitHub.ClientID,
+				ClientSecret: cfg.GitHub.ClientSecret,
+				URL:          cfg.GitHub.OAuthURL,
+			},
+			CheckUser: func(ctx context.Context, token string) error {
+				err := resolver.CheckMember(ctx, token)
+				if errors.Is(err, access.ErrNotMember) || errors.Is(err, access.ErrNoVaults) {
+					return &oauth.Refusal{Reason: err.Error()}
+				}
+				return err
+			},
 		},
-		CheckUser: func(ctx context.Context, token string) error {
-			err := resolver.CheckMember(ctx, token)
-			if errors.Is(err, access.ErrNotMember) || errors.Is(err, access.ErrNoVaults) {
-				return &oauth.Refusal{Reason: err.Error()}
-			}
-			return err
-		},
-	}, keys, github, shared, logger)
+		keys,
+		github,
+		shared,
+		logger,
+	)
 
 	sandbox, err := index.NewSandbox()
 	if err != nil {
 		_ = shared.Close()
 		return nil, err
 	}
-	kb := knowledge.New(libraryVaults{lib}, github, sandbox, shared, logger)
-	mcp := mcpserver.New(auth, resolver, kb, mcpserver.Identity{
-		Name:        cfg.Instance.Name,
-		Title:       cfg.Instance.Title,
-		Description: cfg.Instance.Description,
-	}, cfg.Version, logger)
+	kb := knowledge.New(
+		libraryVaults{lib},
+		github,
+		sandbox,
+		shared,
+		logger,
+	)
+	mcp := mcpserver.New(
+		auth,
+		resolver,
+		kb,
+		mcpserver.Identity{
+			Name:        cfg.Instance.Name,
+			Title:       cfg.Instance.Title,
+			Description: cfg.Instance.Description,
+		},
+		cfg.Version,
+		logger,
+	)
 
 	return &Service{
 		cfg:        cfg,
