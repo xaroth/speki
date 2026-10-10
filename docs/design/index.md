@@ -212,21 +212,19 @@ exists.
 ## The query sandbox
 
 ```go
-type Source struct {
-	Name string // shown in the vault column, e.g. "eve-online-tools/kb"
-	Path string // index file of the current generation
-}
-
-func Query(ctx context.Context, sources []Source, sql string) (Rows, error)
+func NewSandbox() (*Sandbox, error)
+func (s *Sandbox) Query(ctx context.Context, sources []Source, sql string) (Rows, error)
 ```
 
-`knowledge` checks every vault against the `Grant` and passes at most 10 sources (more is `invalid`, with
-a message saying to pass `vaults`). `library` holds a reference on each generation until the query ends.
+`Source` is the same `{Name, Index}` that search takes. `knowledge` checks every vault against the `Grant`
+and passes at most 10 sources (more is `invalid`, with a message saying to pass `vaults`). The sandbox
+holds a reference on each index's current generation until the query ends, and attaches that
+generation's file.
 
 1. Wait for a connection from the sandbox pool: a dedicated `*sql.DB` on `:memory:` with 4 open
    connections and `SetMaxIdleConns(0)`, so a connection is never reused. Each user has at most one query
    running. Waiting counts against the 3-second limit.
-2. Through `sql.Conn.Raw`, on the `*sqlite3.SQLiteConn`:
+2. Through `sql.Conn.Raw`, on the `*sqlite3.SQLiteConn` (the setup runs before the authorizer exists):
    1. Check that `PRAGMA database_list` shows only `main` and `temp`. Anything else is a bug: drop the
       connection and fail.
    2. `ATTACH 'file:<path>?mode=ro' AS v0` ... `v9`, one per source, in a stable order.
@@ -234,19 +232,28 @@ a message saying to pass `vaults`). `library` holds a reference on each generati
       literal `vault` column per attached database. The views exist for convenience. They are not a
       security boundary: attached tables can be read directly, and that's fine, because only the user's own
       vaults are attached.
-   4. `PRAGMA query_only = 1`, `temp_store = MEMORY`, `cache_size = -8000` (8 MB).
+   4. `PRAGMA temp_store = MEMORY` and `cache_size = -8000` (8 MB) before the views, because changing
+      `temp_store` throws the temp database away, views included. `PRAGMA query_only = 1` after them.
    5. Limits: `SQLITE_LIMIT_ATTACHED` to the number attached, `LENGTH` 1,000,000, `SQL_LENGTH` 100,000,
       `EXPR_DEPTH` 50, `COMPOUND_SELECT` 10, `LIKE_PATTERN_LENGTH` 100.
    6. Register the authorizer (below).
-3. Prepare the statement. Reject it if anything but whitespace and comments follows the first statement.
+3. Before any of that, reject the SQL if anything but whitespace and comments follows the first
+   statement. This check is speki's own scanner (strings, quoted names, both comment styles), because
+   go-sqlite3 runs every `;`-separated statement and returns the last one's rows.
 4. Run it with a context that ends at the 3-second limit. The driver interrupts SQLite when the context ends.
    This is the only bound on running time: SQLite has no limit on instructions executed.
 5. Read at most 500 rows and 1 MiB, then stop and mark `truncated`.
-6. Close the connection. With no idle connections allowed, the pool discards it.
+6. Close the connection, marked bad (`driver.ErrBadConn` from `Raw`) so the pool discards it. The idle
+   limit alone isn't enough: `database/sql` hands a released connection straight to a waiting caller.
 
 Memory: `sqlite3_soft_heap_limit64` is set once for the process (512 MiB by default), so SQLite starts
 releasing cache memory under pressure, and four sandbox connections with 8 MB caches and in-memory temp
 storage stay within that. A query that needs more fails with `too_large`.
+
+Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,
+`fts_config` and the content table `documents`, and run `PRAGMA data_version`. Those are on the lists
+above. The match has to name a column (`body MATCH 'x'`): the view has no hidden column named after the
+table, so `fts MATCH 'x'` is a "no such column" error.
 
 `DEFENSIVE` mode and `trusted_schema` can't be set through mattn's Go API. A small C file in `index`
 registers an `sqlite3_auto_extension` hook that, only for connections whose main database is `:memory:`,
@@ -257,12 +264,15 @@ into the binary.
 
 ### The authorizer
 
+go-sqlite3 passes the authorizer the action and its first three arguments: for a read, the table, the
+column and the database name. The fourth (the view or trigger a read comes from) isn't available.
+
 Allow:
 
 | Action | Condition |
 |---|---|
 | `SQLITE_SELECT` | always |
-| `SQLITE_READ` | a table of the index schema or one of the FTS shadow tables (`fts_data`, `fts_idx`, `fts_config`, `fts_docsize` and the same for `names`), in `v0`..`v9`; the `temp` views; or an empty schema (CTE references) |
+| `SQLITE_READ` | a table of the index schema (`documents`, `tags`, `links`, `headings`, `resolved_links`) or one of the `fts` shadow tables (`fts_data`, `fts_idx`, `fts_config`, `fts_docsize`), in `v0`..`v9`; the five `temp` views by name; or an empty database name (CTE references) |
 | `SQLITE_FUNCTION` | function on the allow-list |
 | `SQLITE_RECURSIVE` | always. The time limit bounds it |
 | `SQLITE_PRAGMA` | `data_version` with no argument. FTS5 runs it internally |

@@ -1,5 +1,5 @@
-// Package knowledge is what speki's tools do: list, search, read, history, write, edit, move and delete
-// over the vaults a user may see. It knows nothing about MCP. Every function that touches a vault takes
+// Package knowledge is what speki's tools do: list, search, query, read, history, write, edit, move and
+// delete over the vaults a user may see. It knows nothing about MCP. Every function that touches a vault takes
 // the user's grant and checks it before anything else.
 package knowledge
 
@@ -38,20 +38,35 @@ type gitHub interface {
 	Commit(ctx context.Context, token string, req gh.CommitRequest) (string, error)
 }
 
+// querier runs agents' SQL.
+type querier interface {
+	Query(ctx context.Context, sources []index.Source, sql string) (index.Rows, error)
+}
+
 // Base answers the tools' questions.
 type Base struct {
-	vaults Vaults
-	github gitHub
-	logger *slog.Logger
-	now    func() time.Time
+	vaults  Vaults
+	github  gitHub
+	sandbox querier
+	logger  *slog.Logger
+	now     func() time.Time
 
-	mu    sync.Mutex
-	locks map[int64]chan struct{} // one write at a time per vault: a slot taken while writing
+	mu      sync.Mutex
+	locks   map[int64]chan struct{} // one write at a time per vault: a slot taken while writing
+	queries map[int64]chan struct{} // one query at a time per user
 }
 
 // New returns a Base.
-func New(vaults Vaults, github gitHub, logger *slog.Logger) *Base {
-	return &Base{vaults: vaults, github: github, logger: logger, now: time.Now, locks: map[int64]chan struct{}{}}
+func New(vaults Vaults, github gitHub, sandbox querier, logger *slog.Logger) *Base {
+	return &Base{
+		vaults:  vaults,
+		github:  github,
+		sandbox: sandbox,
+		logger:  logger,
+		now:     time.Now,
+		locks:   map[int64]chan struct{}{},
+		queries: map[int64]chan struct{}{},
+	}
 }
 
 // lock takes a vault's write lock, or gives up when ctx ends, and returns its unlock.

@@ -16,6 +16,7 @@ const (
 	VaultReadOnly   Code = "vault_read_only"
 	SecretDetected  Code = "secret_detected"
 	TooLarge        Code = "too_large"
+	Timeout         Code = "timeout"
 	RateLimited     Code = "rate_limited"
 	Unavailable     Code = "unavailable"
 )

@@ -22,6 +22,7 @@ import (
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/gitsync"
+	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/knowledge"
 	"github.com/eve-online-tools/speki/library"
 	"github.com/eve-online-tools/speki/mcpserver"
@@ -42,6 +43,7 @@ type Service struct {
 	metrics  *prometheus.Registry
 	github   *gh.Client
 	library  *library.Library
+	sandbox  *index.Sandbox
 	auth     *oauth.Server
 	mcp      *mcpserver.Server
 	ready    atomic.Bool
@@ -102,7 +104,11 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		CheckUser: resolver.CheckMember,
 	}, keys, github, store.NewMemory(), logger)
 
-	kb := knowledge.New(libraryVaults{lib}, github, logger)
+	sandbox, err := index.NewSandbox()
+	if err != nil {
+		return nil, err
+	}
+	kb := knowledge.New(libraryVaults{lib}, github, sandbox, logger)
 	mcp := mcpserver.New(auth, resolver, kb, cfg.Version, logger)
 	metrics.MustRegister(mcp.Collector())
 
@@ -112,6 +118,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		metrics:    metrics,
 		github:     github,
 		library:    lib,
+		sandbox:    sandbox,
 		auth:       auth,
 		mcp:        mcp,
 		started:    make(chan struct{}),
@@ -164,7 +171,7 @@ func (s *Service) Run(ctx context.Context) error {
 		defer cancel()
 		err := errors.Join(publicSrv.Shutdown(shutdownCtx), internalSrv.Shutdown(shutdownCtx))
 		s.library.Close()
-		return err
+		return errors.Join(err, s.sandbox.Close())
 	})
 
 	err = g.Wait()

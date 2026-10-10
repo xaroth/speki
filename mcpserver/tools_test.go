@@ -30,6 +30,7 @@ type fakeKB struct {
 	err    error
 	search knowledge.SearchRequest
 	write  knowledge.WriteRequest
+	query  knowledge.QueryRequest
 }
 
 func (f *fakeKB) Vaults(context.Context, *access.Grant) ([]knowledge.VaultInfo, error) {
@@ -86,6 +87,11 @@ func (f *fakeKB) Move(context.Context, *access.Grant, knowledge.MoveRequest) (kn
 
 func (f *fakeKB) Delete(context.Context, *access.Grant, knowledge.DeleteRequest) (knowledge.Result, error) {
 	return knowledge.Result{Commit: "c3", LinkedFrom: []string{"b.md"}}, f.err
+}
+
+func (f *fakeKB) Query(_ context.Context, _ *access.Grant, req knowledge.QueryRequest) (index.Rows, error) {
+	f.query = req
+	return index.Rows{Columns: []string{"vault", "path", "n"}, Rows: [][]any{{"ours/kb", "a\tb.md", nil}}, Truncated: true}, f.err
 }
 
 // connect starts the whole stack behind an HTTP server and connects a go-sdk client to it.
@@ -157,7 +163,7 @@ func TestHandshakeAndToolList(t *testing.T) {
 			t.Errorf("%s has no output schema or description", tool.Name)
 		}
 	}
-	if strings.Join(names, ",") != "delete,edit,guide,history,list,move,read,search,write" { // sorted by the SDK
+	if strings.Join(names, ",") != "delete,edit,guide,history,list,move,query,read,schema,search,write" { // sorted by the SDK
 		t.Errorf("tools = %v", names)
 	}
 }
@@ -207,6 +213,17 @@ func TestToolResults(t *testing.T) {
 			args:       map[string]any{"vault": "ours/kb"},
 			text:       []string{"c2 2026-10-09T14:02:11Z octocat via Claude Code: Update a.md"},
 			structured: `"client":"Claude Code"`,
+		},
+		{
+			tool:       "schema",
+			text:       []string{"## Views", "target_path"},
+			structured: `"schema":"# Querying speki`,
+		},
+		{
+			tool:       "query",
+			args:       map[string]any{"sql": "SELECT 1", "vaults": []string{"ours/kb"}},
+			text:       []string{"vault\tpath\tn\nours/kb\ta b.md\tNULL\n1 rows, truncated"},
+			structured: `"rows":[["ours/kb","a\tb.md",null]]`,
 		},
 		{
 			tool:       "write",

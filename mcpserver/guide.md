@@ -25,6 +25,9 @@ vault's guidelines below.
 - Matches in titles, aliases and tags count for more than matches in the body. Deprecated documents rank
   lower.
 - `list` shows a vault's folders and documents, 200 at a time. Without a vault, it lists your vaults.
+- `query` runs read-only SQL over the vaults' metadata, links and text, for questions search can't
+  answer: "runbooks not updated this year", "what links here", "documents without a description". Call
+  `schema` first.
 
 ## Reading
 
