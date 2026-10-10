@@ -131,8 +131,10 @@ Details per step:
   error, as the spec says.
 - The consent page shows who is asking (host, or "a program on this computer"), the redirect target, a
   "read and write" / "read only" choice, and a continue button. It sends
-  `Content-Security-Policy: frame-ancestors 'none'` and loads nothing from elsewhere. The page is an
-  `html/template` embedded in the binary.
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'` and loads
+  nothing from elsewhere. There's no `form-action`: Chromium applies it to the redirect that follows the
+  form, to GitHub or back to the client, and would block sign-in. The page is an `html/template` embedded
+  in the binary.
 - The cookies are `__Host-`, `Secure`, `HttpOnly`, `SameSite=Lax`. The consent POST must carry a sealed
   consent value whose cookie hash matches, which stops cross-site form posts and replays from another
   browser. The transaction cookie's name includes its nonce, so two sign-ins in one browser don't

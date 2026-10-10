@@ -185,8 +185,14 @@ func (h *harness) signIn(clientID, redirect, access string) string {
 	if rec.Code != http.StatusOK {
 		h.t.Fatalf("authorize: %d %s", rec.Code, rec.Body)
 	}
-	if rec.Header().Get("Content-Security-Policy") == "" || rec.Header().Get("X-Frame-Options") != "DENY" {
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "frame-ancestors 'none'") || rec.Header().Get("X-Frame-Options") != "DENY" {
 		h.t.Error("consent page can be framed")
+	}
+	// Chromium applies form-action to the redirect that follows the form, which leaves speki's origin
+	// (to GitHub, or to the client on Cancel). Allowing only 'self' blocks sign-in.
+	if strings.Contains(csp, "form-action") {
+		h.t.Errorf("consent page CSP restricts where the form may lead: %s", csp)
 	}
 	m := consentField.FindStringSubmatch(rec.Body.String())
 	if m == nil {

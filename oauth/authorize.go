@@ -252,9 +252,14 @@ func redirectTo(w http.ResponseWriter, r *http.Request, base string, params url.
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
+// pageCSP keeps the pages from loading anything or being framed. It has no form-action: browsers apply
+// it to the redirects after the consent form (to GitHub, or back to the client on Cancel), and the
+// client's address isn't known in advance.
+const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+
 func (s *Server) page(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", pageCSP)
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
