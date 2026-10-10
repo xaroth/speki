@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/eve-online-tools/speki/gh"
@@ -55,6 +56,7 @@ type Library struct {
 
 	opening    chan struct{} // limits concurrent clones and builds
 	background sync.WaitGroup
+	closed     atomic.Bool
 	syncs      *prometheus.CounterVec
 }
 
@@ -217,6 +219,7 @@ func (l *Library) WaitIdle() { l.background.Wait() }
 
 // Close waits for background work and closes every vault.
 func (l *Library) Close() {
+	l.closed.Store(true) // no new background work from here on
 	l.background.Wait()
 	l.mu.Lock()
 	vaults := l.vaults
@@ -268,6 +271,14 @@ func (l *Library) initialise(ctx context.Context, v *Vault) {
 // reclone replaces a vault's git copy after its default branch changed: it clones the new branch next to
 // the old copy, swaps, and rebuilds, while the old index keeps serving.
 func (l *Library) reclone(ctx context.Context, v *Vault) {
+	v.syncMu.Lock()
+	opened := v.mirror != nil
+	v.syncMu.Unlock()
+	if !opened { // never opened: the normal way in, which takes its own opening slot
+		l.initialise(ctx, v)
+		return
+	}
+	// The opening slot before the sync lock, as everywhere: the other order could deadlock.
 	select {
 	case l.opening <- struct{}{}:
 		defer func() { <-l.opening }()
@@ -275,16 +286,10 @@ func (l *Library) reclone(ctx context.Context, v *Vault) {
 		return
 	}
 	v.syncMu.Lock()
-	if v.removed {
-		v.syncMu.Unlock()
-		return
-	}
-	if v.mirror == nil { // never opened: the normal way in
-		v.syncMu.Unlock()
-		l.initialise(ctx, v)
-		return
-	}
 	defer v.syncMu.Unlock()
+	if v.removed {
+		return
+	}
 	err := l.freshClone(ctx, v)
 	if err == nil {
 		err = l.syncLocked(ctx, v, false)

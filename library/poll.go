@@ -25,13 +25,14 @@ func (l *Library) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// Poll runs one round of checks, four vaults at a time.
+// Poll runs one round of checks, four vaults at a time. Work it starts in the background lives on ctx,
+// not on the round.
 func (l *Library) Poll(ctx context.Context) {
-	g, gctx := errgroup.WithContext(ctx)
+	var g errgroup.Group
 	g.SetLimit(4)
 	for _, v := range l.all() {
 		g.Go(func() error {
-			l.check(gctx, v)
+			l.check(ctx, v)
 			return nil
 		})
 	}
@@ -77,8 +78,9 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 	if remote != "" && remote == v.index.Commit() {
 		v.mu.Lock()
 		v.status.Fresh = time.Now()
+		v.recordLocked(nil) // current again: an earlier failed check no longer counts
 		v.mu.Unlock()
-		l.compact(ctx, v) // writes add packs without the poller ever syncing them
+		l.inBackground(ctx, v, l.compact) // writes add packs without the poller ever syncing them
 		return
 	}
 	// Changes are applied in the round. Anything bigger (a rebuild, a fresh clone) runs in the background,
@@ -86,8 +88,10 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 	if !v.syncMu.TryLock() {
 		return
 	}
-	err = l.syncLocked(ctx, v, true)
-	v.syncMu.Unlock()
+	err = func() error {
+		defer v.syncMu.Unlock()
+		return l.syncLocked(ctx, v, true)
+	}()
 	if errors.Is(err, ErrRebuildNeeded) {
 		l.inBackground(ctx, v, l.rebuild)
 		return
@@ -101,7 +105,7 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 // inBackground runs work on a vault outside the poll round, a few vaults at a time, once at a time per
 // vault.
 func (l *Library) inBackground(ctx context.Context, v *Vault, work func(context.Context, *Vault)) {
-	if !v.scheduled.CompareAndSwap(false, true) {
+	if l.closed.Load() || !v.scheduled.CompareAndSwap(false, true) {
 		return
 	}
 	l.background.Go(func() {
@@ -189,8 +193,8 @@ func (l *Library) SyncAfterNotice(ctx context.Context, v *Vault) error {
 // too, but on the instance that writes to a vault the poller never needs to sync: each write's own sync
 // already brought the index up to date.
 func (l *Library) compact(ctx context.Context, v *Vault) {
-	if v.syncMu.LockContext(ctx) != nil {
-		return
+	if !v.syncMu.TryLock() {
+		return // busy: the next round looks again
 	}
 	defer v.syncMu.Unlock()
 	if v.removed || v.mirror == nil || v.mirror.Packs() <= maxPacks || time.Since(v.freshCloneAt) < time.Hour {

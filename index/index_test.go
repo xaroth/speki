@@ -618,8 +618,7 @@ func TestUnusableErrors(t *testing.T) {
 		want bool
 	}{
 		{sql.ErrNoRows, true},
-		{errors.New("quick_check: row 3 missing"), true},
-		{errors.New("schema version 0, want 1"), true},
+		{fmt.Errorf("%w: quick_check: row 3 missing", errUnusable), true},
 		{sqlite3.Error{Code: sqlite3.ErrNotADB}, true},
 		{sqlite3.Error{Code: sqlite3.ErrCorrupt}, true},
 		{context.Canceled, false},

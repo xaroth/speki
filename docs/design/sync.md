@@ -126,7 +126,8 @@ Every `sync.poll_interval` (default 60 seconds), `library` checks every vault, 4
 
 Anything slower runs in the background, four vaults at a time, so one vault can't hold up the others: a
 full rebuild, a fresh clone, cloning a vault that failed to open, and switching to a new default branch
-(cloned next to the old copy while the old index keeps serving). A vault busy with one of those is
+(cloned next to the old copy while the old index keeps serving; documents whose content isn't on the new
+branch can't be read until the rebuild finishes). A vault busy with one of those is
 skipped by the round and checked again at the next.
 
 A vault whose head check or sync fails keeps serving its last good index, shows the error on the status

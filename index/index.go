@@ -242,14 +242,14 @@ func openGeneration(ctx context.Context, dir string, n int) (*generation, error)
 	var check string
 	err = g.writer.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&check)
 	if err == nil && check != "ok" {
-		err = errors.New("quick_check: " + check)
+		err = fmt.Errorf("%w: quick_check: %s", errUnusable, check)
 	}
 	var version, commit string
 	if err == nil {
 		err = g.writer.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'schema'").Scan(&version)
 	}
 	if err == nil && version != schemaVersion {
-		err = fmt.Errorf("schema version %s, want %s", version, schemaVersion)
+		err = fmt.Errorf("%w: schema version %s, want %s", errUnusable, version, schemaVersion)
 	}
 	if err == nil {
 		err = g.writer.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'commit'").Scan(&commit)
@@ -266,7 +266,9 @@ func openGeneration(ctx context.Context, dir string, n int) (*generation, error)
 func unusable(err error) error {
 	var serr sqlite3.Error
 	switch {
-	case errors.Is(err, sql.ErrNoRows), strings.HasPrefix(err.Error(), "quick_check"), strings.HasPrefix(err.Error(), "schema version"):
+	case errors.Is(err, errUnusable):
+		return err
+	case errors.Is(err, sql.ErrNoRows):
 	case errors.As(err, &serr) && (serr.Code == sqlite3.ErrCorrupt || serr.Code == sqlite3.ErrNotADB ||
 		(serr.Code == sqlite3.ErrError && strings.Contains(serr.Error(), "no such table"))):
 	default:
