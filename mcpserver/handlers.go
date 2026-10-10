@@ -60,7 +60,7 @@ func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (Guid
 		fmt.Fprintf(&b, "\n### %s\n\n", oneLine(v.Vault))
 		writeVaultDetails(&b, v)
 		if v.Guidelines != "" {
-			fmt.Fprintf(&b, "<guidelines>\n%s\n</guidelines>\n", escapeMarkers(v.Guidelines))
+			b.WriteString(fence("guidelines", v.Guidelines))
 		}
 	}
 	return out, b.String(), nil
@@ -148,7 +148,7 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 		fmt.Fprintf(&b, "More entries follow: call list again with cursor %q.\n", l.NextCursor)
 	}
 	if l.Guidelines != "" {
-		fmt.Fprintf(&b, "<guidelines>\n%s\n</guidelines>\n", escapeMarkers(l.Guidelines))
+		b.WriteString(fence("guidelines", l.Guidelines))
 	}
 	return out, b.String(), nil
 }
@@ -304,11 +304,7 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 			fmt.Fprintf(&b, "  line %d: %s %s\n", h.Line, strings.Repeat("#", h.Level), oneLine(h.Text))
 		}
 	}
-	fmt.Fprintf(&b, "<document>\n%s", escapeMarkers(p.Content))
-	if !strings.HasSuffix(p.Content, "\n") {
-		b.WriteString("\n")
-	}
-	b.WriteString("</document>\n")
+	b.WriteString(fence("document", p.Content))
 	return out, b.String(), nil
 }
 
