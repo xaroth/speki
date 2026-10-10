@@ -69,18 +69,29 @@ func (id Identity) name() string {
 }
 
 func (id Identity) title() string {
-	if id.Title == "" {
-		return "Speki knowledge base"
+	if t := strings.TrimSpace(id.Title); t != "" {
+		return t
 	}
-	return id.Title
+	return "Speki knowledge base"
 }
 
+// description is the instance's description on one line, cleaned like any text shown to agents.
+func (id Identity) description() string {
+	return oneLine(strings.Join(strings.Fields(id.Description), " "))
+}
+
+// instructions open with the instance's description when it has one. Only that opening is formatted,
+// so the shared text may hold any character.
 func (id Identity) instructions() string {
-	desc := strings.Join(strings.Fields(id.Description), " ")
+	desc := id.description()
 	if desc == "" {
 		return instructions
 	}
-	return fmt.Sprintf(instanceInstructions, id.title(), desc)
+	head := "Speki: " + desc
+	if strings.TrimSpace(id.Title) != "" {
+		head = fmt.Sprintf("Speki %q: %s", oneLine(id.title()), desc)
+	}
+	return head + "\n\n" + instanceSearch + instructionsRest
 }
 
 // New returns the MCP endpoint, with its tools.

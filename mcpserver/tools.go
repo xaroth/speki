@@ -27,13 +27,10 @@ Search speki before answering questions about our systems, services, infrastruct
 
 ` + instructionsRest
 
-// instanceInstructions open the instructions of an instance with a description: %s is the title, %s the
-// description.
-const instanceInstructions = `Speki %q: %s
+// instanceSearch follows an instance's description in its instructions.
+const instanceSearch = `Search it before answering questions this covers, and when working out how such a system works, alongside reading the code. Someone may already have written it down.
 
-Search it before answering questions this covers, and when working out how such a system works, alongside reading the code. Someone may already have written it down.
-
-` + instructionsRest
+`
 
 const instructionsRest = `When you learn something worth keeping, such as how something works, a fix, or a decision and its reason, write it back. Update the document that covers it, or create one if none does, and tell the user what you saved. Mark outdated documents deprecated instead of leaving them wrong.
 

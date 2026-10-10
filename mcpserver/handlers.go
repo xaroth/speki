@@ -50,10 +50,10 @@ func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (Guid
 		return GuideOutput{}, "", err
 	}
 	guide := guideText
-	if s.id.Title != "" || s.id.Description != "" {
+	if strings.TrimSpace(s.id.Title) != "" || s.id.description() != "" {
 		// Which speki this is comes first, for agents connected to more than one.
 		head := "# " + oneLine(s.id.title()) + "\n\n"
-		if desc := oneLine(strings.Join(strings.Fields(s.id.Description), " ")); desc != "" {
+		if desc := s.id.description(); desc != "" {
 			head += desc + "\n\n"
 		}
 		guide = head + guideText

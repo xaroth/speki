@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/eve-online-tools/speki/gh"
@@ -92,6 +93,12 @@ type Instance struct {
 
 // instanceName is what Instance.Name must look like.
 var instanceName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// hiddenOrBreak reports whether r breaks a line, or is a control or format character that can hide or
+// reorder text. Instance texts go to every user's agent.
+func hiddenOrBreak(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
 
 // maxInstanceDescription is the longest Instance.Description, in characters. It goes into the MCP
 // instructions, which Claude Code cuts at 2,048 characters.
@@ -184,11 +191,12 @@ func (c Config) validate() error {
 	if c.Instance.Name != "" && !instanceName.MatchString(c.Instance.Name) {
 		errs = append(errs, fmt.Errorf("instance.name: %q must be lower-case letters, digits and dashes, at most 32", c.Instance.Name))
 	}
-	if strings.ContainsAny(c.Instance.Title, "\r\n") || utf8.RuneCountInString(c.Instance.Title) > 100 {
-		errs = append(errs, errors.New("instance.title must be one line of at most 100 characters"))
+	if strings.ContainsFunc(c.Instance.Title, hiddenOrBreak) || utf8.RuneCountInString(c.Instance.Title) > 100 {
+		errs = append(errs, errors.New("instance.title must be one line of at most 100 characters, without control or format characters"))
 	}
-	if utf8.RuneCountInString(strings.TrimSpace(c.Instance.Description)) > maxInstanceDescription {
-		errs = append(errs, fmt.Errorf("instance.description is longer than %d characters", maxInstanceDescription))
+	desc := strings.Join(strings.Fields(c.Instance.Description), " ") // line breaks fold to spaces, as YAML's > does
+	if strings.ContainsFunc(desc, hiddenOrBreak) || utf8.RuneCountInString(desc) > maxInstanceDescription {
+		errs = append(errs, fmt.Errorf("instance.description must be at most %d characters, without control or format characters", maxInstanceDescription))
 	}
 	_, err := telemetry.ParseLevel(c.Telemetry.LogLevel)
 	if err != nil {

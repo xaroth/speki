@@ -105,9 +105,14 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		{
 			name: "bad instance",
 			cfg: with(func(c *Config) {
-				c.Instance = Instance{Name: "Work!", Title: "two\nlines", Description: strings.Repeat("x", 301)}
+				c.Instance = Instance{Name: "Work!", Title: "hidden\u202etext", Description: "tag\U000E0041"}
 			}),
 			want: []string{"instance.name", "instance.title", "instance.description"},
+		},
+		{
+			name: "long instance description",
+			cfg:  with(func(c *Config) { c.Instance.Description = strings.Repeat("x", 301) }),
+			want: []string{"instance.description"},
 		},
 		{
 			name: "negative interval",
