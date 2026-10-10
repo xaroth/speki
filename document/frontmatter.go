@@ -2,7 +2,9 @@ package document
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"time"
@@ -66,9 +68,17 @@ func trimEOL(s string) string {
 // decode parses the block into a YAML node tree, or records why it can't be used.
 func (f *frontmatter) decode() {
 	var doc yaml.Node
-	err := yaml.Unmarshal(f.content, &doc)
-	if err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(f.content))
+	err := dec.Decode(&doc)
+	if err != nil && !errors.Is(err, io.EOF) { // EOF: empty, or only comments
 		f.broken = "not valid YAML: " + strings.TrimPrefix(err.Error(), "yaml: ")
+		return
+	}
+	// A closing line with a trailing space isn't a closing line, so the block can run on to a later
+	// "---" and hold several YAML documents. Reading only the first would drop the rest unseen.
+	var more yaml.Node
+	if err == nil && !errors.Is(dec.Decode(&more), io.EOF) {
+		f.broken = "it holds more than one YAML document; is a line meant to close it not exactly ---?"
 		return
 	}
 	if doc.Kind == 0 { // empty, or only comments

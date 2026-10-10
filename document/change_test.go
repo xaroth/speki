@@ -194,6 +194,7 @@ func FuzzParseTouch(f *testing.F) {
 		}
 	}
 	f.Add([]byte("---\n---\n"))
+	f.Add([]byte("---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n"))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		d, err := Parse("fuzz.md", raw)
 		if err != nil {
@@ -218,4 +219,16 @@ func FuzzParseTouch(f *testing.F) {
 			t.Fatalf("body changed:\n%q\n%q", d.Body, d2.Body)
 		}
 	})
+}
+
+func TestTouchKeepsTextAfterAnOpenClosingLine(t *testing.T) {
+	raw := []byte("---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n")
+	d := mustParse(t, "a.md", raw)
+	out, err := d.Touch(now, false)
+	if err == nil {
+		t.Errorf("Touch rewrote a block with two YAML documents:\n%s", out)
+	}
+	if Check(d, d) == nil {
+		t.Error("Check accepts a change that keeps the broken block")
+	}
 }

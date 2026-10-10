@@ -147,6 +147,9 @@ func TestParseFrontmatterEdges(t *testing.T) {
 		{"byte order mark without frontmatter", "\ufeff# Title\n", "Title", "# Title\n", 0},
 		{"non-text property name", "---\n? [a]\n: 1\n---\n", "x", "", 1},
 		{"nested non-text key", "---\nx: {1: a}\n---\n", "x", "", 1},
+		{"closing line with a trailing space", "---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n", "x", "\nMore.\n", 1},
+		{"second document of keys", "---\ntitle: A\n--- \nowner: ops\n---\n", "x", "", 1},
+		{"only comments", "---\n# just a comment\n---\nText\n", "x", "Text\n", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
