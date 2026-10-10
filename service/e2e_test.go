@@ -239,3 +239,54 @@ func signInFully(t *testing.T, base string) signedIn {
 	tokens.ClientID = reg.ClientID
 	return tokens
 }
+
+// TestOtherVaultsStayHiddenEndToEnd serves a vault the user can't pull on GitHub, and tries every tool on
+// it, through sign-in, the resolver, the grant and the tools.
+func TestOtherVaultsStayHiddenEndToEnd(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]string{
+		"speki.yaml": "title: KB\ndescription: Test vault.\n",
+		"fleet.md":   "# Fleet\n\nWe fly zeppelins.\n",
+	})
+	fake.addHidden(map[string]string{"plans.md": "# Plans\n\nThe zeppelin launch codes.\n"})
+	s := startService(t, testConfig(t, fake))
+	if page := getStatus(t, s); len(page.Vaults) != 2 {
+		t.Fatalf("speki serves %d vaults, want both", len(page.Vaults))
+	}
+	cs := connectMCP(t, s, signIn(t, "http://"+s.publicAddr.String()))
+
+	for _, tool := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"guide", nil},
+		{"list", nil},
+		{"search", map[string]any{"query": "zeppelin"}},
+		{"search", map[string]any{"query": "launch"}},
+		{"query", map[string]any{"sql": "SELECT vault, path, body FROM documents"}},
+	} {
+		text := callTool(t, cs, tool.name, tool.args)
+		if strings.Contains(text, hiddenRepo) || strings.Contains(text, "launch codes") || strings.Contains(text, "plans.md") {
+			t.Errorf("%s %v shows the hidden vault:\n%s", tool.name, tool.args, text)
+		}
+	}
+	for _, tool := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"read", map[string]any{"vault": hiddenRepo, "path": "plans.md"}},
+		{"list", map[string]any{"vault": hiddenRepo}},
+		{"search", map[string]any{"query": "launch", "vaults": []string{hiddenRepo}}},
+		{"history", map[string]any{"vault": hiddenRepo}},
+		{"query", map[string]any{"sql": "SELECT 1", "vaults": []string{hiddenRepo}}},
+		{"write", map[string]any{"vault": hiddenRepo, "path": "x.md", "content": "# X\n"}},
+	} {
+		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: tool.name, Arguments: tool.args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := res.Content[0].(*mcp.TextContent).Text
+		if !res.IsError || !strings.HasPrefix(text, "not_found:") || strings.Contains(text, "launch") {
+			t.Errorf("%s on the hidden vault: %v %s", tool.name, res.IsError, text)
+		}
+	}
+}

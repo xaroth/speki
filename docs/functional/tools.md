@@ -3,7 +3,7 @@
 Every tool returns structured content (JSON matching an output schema) and a short text rendering of the
 same result, for clients that only show text.
 
-Vaults are named `owner/repo`. Paths are relative to the vault root. Wherever a tool takes `vaults`, leaving
+Vaults are named `owner/repo`, matched without regard to letter case as on GitHub; results always use the name as GitHub spells it. Naming a vault twice is the same as naming it once. Paths are relative to the vault root. Wherever a tool takes `vaults`, leaving
 it out means every vault the user can read.
 
 ## Versions
