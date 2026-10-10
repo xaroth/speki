@@ -182,9 +182,6 @@ func TestAddSyncAndRemove(t *testing.T) {
 	if got := search(t, v, "zeppelin"); len(got) != 0 {
 		t.Errorf("old text still found: %v", got)
 	}
-	if n := testutil.ToFloat64(l.syncs.WithLabelValues("applied")); n != 1 {
-		t.Errorf("speki_sync_total{result=applied} = %v", n)
-	}
 
 	// Nothing new: the lookup is answered from the ETag and nothing is synced.
 	before := v.Status().LastSync
@@ -360,26 +357,6 @@ func TestRemoveWhilePollingAndOpening(t *testing.T) {
 	l.WaitIdle()
 	if len(l.Status()) != 0 {
 		t.Errorf("status after add and remove: %+v", l.Status())
-	}
-}
-
-func TestMetrics(t *testing.T) {
-	r := newRemote(t)
-	r.push(map[string]string{"a.md": "# A\n", "b.md": "# B\n"})
-	l := newLibrary(t, r, t.TempDir())
-	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
-	serving(t, l)
-
-	err := testutil.CollectAndCompare(l.Collector(), strings.NewReader(`
-# HELP speki_vault_documents Documents in the vault's index.
-# TYPE speki_vault_documents gauge
-speki_vault_documents{vault="ours/kb"} 2
-# HELP speki_vault_up 1 when the vault is served and its last sync succeeded.
-# TYPE speki_vault_up gauge
-speki_vault_up{vault="ours/kb"} 1
-`), "speki_vault_documents", "speki_vault_up")
-	if err != nil {
-		t.Error(err)
 	}
 }
 
@@ -827,4 +804,23 @@ func TestStallContextStop(t *testing.T) {
 			t.Error("the context is still live after stop")
 		}
 	})
+}
+
+// The vault gauges follow the library's vaults: a served vault is up with its counts, and a removed one
+// is gone.
+func TestPublish(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n", "b.md": "# B\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	serving(t, l)
+	l.publish()
+	if up, docs := testutil.ToFloat64(vaultUp.WithLabelValues(kb.Name)), testutil.ToFloat64(vaultDocuments.WithLabelValues(kb.Name)); up != 1 || docs != 2 {
+		t.Errorf("up %v, documents %v", up, docs)
+	}
+	l.Update(t.Context(), vault.Changes{Removed: []vault.Vault{kb}})
+	l.WaitIdle()
+	if n := testutil.CollectAndCount(vaultUp); n != 0 {
+		t.Errorf("%d vaults still published after the removal", n)
+	}
 }

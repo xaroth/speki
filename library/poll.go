@@ -14,6 +14,7 @@ import (
 // Run checks every vault against GitHub every interval until ctx ends: changed vaults are synced, and
 // failed ones are retried with backoff.
 func (l *Library) Run(ctx context.Context, interval time.Duration) {
+	l.publish()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -38,6 +39,7 @@ func (l *Library) Poll(ctx context.Context) {
 		})
 	}
 	_ = g.Wait()
+	l.publish()
 }
 
 func (l *Library) check(ctx context.Context, v *Vault) {

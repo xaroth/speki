@@ -12,6 +12,7 @@ import (
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // How long an installation's rate limit reading counts towards the installation gauge at most, and how
@@ -21,10 +22,20 @@ const (
 	warnEvery    = 10 * time.Minute
 )
 
+var githubRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "speki_github_requests_total",
+	Help: "GitHub API requests by credential kind and HTTP status.",
+}, []string{"kind", "status"})
+
+var githubRemaining = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "speki_github_rate_remaining",
+	Help: "Requests left in the current GitHub rate limit window, by credential kind; for installations, the lowest across installations heard from in the last few minutes.",
+}, []string{"kind"})
+
+// metrics counts one client's requests and keeps what it needs to report rate limit budgets. The counters
+// and the gauge are process-wide; the budget bookkeeping is per client, and a process has one client.
 type metrics struct {
-	requests  *prometheus.CounterVec
-	remaining *prometheus.GaugeVec
-	logger    *slog.Logger
+	logger *slog.Logger
 
 	mu       sync.Mutex
 	installs map[int64]reading     // the latest reading per installation
@@ -42,27 +53,12 @@ type warnKey struct {
 	installation int64
 }
 
-func newMetrics(reg prometheus.Registerer, logger *slog.Logger) (*metrics, error) {
-	m := &metrics{
-		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "speki_github_requests_total",
-			Help: "GitHub API requests by credential kind and HTTP status.",
-		}, []string{"kind", "status"}),
-		remaining: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "speki_github_rate_remaining",
-			Help: "Requests left in the current GitHub rate limit window, by credential kind; for installations, the lowest across installations heard from in the last few minutes.",
-		}, []string{"kind"}),
+func newMetrics(logger *slog.Logger) *metrics {
+	return &metrics{
 		logger:   logger,
 		installs: make(map[int64]reading),
 		warned:   make(map[warnKey]time.Time),
 	}
-	for _, c := range []prometheus.Collector{m.requests, m.remaining} {
-		err := reg.Register(c)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return m, nil
 }
 
 // observe wraps next so every response is counted and its rate limit header recorded.
@@ -114,10 +110,10 @@ func (m *metrics) observed(kind string, installation int64, counts func(*http.Re
 			return resp, err
 		}
 		if err != nil {
-			m.requests.WithLabelValues(kind, "error").Inc()
+			githubRequests.WithLabelValues(kind, "error").Inc()
 			return nil, err
 		}
-		m.requests.WithLabelValues(kind, strconv.Itoa(resp.StatusCode)).Inc()
+		githubRequests.WithLabelValues(kind, strconv.Itoa(resp.StatusCode)).Inc()
 		m.record(kind, installation, resp.Header)
 		return resp, nil
 	})
@@ -150,7 +146,7 @@ func (m *metrics) record(kind string, installation int64, h http.Header) {
 			lowest = min(lowest, r.remaining)
 		}
 	}
-	m.remaining.WithLabelValues(kind).Set(float64(lowest))
+	githubRemaining.WithLabelValues(kind).Set(float64(lowest))
 	limit, err := strconv.Atoi(h.Get("X-RateLimit-Limit"))
 	key := warnKey{kind, installation}
 	warn := err == nil && limit > 0 && remaining*10 < limit && now.Sub(m.warned[key]) >= warnEvery

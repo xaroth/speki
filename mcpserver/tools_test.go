@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/document"
@@ -97,7 +96,7 @@ func (f *fakeKB) Query(_ context.Context, _ *access.Grant, req knowledge.QueryRe
 }
 
 // connect starts the whole stack behind an HTTP server and connects a go-sdk client to it.
-func connect(t *testing.T, kb knowledgeBase) (*mcp.ClientSession, *Server) {
+func connect(t *testing.T, kb knowledgeBase) *mcp.ClientSession {
 	t.Helper()
 	s := New(fakeAuth{}, fakeResolver{}, kb, Identity{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(telemetry.RequestID(s.Handler()))
@@ -112,7 +111,7 @@ func connect(t *testing.T, kb knowledgeBase) (*mcp.ClientSession, *Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cs.Close() })
-	return cs, s
+	return cs
 }
 
 type bearer struct{ token string }
@@ -139,7 +138,7 @@ func call(t *testing.T, cs *mcp.ClientSession, name string, args any) (*mcp.Call
 }
 
 func TestHandshakeAndToolList(t *testing.T) {
-	cs, _ := connect(t, &fakeKB{})
+	cs := connect(t, &fakeKB{})
 	init := cs.InitializeResult()
 	if init.ServerInfo.Name != "speki" || !strings.Contains(init.Instructions, "Search speki") || !strings.Contains(init.Instructions, "write it back") || len(init.Instructions) > 2048 {
 		t.Errorf("handshake = %+v", init)
@@ -172,7 +171,7 @@ func TestHandshakeAndToolList(t *testing.T) {
 
 func TestToolResults(t *testing.T) {
 	kb := &fakeKB{}
-	cs, _ := connect(t, kb)
+	cs := connect(t, kb)
 	tests := []struct {
 		tool       string
 		args       map[string]any
@@ -286,7 +285,7 @@ func TestToolResults(t *testing.T) {
 
 func TestToolErrors(t *testing.T) {
 	kb := &fakeKB{err: &knowledge.Error{Code: knowledge.NotFound, Message: "no such document"}}
-	cs, s := connect(t, kb)
+	cs := connect(t, kb)
 
 	res, text := call(t, cs, "read", map[string]any{"vault": "ours/kb", "path": "a.md"})
 	if !res.IsError || text != "not_found: no such document" || res.StructuredContent != nil {
@@ -305,13 +304,6 @@ func TestToolErrors(t *testing.T) {
 	res, _ = call(t, cs, "read", map[string]any{"vault": "ours/kb"})
 	if !res.IsError {
 		t.Error("read without a path succeeded")
-	}
-
-	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("read", "not_found")); got != 1 {
-		t.Errorf("not_found calls = %v", got)
-	}
-	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("search", "unavailable")); got != 1 {
-		t.Errorf("unavailable calls = %v", got)
 	}
 }
 
@@ -361,7 +353,8 @@ func TestFence(t *testing.T) {
 }
 
 func TestHandleErrors(t *testing.T) {
-	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var logged safeBuffer
+	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{}, "test", slog.New(slog.NewTextHandler(&logged, nil)))
 	g := access.NewGrant(access.User{Login: "alice"}, nil, nil)
 	ctx := context.WithValue(t.Context(), grantKey{}, g)
 	run := func(ctx context.Context, err error) error {
@@ -391,11 +384,9 @@ func TestHandleErrors(t *testing.T) {
 	if err := run(canceled, context.Canceled); err == nil {
 		t.Error("canceled call succeeded")
 	}
-	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "canceled")); got != 1 {
-		t.Errorf("canceled calls = %v", got)
-	}
-	if got := testutil.ToFloat64(s.metrics.calls.WithLabelValues("t", "unavailable")); got != 1 { // the knowledge error above
-		t.Errorf("a canceled call counted as unavailable")
+	lines := strings.Split(strings.TrimSpace(logged.String()), "\n")
+	if last := lines[len(lines)-1]; !strings.Contains(last, "outcome=canceled") {
+		t.Errorf("a canceled call is logged as %q", last)
 	}
 }
 

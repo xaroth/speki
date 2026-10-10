@@ -3,9 +3,6 @@ package library
 import (
 	"cmp"
 	"slices"
-	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/eve-online-tools/speki/vault"
 )
@@ -20,48 +17,26 @@ func (l *Library) Status() []Status {
 	return out
 }
 
-// Collector returns a Prometheus collector for the per-vault metrics and sync results. It reads the vaults' status on
-// every scrape, so removed vaults disappear from the metrics.
-func (l *Library) Collector() prometheus.Collector {
-	return &collector{
-		l: l,
-		up: prometheus.NewDesc("speki_vault_up",
-			"1 when the vault is served and its last sync succeeded.", []string{"vault"}, nil),
-		documents: prometheus.NewDesc("speki_vault_documents",
-			"Documents in the vault's index.", []string{"vault"}, nil),
-		bytes: prometheus.NewDesc("speki_vault_bytes",
-			"Markdown bytes in the vault's index.", []string{"vault"}, nil),
-		fresh: prometheus.NewDesc("speki_vault_fresh_seconds",
-			"Seconds since speki last confirmed the vault's index matches GitHub.", []string{"vault"}, nil),
-	}
-}
-
-type collector struct {
-	l                           *Library
-	up, documents, bytes, fresh *prometheus.Desc
-}
-
-func (c *collector) Describe(ch chan<- *prometheus.Desc) {
-	c.l.syncs.Describe(ch)
-	ch <- c.up
-	ch <- c.documents
-	ch <- c.bytes
-	ch <- c.fresh
-}
-
-func (c *collector) Collect(ch chan<- prometheus.Metric) {
-	c.l.syncs.Collect(ch)
-	now := time.Now()
-	for _, s := range c.l.Status() {
+// publish writes every vault's status to the gauges. Resetting first drops vaults that are gone.
+// Restore, Run, Poll, Update and Close call it, so the gauges lag the real status by a poll round at
+// most. Calls take turns, so an older snapshot can't overwrite a newer one.
+func (l *Library) publish() {
+	l.publishMu.Lock()
+	defer l.publishMu.Unlock()
+	vaultUp.Reset()
+	vaultDocuments.Reset()
+	vaultBytes.Reset()
+	vaultFresh.Reset()
+	for _, s := range l.Status() {
 		up := 0.0
 		if s.State == StateServing && s.Error == "" {
 			up = 1
 		}
-		ch <- prometheus.MustNewConstMetric(c.up, prometheus.GaugeValue, up, s.Name)
-		ch <- prometheus.MustNewConstMetric(c.documents, prometheus.GaugeValue, float64(s.Documents), s.Name)
-		ch <- prometheus.MustNewConstMetric(c.bytes, prometheus.GaugeValue, float64(s.Bytes), s.Name)
+		vaultUp.WithLabelValues(s.Name).Set(up)
+		vaultDocuments.WithLabelValues(s.Name).Set(float64(s.Documents))
+		vaultBytes.WithLabelValues(s.Name).Set(float64(s.Bytes))
 		if !s.Fresh.IsZero() {
-			ch <- prometheus.MustNewConstMetric(c.fresh, prometheus.GaugeValue, now.Sub(s.Fresh).Seconds(), s.Name)
+			vaultFresh.WithLabelValues(s.Name).Set(float64(s.Fresh.Unix()))
 		}
 	}
 }

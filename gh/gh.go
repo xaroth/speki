@@ -14,7 +14,6 @@ import (
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v88/github"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/propagation"
 )
@@ -61,8 +60,8 @@ func CheckPrivateKey(pem []byte) error {
 	return err
 }
 
-// New returns a client for the app described by cfg. Request metrics are registered with reg.
-func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
+// New returns a client for the app described by cfg.
+func New(cfg Config) (*Client, error) {
 	apiURL := cfg.APIURL
 	if apiURL == "" {
 		apiURL = DefaultAPIURL
@@ -74,10 +73,7 @@ func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	m, err := newMetrics(reg, logger)
-	if err != nil {
-		return nil, err
-	}
+	m := newMetrics(logger)
 
 	// A span per GitHub request when tracing is on, without sending speki's trace context to GitHub.
 	base := otelhttp.NewTransport(http.DefaultTransport, otelhttp.WithPropagators(propagation.NewCompositeTextMapPropagator()))

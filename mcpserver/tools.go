@@ -198,8 +198,8 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 			err = fmt.Errorf("unavailable: something went wrong on speki's side or GitHub's. Try again; if it keeps failing, give the operator request ID %s", telemetry.RequestIDFrom(ctx))
 		}
 		took := time.Since(start)
-		s.metrics.calls.WithLabelValues(name, outcome).Inc()
-		s.metrics.duration.WithLabelValues(name).Observe(took.Seconds())
+		toolCalls.WithLabelValues(name, outcome).Inc()
+		toolDuration.WithLabelValues(name).Observe(took.Seconds())
 		vault, path := targetOf(in)
 		vault = canonicalVaults(g, vault) // logs and traces by the name GitHub uses, however it was typed
 		span.SetAttributes(attribute.String("speki.tool", name), attribute.String("speki.vault", vault), attribute.String("speki.outcome", outcome))

@@ -79,6 +79,10 @@ own mux, separate from the public server on `listen`, so a routing mistake on th
 it. `service.New` rejects a configuration where `metrics_listen` equals `listen`, and the end-to-end tests
 check that `/metrics` and `/status` return 404 on the public server.
 
+Each package declares its metrics as package variables with `promauto`, on Prometheus's default registry,
+next to the code that updates them; `/metrics` serves that registry, which also has the Go and process
+metrics. Adding a metric means adding a variable and using it, with nothing to wire up in `service`.
+
 Names:
 
 | Metric | Type | Labels |
@@ -90,11 +94,14 @@ Names:
 | `speki_vault_up` | gauge | `vault`. 1 when the vault is served and its last sync succeeded |
 | `speki_vault_documents` | gauge | `vault` |
 | `speki_vault_bytes` | gauge | `vault`. Markdown bytes indexed |
-| `speki_vault_fresh_seconds` | gauge | `vault`. Time since speki last confirmed the index matches GitHub's head |
-| `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, failed) |
+| `speki_vault_fresh_timestamp_seconds` | gauge | `vault`. Unix time when speki last confirmed the index matches GitHub's head |
+| `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, deferred, failed) |
 | `speki_signins_total` | counter | `result` |
 
-`speki_vault_fresh_seconds` is the one to alert on: above a few poll intervals, a vault is falling behind.
+The vault gauges are written from the library's status at startup, after every poll round and
+discovery update, and on shutdown, so they lag by a poll round at most. Alert on `time() - speki_vault_fresh_timestamp_seconds`:
+above a few poll intervals, a vault is falling behind. It's a timestamp rather than an age so that it
+keeps growing staler when the poller itself stalls.
 
 Vault labels are fine at 20 vaults. User logins are never labels.
 

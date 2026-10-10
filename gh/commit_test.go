@@ -8,8 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // fakeGraphQL answers createCommitOnBranch, choosing its answer by expectedHeadOid.
@@ -91,7 +89,7 @@ func fakeGraphQL(t *testing.T) *Client {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL}, prometheus.NewRegistry())
+	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,6 @@ import (
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/time/rate"
 
 	"github.com/eve-online-tools/speki/access"
@@ -41,13 +40,12 @@ type resolver interface {
 
 // Server is the MCP endpoint.
 type Server struct {
-	id      Identity
-	auth    authenticator
-	access  resolver
-	kb      knowledgeBase
-	logger  *slog.Logger
-	mcp     *mcp.Server
-	metrics *metrics
+	id     Identity
+	auth   authenticator
+	access resolver
+	kb     knowledgeBase
+	logger *slog.Logger
+	mcp    *mcp.Server
 
 	mu       sync.Mutex
 	limiters map[int64]*rate.Limiter
@@ -108,15 +106,11 @@ func New(auth authenticator, access resolver, kb knowledgeBase, id Identity, ver
 		kb:       kb,
 		logger:   logger,
 		mcp:      srv,
-		metrics:  newMetrics(),
 		limiters: make(map[int64]*rate.Limiter),
 	}
 	s.addTools()
 	return s
 }
-
-// Collector returns the tool call metrics, for registering.
-func (s *Server) Collector() prometheus.Collector { return s.metrics }
 
 // Handler returns the whole /mcp stack, outermost first: cross-origin check, body limit, token check,
 // rate limit, grant, MCP.

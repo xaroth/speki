@@ -13,7 +13,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/seal"
@@ -72,7 +71,6 @@ type Server struct {
 	logger  *slog.Logger
 	clients *clientResolver
 	now     func() time.Time
-	signIns *prometheus.CounterVec
 }
 
 // New returns an authorization server.
@@ -86,15 +84,8 @@ func New(cfg Config, keys *seal.Keyring, github githubAPI, st stateStore, logger
 		logger:  logger,
 		clients: newClientResolver(keys, cfg.ClientMetadataHosts),
 		now:     time.Now,
-		signIns: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "speki_signins_total",
-			Help: "Sign-ins through GitHub, by result: ok, declined, refused (not allowed in) or failed.",
-		}, []string{"result"}),
 	}
 }
-
-// Collector returns the sign-in metrics, for registering.
-func (s *Server) Collector() prometheus.Collector { return s.signIns }
 
 // resource is the URL of the MCP endpoint, which tokens are issued for.
 func (s *Server) resource() string { return s.cfg.Issuer + "/mcp" }
