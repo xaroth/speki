@@ -159,7 +159,9 @@ reproduces them (`SPEKI_MEASURE=1`). Limited to 4 cores:
 | Search 10 vaults of 10,000, p50 / p95 | 16 ms / 27 ms | p95 under 100 ms |
 
 A second run on 2026-10-10, again on 4 cores, after milestone 7, added memory. The process's resident
-memory, from `/proc/self/status`:
+memory, from `/proc/self/status`: `VmHWM` after resetting it just before the build, and `VmRSS` once
+after `runtime.GC()` at the end, one sample each. To repeat:
+`SPEKI_MEASURE=1 GOMAXPROCS=4 go test -tags sqlite_fts5,sqlite_omit_load_extension -run TestMeasure -v ./index`.
 
 | What | Result |
 |---|---|

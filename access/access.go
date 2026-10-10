@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -66,7 +65,7 @@ func (g *Grant) Readable() []vault.Vault { return slices.Clone(g.readable) }
 // matches repository names.
 func (g *Grant) Vault(name string) (vault.Vault, bool) {
 	for _, v := range g.readable {
-		if strings.EqualFold(v.Name, name) {
+		if asciiEqualFold(v.Name, name) {
 			return v, true
 		}
 	}
@@ -204,4 +203,25 @@ func githubError(err error) error {
 		return fmt.Errorf("%w: %w", ErrUnauthorized, err)
 	}
 	return err
+}
+
+// asciiEqualFold reports whether a and b are equal, ignoring the case of ASCII letters only: GitHub names
+// are ASCII, and a Unicode fold would let a Kelvin sign stand for a k.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }

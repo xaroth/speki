@@ -195,6 +195,7 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 		s.metrics.calls.WithLabelValues(name, outcome).Inc()
 		s.metrics.duration.WithLabelValues(name).Observe(took.Seconds())
 		vault, path := targetOf(in)
+		vault = canonicalVaults(g, vault) // logs and traces by the name GitHub uses, however it was typed
 		span.SetAttributes(attribute.String("speki.tool", name), attribute.String("speki.vault", vault), attribute.String("speki.outcome", outcome))
 		s.logger.InfoContext(ctx, "tool call",
 			"tool", name,
@@ -215,6 +216,20 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 // target is implemented by tool inputs that name a vault and a document, for the log line.
 type target interface {
 	target() (vault, path string)
+}
+
+// canonicalVaults replaces each comma-separated vault name the user can read with GitHub's spelling.
+func canonicalVaults(g *access.Grant, names string) string {
+	if names == "" {
+		return ""
+	}
+	parts := strings.Split(names, ",")
+	for i, n := range parts {
+		if v, ok := g.Vault(n); ok {
+			parts[i] = v.Name
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 func targetOf(in any) (vault, path string) {

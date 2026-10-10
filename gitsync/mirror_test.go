@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"golang.org/x/text/unicode/norm"
 )
 
 // source is a regular repository standing in for GitHub.
@@ -358,5 +359,20 @@ func TestFetchFollowsTheSource(t *testing.T) {
 	got, err = m.Fetch(t.Context(), nil)
 	if err != nil || got != want {
 		t.Errorf("Fetch after reopening = %s, %v; want %s", got, err, want)
+	}
+}
+
+// Paths reports names as git stores them, NFD included: the write path compares new names with them.
+func TestPathsKeepGitsBytes(t *testing.T) {
+	src := newSource(t)
+	name := norm.NFD.String("menü/brötchen.md")
+	head := src.commit(map[string]*string{name: str("# B\n")})
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := m.Paths(head)
+	if err != nil || len(paths) != 1 || paths[0] != name {
+		t.Errorf("Paths = %q, %v; want the NFD bytes %q", paths, err, name)
 	}
 }

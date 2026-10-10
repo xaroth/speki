@@ -629,3 +629,14 @@ func TestWriteDuringARebuild(t *testing.T) {
 		t.Errorf("error = %v", err)
 	}
 }
+
+func TestMoveConflictCarriesTheSourceVersion(t *testing.T) {
+	f := newFixture(t)
+	v := f.version(t, "README.md")
+	f.github.before = func(r *fakeRepo) { r.head += "+" }
+	_, err := f.base.Move(t.Context(), f.grant, MoveRequest{Vault: "ours/kb", From: "README.md", To: "about.md", Version: v})
+	var kerr *Error
+	if !errors.As(err, &kerr) || kerr.Code != Conflict || kerr.Version != v {
+		t.Errorf("conflict = %+v, want the version of README.md", err)
+	}
+}
