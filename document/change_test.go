@@ -214,7 +214,7 @@ func TestTouchKeepsMeaning(t *testing.T) {
 }
 
 func FuzzParseTouch(f *testing.F) {
-	for _, name := range []string{"obsidian.md", "crlf.md", "bom.md", "broken-yaml.md", "messy-fields.md", "no-frontmatter.md"} {
+	for _, name := range []string{"obsidian.md", "crlf.md", "bom.md", "broken-yaml.md", "messy-fields.md", "no-frontmatter.md", "anchors.md", "nfd.md"} {
 		raw, err := readFixtureFS(name)
 		if err == nil {
 			f.Add(raw)
@@ -242,7 +242,7 @@ func FuzzParseTouch(f *testing.F) {
 		if !bytes.Equal(once, twice) {
 			t.Fatalf("Touch isn't stable:\n%q\n%q", once, twice)
 		}
-		if d2.Body != d.Body && !strings.HasPrefix(string(raw), "\ufeff") {
+		if d2.Body != d.Body {
 			t.Fatalf("body changed:\n%q\n%q", d.Body, d2.Body)
 		}
 	})

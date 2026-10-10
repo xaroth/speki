@@ -158,6 +158,19 @@ reproduces them (`SPEKI_MEASURE=1`). Limited to 4 cores:
 | Search one vault of 50,000, p50 / p95 | 26 ms / 56 ms | |
 | Search 10 vaults of 10,000, p50 / p95 | 16 ms / 27 ms | p95 under 100 ms |
 
+A second run on 2026-10-10, again on 4 cores, after milestone 7, added memory. The process's resident
+memory, from `/proc/self/status`:
+
+| What | Result |
+|---|---|
+| Build 50,000 documents | 43 s |
+| Peak RSS while building them | 40 MB |
+| RSS serving one vault of 50,000 and ten of 10,000, after the searches above | 147 MB |
+| Search 10 vaults of 10,000, p50 / p95 | 17 ms / 32 ms |
+
+Builds stream documents into SQLite, so their memory doesn't grow with the vault. What a serving instance
+holds is mostly SQLite's page caches and the in-memory vocabularies for typo correction, one per vault.
+
 Two things got it there. The first version joined every matching document before ranking, which read
 each document's body from disk: 135 ms p95 across 10 vaults. Ranking inside the full-text table and
 joining only the best candidates cut that by five. And building the full-text tables with one `rebuild` at

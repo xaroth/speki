@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
@@ -147,6 +149,8 @@ func TestParseFrontmatterEdges(t *testing.T) {
 		{"byte order mark without frontmatter", "\ufeff# Title\n", "Title", "# Title\n", 0},
 		{"non-text property name", "---\n? [a]\n: 1\n---\n", "x", "", 1},
 		{"nested non-text key", "---\nx: {1: a}\n---\n", "x", "", 1},
+		{"opening line with a trailing space", "--- \ntitle: A\n---\nText\n", "x", "--- \ntitle: A\n---\nText\n", 0},
+		{"opening line of four dashes", "----\ntitle: A\n---\nText\n", "x", "----\ntitle: A\n---\nText\n", 0},
 		{"closing line with a trailing space", "---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n", "x", "\nMore.\n", 1},
 		{"second document of keys", "---\ntitle: A\n--- \nowner: ops\n---\n", "x", "", 1},
 		{"only comments", "---\n# just a comment\n---\nText\n", "x", "Text\n", 0},
@@ -291,5 +295,30 @@ func TestWikiLinkParsing(t *testing.T) {
 				t.Errorf("links (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestStatusAndDates(t *testing.T) {
+	for _, status := range []Status{StatusDraft, StatusActive, StatusDeprecated} {
+		d := mustParse(t, "a.md", []byte("---\ntitle: A\nstatus: "+string(status)+"\n---\n"))
+		if d.Meta.Status != status || len(d.Warnings) != 0 {
+			t.Errorf("status %s: %s, warnings %v", status, d.Meta.Status, d.Warnings)
+		}
+	}
+	d := mustParse(t, "a.md", []byte("---\ntitle: A\ncreated: 2026-10-09T16:30:00+02:00\n---\n"))
+	if want := time.Date(2026, 10, 9, 14, 30, 0, 0, time.UTC); !d.Meta.Created.Equal(want) || d.Meta.Created.Location() != time.UTC {
+		t.Errorf("created = %v, want %v in UTC", d.Meta.Created, want)
+	}
+}
+
+// A file whose name git stores in NFD, as files made on macOS often are.
+func TestNFDFileNames(t *testing.T) {
+	name := norm.NFD.String("menü/brötchen.md")
+	d := mustParse(t, name, readFixture(t, "nfd.md"))
+	if d.Meta.Title != norm.NFD.String("brötchen") {
+		t.Errorf("title from the file name = %q", d.Meta.Title)
+	}
+	if len(d.Links) != 1 || d.Links[0].Candidate != norm.NFD.String("menü/käse.md") {
+		t.Errorf("links = %+v", d.Links)
 	}
 }

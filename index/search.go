@@ -237,7 +237,8 @@ func addSnippets(ctx context.Context, db *sql.DB, expr string, hits []found) err
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
 	rows, err := db.QueryContext(ctx,
-		`SELECT rowid, snippet(fts, 5, '**', '**', '…', 32) FROM fts WHERE fts MATCH ? AND rowid IN (`+placeholders+`)`,
+		// Private markers around matches, so markdown bold in the body isn't taken for one.
+		`SELECT rowid, snippet(fts, 5, char(1), char(2), '…', 32) FROM fts WHERE fts MATCH ? AND rowid IN (`+placeholders+`)`,
 		slices.Concat([]any{expr}, ids)...,
 	)
 	if err != nil {
@@ -258,10 +259,12 @@ func addSnippets(ctx context.Context, db *sql.DB, expr string, hits []found) err
 		return err
 	}
 	for i := range hits {
-		hits[i].Snippet = snippets[hits[i].id]
-		if !strings.Contains(hits[i].Snippet, "**") && hits[i].Description != "" {
+		s := snippets[hits[i].id]
+		if !strings.Contains(s, "\x01") && hits[i].Description != "" {
 			hits[i].Snippet = hits[i].Description // the match wasn't in the body
+			continue
 		}
+		hits[i].Snippet = strings.NewReplacer("\x01", "**", "\x02", "**").Replace(s)
 	}
 	return nil
 }
