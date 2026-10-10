@@ -97,13 +97,13 @@ func (l *Library) Restore(ctx context.Context) error {
 		}
 		v, err := l.restore(ctx, id)
 		if err != nil {
-			l.logger.Warn("can't reuse local copy", "repo_id", id, "err", err)
+			l.logger.WarnContext(ctx, "can't reuse local copy", "repo_id", id, "err", err)
 			continue
 		}
 		l.mu.Lock()
 		l.vaults[id] = v
 		l.mu.Unlock()
-		l.logger.Info("vault restored from disk", "vault", v.Info().Name, "commit", v.index.Commit())
+		l.logger.InfoContext(ctx, "vault restored from disk", "vault", v.Info().Name, "commit", v.index.Commit())
 	}
 	l.publish()
 	return nil
@@ -262,10 +262,10 @@ func (l *Library) initialise(ctx context.Context, v *Vault) {
 	}
 	if err != nil {
 		v.setState(StateFailed, err)
-		l.logger.Warn("vault failed to open", "vault", v.Info().Name, "err", err)
+		l.logger.WarnContext(ctx, "vault failed to open", "vault", v.Info().Name, "err", err)
 		return
 	}
-	l.logger.Info("vault ready", "vault", v.Info().Name, "commit", v.index.Commit())
+	l.logger.InfoContext(ctx, "vault ready", "vault", v.Info().Name, "commit", v.index.Commit())
 }
 
 // reclone replaces a vault's git copy after its default branch changed: it clones the new branch next to
@@ -293,7 +293,7 @@ func (l *Library) reclone(ctx context.Context, v *Vault) {
 		err = l.syncLocked(ctx, v, false)
 	}
 	if err != nil && !errors.Is(err, errRemoved) {
-		l.logger.Warn("switching to the new default branch failed", "vault", v.Info().Name, "err", err)
+		l.logger.WarnContext(ctx, "switching to the new default branch failed", "vault", v.Info().Name, "err", err)
 		v.recordFailure(err)
 	}
 }

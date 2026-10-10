@@ -64,7 +64,7 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 	head, err := l.github.BranchHead(ctx, info.InstallationID, info.Name, info.DefaultBranch, etag)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
-			l.logger.Warn("checking vault failed", "vault", info.Name, "err", err)
+			l.logger.WarnContext(ctx, "checking vault failed", "vault", info.Name, "err", err)
 			v.recordFailure(err) // on the status page, with backoff, like a failed sync
 		}
 		return
@@ -100,7 +100,7 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 		return
 	}
 	if err != nil && !errors.Is(err, errRemoved) {
-		l.logger.Warn("syncing vault failed", "vault", info.Name, "err", err)
+		l.logger.WarnContext(ctx, "syncing vault failed", "vault", info.Name, "err", err)
 		v.recordFailure(err)
 	}
 }
@@ -129,7 +129,7 @@ func (l *Library) rebuild(ctx context.Context, v *Vault) {
 	defer v.syncMu.Unlock()
 	err := l.syncLocked(ctx, v, false)
 	if err != nil && !errors.Is(err, errRemoved) && ctx.Err() == nil {
-		l.logger.Warn("rebuilding vault failed", "vault", v.Info().Name, "err", err)
+		l.logger.WarnContext(ctx, "rebuilding vault failed", "vault", v.Info().Name, "err", err)
 		v.recordFailure(err)
 	}
 }

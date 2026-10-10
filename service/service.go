@@ -207,7 +207,7 @@ func (s *Service) Run(ctx context.Context) error {
 		defer cancel()
 		err := stopTracing(flushCtx)
 		if err != nil {
-			s.logger.Warn("flushing traces failed", "err", err)
+			s.logger.WarnContext(ctx, "flushing traces failed", "err", err)
 		}
 	}()
 
@@ -233,11 +233,11 @@ func (s *Service) Run(ctx context.Context) error {
 	g.Go(func() error { return serve(publicSrv, public) })
 	g.Go(func() error { return serve(internalSrv, internal) })
 	close(s.started)
-	s.logger.Info("speki started", "listen", s.publicAddr.String(), "metrics_listen", s.internalAddr.String())
+	s.logger.InfoContext(ctx, "speki started", "listen", s.publicAddr.String(), "metrics_listen", s.internalAddr.String())
 
 	err = s.library.Restore(gctx)
 	if err != nil {
-		s.logger.Error("restoring vaults from disk failed", "err", err)
+		s.logger.ErrorContext(ctx, "restoring vaults from disk failed", "err", err)
 	}
 
 	// Background work stops before the servers do, so in-flight requests still see open vaults.
@@ -262,7 +262,7 @@ func (s *Service) Run(ctx context.Context) error {
 		select {
 		case <-stopped:
 		case <-shutdownCtx.Done(): // the process is about to end; the rest of the work goes with it
-			s.logger.Warn("background work didn't stop in time")
+			s.logger.WarnContext(ctx, "background work didn't stop in time")
 		}
 
 		// Running requests get the rest of the time. When it runs out, their connections are cut:
@@ -270,18 +270,18 @@ func (s *Service) Run(ctx context.Context) error {
 		for _, srv := range []*http.Server{publicSrv, internalSrv} {
 			err := srv.Shutdown(shutdownCtx)
 			if errors.Is(err, context.DeadlineExceeded) {
-				s.logger.Warn("requests still running at shutdown; closing their connections")
+				s.logger.WarnContext(ctx, "requests still running at shutdown; closing their connections")
 				err = srv.Close()
 			}
 			if err != nil {
-				s.logger.Warn("stopping a server failed", "err", err)
+				s.logger.WarnContext(ctx, "stopping a server failed", "err", err)
 			}
 		}
 		return s.closeComponents()
 	})
 
 	err = g.Wait()
-	s.logger.Info("speki stopped")
+	s.logger.InfoContext(ctx, "speki stopped")
 	return err
 }
 
@@ -305,10 +305,10 @@ func (s *Service) discover(ctx context.Context) {
 
 	registry.Run(ctx, s.cfg.Sync.DiscoveryInterval, func(changes vault.Changes, err error) {
 		if err != nil {
-			s.logger.Warn("vault discovery incomplete", "err", err)
+			s.logger.WarnContext(ctx, "vault discovery incomplete", "err", err)
 		}
 		if !changes.Empty() {
-			s.logger.Info("vaults changed",
+			s.logger.InfoContext(ctx, "vaults changed",
 				"added", len(changes.Added), "changed", len(changes.Changed), "removed", len(changes.Removed))
 			s.library.Update(ctx, changes)
 		}
@@ -332,7 +332,7 @@ func (s *Service) allowedAccounts(ctx context.Context, giveUp func()) ([]int64, 
 		if err == nil {
 			return []int64{owner}, true
 		}
-		s.logger.Warn("can't find the app's owner; retrying", "err", err, "in", wait)
+		s.logger.WarnContext(ctx, "can't find the app's owner; retrying", "err", err, "in", wait)
 		giveUp()
 		select {
 		case <-ctx.Done():
@@ -369,7 +369,7 @@ func (s *Service) followNotices(ctx context.Context) {
 			for {
 				err := s.library.SyncAfterNotice(ctx, v)
 				if err != nil && ctx.Err() == nil {
-					s.logger.Warn("sync after a change notice failed", "vault", v.Info().Name, "err", err)
+					s.logger.WarnContext(ctx, "sync after a change notice failed", "vault", v.Info().Name, "err", err)
 				}
 				mu.Lock()
 				if state[repoID] != "again" || ctx.Err() != nil {
@@ -394,7 +394,7 @@ func (s *Service) followNotices(ctx context.Context) {
 			wait, failing = time.Second, false
 		}
 		if !failing { // once per outage
-			s.logger.Warn("change notices unavailable; retrying", "err", err)
+			s.logger.WarnContext(ctx, "change notices unavailable; retrying", "err", err)
 			failing = true
 		}
 		select {

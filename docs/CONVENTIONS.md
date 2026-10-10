@@ -39,6 +39,7 @@ if err != nil {
 
 - Wrap with `%w` and say what was being done, not that it failed: `fmt.Errorf("fetch %s: %w", v.ID, err)`.
 - Log an error or return it, not both.
+- Log with the `...Context` methods whenever a context is in scope: the handler takes the request ID from it.
 - Errors that callers act on are sentinel values or types (`gh.ErrHeadMoved`), checked with `errors.Is` and
   `errors.As`.
 

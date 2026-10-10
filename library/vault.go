@@ -385,7 +385,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 			return ErrRebuildNeeded // the poller repairs it
 		}
 		// A copy that broke while in use: clone it again, next to the old one, and rebuild from it.
-		l.logger.Warn("git copy is broken; cloning it again", "vault", info.Name, "err", err)
+		l.logger.WarnContext(ctx, "git copy is broken; cloning it again", "vault", info.Name, "err", err)
 		result = "rebuilt"
 		err = l.freshClone(ctx, v, "")
 		if err == nil {
@@ -420,7 +420,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 	large := v.status.Large
 	v.mu.Unlock()
 	if large {
-		l.logger.Warn("vault is larger than speki is built for", "vault", v.Info().Name,
+		l.logger.WarnContext(ctx, "vault is larger than speki is built for", "vault", v.Info().Name,
 			"documents", stats.Documents, "bytes", stats.Bytes)
 	}
 	return nil
@@ -488,9 +488,9 @@ func (l *Library) compactLocked(ctx context.Context, v *Vault) {
 	switch {
 	case errors.Is(err, errMovedOn):
 		v.freshCloneAt = v.now().Add(movedOnRetry - time.Hour)
-		l.logger.Info("fresh clone missed the index's commit; trying again later", "vault", v.Info().Name)
+		l.logger.InfoContext(ctx, "fresh clone missed the index's commit; trying again later", "vault", v.Info().Name)
 	case err != nil:
-		l.logger.Warn("fresh clone failed", "vault", v.Info().Name, "err", err)
+		l.logger.WarnContext(ctx, "fresh clone failed", "vault", v.Info().Name, "err", err)
 	}
 }
 
