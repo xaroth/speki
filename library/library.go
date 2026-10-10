@@ -290,7 +290,7 @@ func (l *Library) reclone(ctx context.Context, v *Vault) {
 	if v.removed {
 		return
 	}
-	err := l.freshClone(ctx, v)
+	err := l.freshClone(ctx, v, "")
 	if err == nil {
 		err = l.syncLocked(ctx, v, false)
 	}

@@ -418,9 +418,9 @@ func encodedSize(v any) int {
 	return len(raw)
 }
 
-// paths matches file paths in SQLite messages.
-// A path has at least two segments, so a lone slash ("SELECT / 1") or a name with one ('x/y') isn't one.
-var paths = regexp.MustCompile(`(?:file:)?(?:/[^\s'"/]+){2,}/?`)
+// paths matches file paths in SQLite messages: an absolute path of at least two segments, at the start
+// of a word. So a lone slash ("SELECT / 1") isn't one, nor is a name with slashes inside ('a/b/c').
+var paths = regexp.MustCompile(`(^|[\s'"(=:])(?:file:)?(?:/[^\s'"/]+){2,}/?`)
 
 // aliases matches the names vaults are attached under, where they qualify a table or column.
 var aliases = regexp.MustCompile(`\bv(\d+)\.`)
@@ -438,7 +438,7 @@ func queryError(ctx context.Context, err error, sources []Source) error {
 	if !errors.As(err, &serr) {
 		return err
 	}
-	msg := paths.ReplaceAllString(serr.Error(), "<file>") // before vault names, which contain a slash
+	msg := paths.ReplaceAllString(serr.Error(), "$1<file>") // before vault names, which contain a slash
 	msg = aliases.ReplaceAllStringFunc(msg, func(m string) string {
 		n, err := strconv.Atoi(m[1 : len(m)-1])
 		if err != nil || n >= len(sources) {

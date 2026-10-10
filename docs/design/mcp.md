@@ -153,6 +153,8 @@ message so an operator can find it.
 ## Limits
 
 - Structured content is capped at 1 MiB. `list`, `search` and `query` page or truncate before that.
+  `query` also sends its rows as text, capped separately at 1 MiB, so a whole `query` answer can be about
+  2 MiB.
 - Per-user rate limit: 10 requests per second, burst 30, per instance, enforced before the grant (see
   [architecture.md](architecture.md#the-mcp-stack)). Over the limit is an HTTP 429 with `Retry-After`, not
   a tool error: the request hasn't been read as MCP yet, and checking it any later would let turned-away

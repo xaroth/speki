@@ -600,15 +600,73 @@ func TestSearchExamples(t *testing.T) {
 // sync tries again instead of losing the change.
 func TestApplyFailureKeepsTheCommit(t *testing.T) {
 	x := newIndex(t, fleet)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	g, err := x.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.release()
+	_, err = g.writer.ExecContext(t.Context(), `CREATE TRIGGER fail_headings BEFORE INSERT ON headings
+		BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	content := "# README\n\nNew text.\n"
-	err := x.Apply(ctx, "c2", []Change{{Path: "README.md", Version: version(content), Content: []byte(content)}})
+	changes := []Change{
+		{Path: "bad.md", Version: version("z"), Content: []byte("not utf-8 \xff")},
+		{Path: "README.md", Version: version(content), Content: []byte(content)},
+	}
+	err = x.Apply(t.Context(), "c2", changes)
 	if err == nil {
-		t.Fatal("Apply succeeded with a cancelled context")
+		t.Fatal("Apply succeeded although inserts fail")
 	}
 	if x.Commit() != "c1" {
 		t.Errorf("commit moved to %s", x.Commit())
+	}
+
+	_, err = g.writer.ExecContext(t.Context(), "DROP TRIGGER fail_headings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = x.Apply(t.Context(), "c2", changes)
+	if err != nil || x.Commit() != "c2" {
+		t.Fatalf("retry: %v, commit %s", err, x.Commit())
+	}
+	if _, err := x.Document(t.Context(), "bad.md"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the bad file after the retry: %v", err)
+	}
+	if d, err := x.Document(t.Context(), "README.md"); err != nil || d.Version != version(content) {
+		t.Errorf("README.md after the retry: %+v, %v", d, err)
+	}
+}
+
+// A build stops reading files once an insert fails: the build fails anyway.
+func TestBuildStopsAtAFailedInsert(t *testing.T) {
+	x, err := Open(t.Context(), t.TempDir(), discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(x.Close)
+	const total = 5000
+	read := 0
+	files := func(yield func(Change, error) bool) {
+		for i := range total {
+			read++
+			path := fmt.Sprintf("d%d.md", i)
+			if i == 1 {
+				path = "d0.md" // the same path twice fails its insert
+			}
+			content := fmt.Sprintf("# D%d\n", i)
+			if !yield(Change{Path: path, Version: version(content), Content: []byte(content)}, nil) {
+				return
+			}
+		}
+	}
+	err = x.Build(t.Context(), "c1", files)
+	if err == nil || !strings.Contains(err.Error(), "insert d0.md") {
+		t.Fatalf("Build: %v", err)
+	}
+	if read > total/2 {
+		t.Errorf("read %d of %d files after the insert failed", read, total)
 	}
 }
 

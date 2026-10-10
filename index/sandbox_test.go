@@ -393,9 +393,19 @@ func TestQueryErrorsKeepTheirSlashes(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "<file>") {
 		t.Errorf("a lone slash read as a file path: %v", err)
 	}
-	_, err = runQuery(t, sb, sources, "SELECT * FROM 'x/y'")
-	if err == nil || !strings.Contains(err.Error(), "x/y") {
-		t.Errorf("a name with a slash read as a file path: %v", err)
+	for _, name := range []string{"x/y", "a/b/c"} {
+		_, err = runQuery(t, sb, sources, "SELECT * FROM '"+name+"'")
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("a name with slashes read as a file path: %v", err)
+		}
+	}
+	for msg, want := range map[string]string{
+		"unable to open database: /data/vaults/x/index/3.db": "unable to open database: <file>",
+		"cannot open file:/data/a.db?mode=ro":                "cannot open <file>",
+	} {
+		if got := paths.ReplaceAllString(msg, "$1<file>"); got != want {
+			t.Errorf("scrubbed %q to %q, want %q", msg, got, want)
+		}
 	}
 }
 

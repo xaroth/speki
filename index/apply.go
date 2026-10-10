@@ -157,7 +157,9 @@ func fill(
 		return 0, err
 	}
 
-	g, gctx := errgroup.WithContext(ctx)
+	readCtx, stop := context.WithCancel(ctx) // stops reading and parsing once an insert fails
+	defer stop()
+	g, gctx := errgroup.WithContext(readCtx)
 	in := make(chan Change)
 	out := make(chan row)
 	g.Go(func() error {
@@ -206,16 +208,17 @@ func fill(
 		insertErr = insert(ctx, tx, r)
 		if insertErr != nil {
 			insertErr = fmt.Errorf("build: insert %s: %w", r.path, insertErr)
+			stop()
 			continue
 		}
 		count++
 	}
 	err = g.Wait()
-	if err != nil {
-		return 0, fmt.Errorf("build: %w", err)
-	}
 	if insertErr != nil { // not the file's fault: the whole build fails, and is tried again
 		return 0, insertErr
+	}
+	if err != nil {
+		return 0, fmt.Errorf("build: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, rebuildFullText)
 	if err != nil {
