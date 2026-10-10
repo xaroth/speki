@@ -75,7 +75,7 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 	remote := v.remote
 	v.mu.Unlock()
 
-	if remote != "" && remote == v.index.Commit() {
+	if remote != "" && remote == v.index.Commit() && !v.broken.Load() {
 		v.mu.Lock()
 		v.status.Fresh = time.Now()
 		v.recordLocked(nil) // current again: an earlier failed check no longer counts

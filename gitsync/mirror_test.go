@@ -1,8 +1,11 @@
 package gitsync
 
 import (
+	"compress/zlib"
 	"errors"
-	"maps"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -477,44 +480,175 @@ func TestControlCharacterInAName(t *testing.T) {
 	}
 }
 
-// rawCommit commits files at the top level by writing the objects directly, for names go-git's worktree
-// refuses but git allows.
+// A missing subtree on either side of a diff is a broken copy, not an empty folder.
+func TestDiffOnABrokenCopy(t *testing.T) {
+	src := newSource(t)
+	first := src.commit(map[string]*string{"d/x.md": str("# X\n"), "e/y.md": str("# Y\n"), "top.md": str("# Top\n")})
+	second := src.commit(map[string]*string{"d/x.md": nil, "e/y.md": str("# Y2\n")})
+	dir := filepath.Join(t.TempDir(), "copy")
+	copyDir(t, src.dir, dir)
+	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, err := m.Diff(first, second)
+	if err != nil || len(changes) != 2 {
+		t.Fatalf("Diff on a healthy copy: %v, %v", changes, err)
+	}
+	removeObject(t, filepath.Join(dir, ".git"), treeOf(t, src.repo, first, "d"))
+	changes, err = m.Diff(first, second)
+	if !errors.Is(err, ErrBroken) {
+		t.Errorf("Diff with a missing subtree: %v, %v; want ErrBroken", changes, err)
+	}
+	blob := treeOf(t, src.repo, second, "e/y.md")
+	removeObject(t, filepath.Join(dir, ".git"), blob)
+	_, err = m.Blob(blob)
+	if !errors.Is(err, ErrBroken) {
+		t.Errorf("Blob of a missing object: %v, want ErrBroken", err)
+	}
+}
+
+// A diff needs neither the old content of a deleted file nor the folders speki doesn't read, and skips a
+// change of the executable bit alone.
+func TestDiffNeedsOnlyWhatItReads(t *testing.T) {
+	src := newSource(t)
+	first := src.commit(map[string]*string{"gone.md": str("# Gone\n"), ".obsidian/x.md": str("x"), "run.md": str("# Run\n")})
+	if err := os.Chmod(filepath.Join(src.dir, "run.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wt, _ := src.repo.Worktree()
+	if _, err := wt.Add("run.md"); err != nil {
+		t.Fatal(err)
+	}
+	second := src.commit(map[string]*string{"gone.md": nil, ".obsidian/x.md": str("y")})
+	dir := filepath.Join(t.TempDir(), "copy")
+	copyDir(t, src.dir, dir)
+	m, err := Open(t.Context(), dir, Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := entryOf(t, src.repo, second, "run.md").Mode; mode != filemode.Executable {
+		t.Fatalf("run.md has mode %v in the second commit", mode)
+	}
+	git := filepath.Join(dir, ".git")
+	removeObject(t, git, entryOf(t, src.repo, first, "gone.md").Hash.String())
+	removeObject(t, git, treeOf(t, src.repo, first, ".obsidian"))
+	removeObject(t, git, treeOf(t, src.repo, second, ".obsidian"))
+	changes, err := m.Diff(first, second)
+	if err != nil || len(changes) != 1 || changes[0] != (Change{Path: "gone.md"}) {
+		t.Errorf("Diff = %v, %v; want only the deletion of gone.md", changes, err)
+	}
+}
+
+// Errors from damaged object stores count as a broken copy.
+func TestBrokenErrors(t *testing.T) {
+	for _, err := range []error{plumbing.ErrObjectNotFound, io.ErrUnexpectedEOF, zlib.ErrChecksum, fs.ErrNotExist} {
+		if !errors.Is(broken(fmt.Errorf("x: %w", err)), ErrBroken) {
+			t.Errorf("%v isn't broken", err)
+		}
+	}
+	if errors.Is(broken(errors.New("network down")), ErrBroken) {
+		t.Error("a plain error is broken")
+	}
+}
+
+// entryOf returns the tree entry at path in commit.
+func entryOf(t *testing.T, repo *git.Repository, commit, path string) *object.TreeEntry {
+	t.Helper()
+	c, err := repo.CommitObject(plumbing.NewHash(commit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := c.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := root.FindEntry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// A control character in a folder name skips the files in it, in a diff too.
+func TestControlCharacterInAFolderName(t *testing.T) {
+	src := newSource(t)
+	first := src.rawCommit(map[string]string{"d\tx/a.md": "# A\n", "ok.md": "# OK\n"})
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := src.rawCommit(map[string]string{"d\tx/a.md": "# A2\n", "d\tx/b.md": "# B\n", "ok.md": "# OK2\n"})
+	head, err := m.Fetch(t.Context(), nil)
+	if err != nil || head != second {
+		t.Fatalf("Fetch = %s, %v", head, err)
+	}
+	changes, err := m.Diff(first, second)
+	if err != nil || len(changes) != 1 || changes[0].Path != "ok.md" {
+		t.Errorf("Diff = %v, %v", changes, err)
+	}
+}
+
+// rawCommit commits files by writing the objects directly, for names go-git's worktree refuses but git
+// allows. Each commit holds exactly the files given, on top of the branch's head.
 func (s *source) rawCommit(files map[string]string) string {
 	s.t.Helper()
 	store := s.repo.Storer
-	var entries []object.TreeEntry
-	for _, name := range slices.Sorted(maps.Keys(files)) {
-		blob := store.NewEncodedObject()
-		blob.SetType(plumbing.BlobObject)
-		w, _ := blob.Writer()
-		_, _ = w.Write([]byte(files[name]))
-		_ = w.Close()
-		h, err := store.SetEncodedObject(blob)
+	put := func(o interface {
+		Encode(plumbing.EncodedObject) error
+	}) plumbing.Hash {
+		obj := store.NewEncodedObject()
+		if err := o.Encode(obj); err != nil {
+			s.t.Fatal(err)
+		}
+		h, err := store.SetEncodedObject(obj)
 		if err != nil {
 			s.t.Fatal(err)
 		}
-		entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Regular, Hash: h})
+		return h
 	}
-	tree := &object.Tree{Entries: entries}
-	obj := store.NewEncodedObject()
-	if err := tree.Encode(obj); err != nil {
-		s.t.Fatal(err)
-	}
-	treeHash, err := store.SetEncodedObject(obj)
-	if err != nil {
-		s.t.Fatal(err)
+	var tree func(files map[string]string) plumbing.Hash
+	tree = func(files map[string]string) plumbing.Hash {
+		var entries []object.TreeEntry
+		folders := map[string]map[string]string{}
+		for name, content := range files {
+			if folder, rest, ok := strings.Cut(name, "/"); ok {
+				if folders[folder] == nil {
+					folders[folder] = map[string]string{}
+				}
+				folders[folder][rest] = content
+				continue
+			}
+			blob := store.NewEncodedObject()
+			blob.SetType(plumbing.BlobObject)
+			w, _ := blob.Writer()
+			_, _ = w.Write([]byte(content))
+			_ = w.Close()
+			h, err := store.SetEncodedObject(blob)
+			if err != nil {
+				s.t.Fatal(err)
+			}
+			entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Regular, Hash: h})
+		}
+		for name, inner := range folders {
+			entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Dir, Hash: tree(inner)})
+		}
+		key := func(e object.TreeEntry) string { // git's order: a folder sorts as its name and a slash
+			if e.Mode == filemode.Dir {
+				return e.Name + "/"
+			}
+			return e.Name
+		}
+		slices.SortFunc(entries, func(a, b object.TreeEntry) int { return strings.Compare(key(a), key(b)) })
+		return put(&object.Tree{Entries: entries})
 	}
 	sig := object.Signature{Name: "t", Email: "t@x", When: time.Now()}
-	commit := &object.Commit{Author: sig, Committer: sig, Message: "raw", TreeHash: treeHash}
-	obj = store.NewEncodedObject()
-	if err := commit.Encode(obj); err != nil {
-		s.t.Fatal(err)
+	commit := &object.Commit{Author: sig, Committer: sig, Message: "raw", TreeHash: tree(files)}
+	if ref, err := s.repo.Reference(plumbing.NewBranchReferenceName("master"), true); err == nil {
+		commit.ParentHashes = []plumbing.Hash{ref.Hash()}
 	}
-	h, err := store.SetEncodedObject(obj)
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	err = store.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("master"), h))
+	h := put(commit)
+	err := store.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("master"), h))
 	if err != nil {
 		s.t.Fatal(err)
 	}
