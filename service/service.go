@@ -33,7 +33,8 @@ import (
 	"github.com/eve-online-tools/speki/vault"
 )
 
-// shutdownTimeout is how long running requests get to finish once the service stops.
+// shutdownTimeout is how long a stopping service takes at most: background work, then running requests.
+// It's under Kubernetes' default grace period of 30 seconds.
 const shutdownTimeout = 25 * time.Second
 
 // Service is one running speki.
@@ -47,7 +48,9 @@ type Service struct {
 	store    sharedStore
 	auth     *oauth.Server
 	mcp      *mcpserver.Server
-	ready    atomic.Bool
+	ready    atomic.Bool // read by /readyz; set through markReady and markStopping
+	readyMu  sync.Mutex
+	stopping bool // guarded by readyMu: once set, the service never turns ready again
 	vaultsMu sync.Mutex
 	vaults   *vault.Registry // nil until the allowed accounts are known
 
@@ -57,6 +60,25 @@ type Service struct {
 	internalAddr net.Addr
 	// discovered is closed after the first discovery round, successful or not.
 	discovered chan struct{}
+	// shutdownTimeout is the const of that name; tests shorten it.
+	shutdownTimeout time.Duration
+}
+
+// markReady marks the service ready, unless it's already stopping.
+func (s *Service) markReady() {
+	s.readyMu.Lock()
+	defer s.readyMu.Unlock()
+	if !s.stopping {
+		s.ready.Store(true)
+	}
+}
+
+// markStopping marks the service not ready, for good.
+func (s *Service) markStopping() {
+	s.readyMu.Lock()
+	defer s.readyMu.Unlock()
+	s.stopping = true
+	s.ready.Store(false)
 }
 
 // New checks cfg, fills in defaults and builds every component. Nothing runs yet.
@@ -130,6 +152,8 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		mcp:        mcp,
 		started:    make(chan struct{}),
 		discovered: make(chan struct{}),
+
+		shutdownTimeout: shutdownTimeout,
 	}, nil
 }
 
@@ -185,14 +209,36 @@ func (s *Service) Run(ctx context.Context) error {
 
 	g.Go(func() error {
 		<-gctx.Done()
-		s.ready.Store(false)
-		stopWork()
-		background.Wait()
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		s.markStopping()
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.shutdownTimeout)
 		defer cancel()
-		err := errors.Join(publicSrv.Shutdown(shutdownCtx), internalSrv.Shutdown(shutdownCtx))
+
+		stopWork()
+		stopped := make(chan struct{})
+		go func() {
+			background.Wait()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+		case <-shutdownCtx.Done(): // the process is about to end; the rest of the work goes with it
+			s.logger.Warn("background work didn't stop in time")
+		}
+
+		// Running requests get the rest of the time. When it runs out, their connections are cut:
+		// a routine stop, not a failure.
+		for _, srv := range []*http.Server{publicSrv, internalSrv} {
+			err := srv.Shutdown(shutdownCtx)
+			if errors.Is(err, context.DeadlineExceeded) {
+				s.logger.Warn("requests still running at shutdown; closing their connections")
+				err = srv.Close()
+			}
+			if err != nil {
+				s.logger.Warn("stopping a server failed", "err", err)
+			}
+		}
 		s.library.Close()
-		return errors.Join(err, s.sandbox.Close(), s.store.Close())
+		return errors.Join(s.sandbox.Close(), s.store.Close())
 	})
 
 	err = g.Wait()
@@ -204,7 +250,7 @@ func (s *Service) Run(ctx context.Context) error {
 // service is ready after the first round, successful or not: vaults on disk are served either way.
 func (s *Service) discover(ctx context.Context) {
 	firstRound := sync.OnceFunc(func() {
-		s.ready.Store(true)
+		s.markReady() // not when stopping, before the first round got anywhere
 		close(s.discovered)
 	})
 	defer firstRound() // also when stopped before the first round
@@ -323,7 +369,7 @@ func (s *Service) followNotices(ctx context.Context) {
 // publicHandler serves what MCP clients and browsers need: MCP, sign-in and health checks.
 func (s *Service) publicHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", s.mcp.Handler())
+	mux.Handle("/mcp", s.whenReady(s.mcp.Handler()))
 	auth := s.auth.Handler()
 	mux.Handle("/.well-known/", auth)
 	mux.Handle("/oauth/", auth)
@@ -338,6 +384,19 @@ func (s *Service) publicHandler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 	return telemetry.RequestID(telemetry.Trace(mux))
+}
+
+// whenReady answers 503 until the service is ready, and again once it's stopping, so a client that
+// reaches the instance directly retries rather than seeing no vaults.
+func (s *Service) whenReady(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.ready.Load() {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "speki is starting or stopping; try again", http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // internalHandler serves metrics and the status page. It runs on its own listener and is never

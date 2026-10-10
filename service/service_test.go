@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,6 +117,7 @@ func TestNewDefaults(t *testing.T) {
 
 func TestEndpointsAreSeparated(t *testing.T) {
 	s := newTestService(t)
+	s.markReady()
 	public := httptest.NewServer(s.publicHandler())
 	defer public.Close()
 	internal := httptest.NewServer(s.internalHandler())
@@ -162,12 +165,90 @@ func TestReadyz(t *testing.T) {
 		return rec.Code
 	}
 
+	mcp := func() int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}")))
+		return rec.Code
+	}
+
 	if got := status(); got != http.StatusServiceUnavailable {
 		t.Errorf("before start: %d, want 503", got)
 	}
-	s.ready.Store(true)
+	if got := mcp(); got != http.StatusServiceUnavailable {
+		t.Errorf("/mcp before start: %d, want 503", got)
+	}
+	s.markReady()
 	if got := status(); got != http.StatusOK {
 		t.Errorf("when ready: %d, want 200", got)
+	}
+	if got := mcp(); got == http.StatusServiceUnavailable {
+		t.Error("/mcp still 503 when ready")
+	}
+	s.markStopping()
+	s.markReady()
+	if got := status(); got != http.StatusServiceUnavailable {
+		t.Errorf("ready again after stopping: %d", got)
+	}
+}
+
+// Stopped before the first discovery round finished: the service must not turn ready during the drain.
+func TestNotReadyAfterEarlyStop(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
+	fake.block = make(chan struct{}) // discovery hangs on GitHub
+	defer close(fake.block)
+	s, err := New(testConfig(t, fake), discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	<-s.started
+	cancel()
+	err = <-done
+	if err != nil {
+		t.Errorf("Run: %v", err)
+	}
+	if s.ready.Load() {
+		t.Error("ready after stopping")
+	}
+}
+
+// A request that never finishes doesn't keep speki from stopping, and isn't an error.
+func TestStuckRequestAtShutdown(t *testing.T) {
+	s := newTestService(t)
+	s.shutdownTimeout = 200 * time.Millisecond
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	<-s.started
+
+	conn, err := net.Dial("tcp", s.publicAddr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, err = conn.Write([]byte("POST /oauth/token HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server says "100 Continue" once the handler reads the body; then send part of it and stop.
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || !strings.Contains(line, "100") {
+		t.Fatalf("no 100 Continue: %q, %v", line, err)
+	}
+	_, err = conn.Write([]byte("grant_type="))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run didn't return")
 	}
 }
 
