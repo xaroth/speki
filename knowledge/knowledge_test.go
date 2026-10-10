@@ -522,8 +522,7 @@ func TestReadMissingBlob(t *testing.T) {
 	if err == nil {
 		t.Fatal("read a blob the copy doesn't have")
 	}
-	var kerr *Error
-	if errors.As(err, &kerr) {
+	if _, ok := errors.AsType[*Error](err); ok {
 		t.Errorf("a missing blob is speki's problem, not the agent's: %v", err)
 	}
 	c.blobs[doc.Version] = gone

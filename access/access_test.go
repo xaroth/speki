@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -26,10 +27,8 @@ func (f *fakeGitHub) ActiveMember(_ context.Context, token, org string) (bool, e
 	if f.revoked[token] {
 		return false, gh.ErrUnauthorized
 	}
-	for _, o := range f.members[token] {
-		if o == org {
-			return true, nil
-		}
+	if slices.Contains(f.members[token], org) {
+		return true, nil
 	}
 	return false, nil
 }

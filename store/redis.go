@@ -36,8 +36,7 @@ func NewRedis(ctx context.Context, url string, logger *slog.Logger) (*Redis, err
 	setLogger.Do(func() { redis.SetLogger(redisLogger{logger}) })
 	opt, err := redis.ParseURL(url)
 	if err != nil {
-		var uerr *neturl.Error
-		if errors.As(err, &uerr) {
+		if uerr, ok := errors.AsType[*neturl.Error](err); ok {
 			err = uerr.Err // the url.Error quotes the whole URL, password included
 		}
 		return nil, fmt.Errorf("redis url: %w", err)

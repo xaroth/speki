@@ -165,8 +165,7 @@ func (a authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // userError turns a 401 into ErrUnauthorized.
 func userError(err error) error {
-	var gerr *github.ErrorResponse
-	if errors.As(err, &gerr) && gerr.Response != nil && gerr.Response.StatusCode == http.StatusUnauthorized {
+	if gerr, ok := errors.AsType[*github.ErrorResponse](err); ok && gerr.Response != nil && gerr.Response.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("%w: %w", ErrUnauthorized, err)
 	}
 	return notFound(err)
@@ -266,9 +265,9 @@ func (c *Client) Commits(ctx context.Context, token, repo, branch, path string, 
 		return nil, err
 	}
 	page, _, err := client.Repositories.ListCommits(ctx, owner, name, &github.CommitsListOptions{
-		SHA:         branch,
-		Path:        path,
-		ListOptions: github.ListOptions{PerPage: limit},
+		SHA:     branch,
+		Path:    path,
+		PerPage: limit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("commits of %s: %w", repo, userError(err))

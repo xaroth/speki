@@ -346,7 +346,7 @@ func (s *Server) issue(
 // Scopes speki doesn't know are ignored, as at authorize. A request naming none of speki's keeps all.
 func narrow(granted []string, requested string) ([]string, bool) {
 	var asked []string
-	for _, s := range strings.Fields(requested) {
+	for s := range strings.FieldsSeq(requested) {
 		if s == ScopeRead || s == ScopeWrite {
 			asked = append(asked, s)
 		}
