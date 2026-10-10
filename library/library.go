@@ -26,8 +26,8 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// github is what the library needs from GitHub.
-type github interface {
+// githubAPI is what the library needs from GitHub.
+type githubAPI interface {
 	BranchHead(ctx context.Context, installationID int64, repo, branch, etag string) (gh.Head, error)
 	RepositoryID(ctx context.Context, installationID int64, repo string) (int64, error)
 }
@@ -48,7 +48,7 @@ type Options struct {
 
 // Library is the local copy of every vault.
 type Library struct {
-	github github
+	github githubAPI
 	opts   Options
 	logger *slog.Logger
 
@@ -62,7 +62,7 @@ type Library struct {
 }
 
 // New returns an empty library.
-func New(github github, opts Options, logger *slog.Logger) *Library {
+func New(github githubAPI, opts Options, logger *slog.Logger) *Library {
 	if opts.Opening <= 0 {
 		opts.Opening = 4
 	}

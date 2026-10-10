@@ -34,8 +34,8 @@ type Vaults interface {
 	Sync(ctx context.Context, repoID int64) error
 }
 
-// gitHub is what knowledge asks GitHub, as the user.
-type gitHub interface {
+// githubAPI is what knowledge asks GitHub, as the user.
+type githubAPI interface {
 	Commits(ctx context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error)
 	Commit(ctx context.Context, token string, req gh.CommitRequest) (string, error)
 }
@@ -53,7 +53,7 @@ type notifier interface {
 // Base answers the tools' questions.
 type Base struct {
 	vaults  Vaults
-	github  gitHub
+	github  githubAPI
 	sandbox querier
 	notices notifier
 	logger  *slog.Logger
@@ -65,7 +65,7 @@ type Base struct {
 }
 
 // New returns a Base.
-func New(vaults Vaults, github gitHub, sandbox querier, notices notifier, logger *slog.Logger) *Base {
+func New(vaults Vaults, github githubAPI, sandbox querier, notices notifier, logger *slog.Logger) *Base {
 	return &Base{
 		vaults:  vaults,
 		github:  github,
