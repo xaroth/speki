@@ -82,8 +82,8 @@ Names:
 |---|---|---|
 | `speki_tool_calls_total` | counter | `tool`, `outcome` (as in the log line) |
 | `speki_tool_duration_seconds` | histogram | `tool` |
-| `speki_github_requests_total` | counter | `kind` (app, installation, user), `status` |
-| `speki_github_rate_remaining` | gauge | `kind` |
+| `speki_github_requests_total` | counter | `kind` (app, installation, user, oauth), `status` |
+| `speki_github_rate_remaining` | gauge | `kind`; for installations, the lowest budget seen in the last 5 minutes, since each has its own |
 | `speki_vault_up` | gauge | `vault`. 1 when the vault is served and its last sync succeeded |
 | `speki_vault_documents` | gauge | `vault` |
 | `speki_vault_bytes` | gauge | `vault`. Markdown bytes indexed |

@@ -105,6 +105,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		AppID:      cfg.GitHub.AppID,
 		PrivateKey: []byte(cfg.GitHub.PrivateKey.Reveal()),
 		APIURL:     cfg.GitHub.APIURL,
+		Logger:     logger,
 	}, metrics)
 	if err != nil {
 		return nil, fmt.Errorf("configuration: %w", err)

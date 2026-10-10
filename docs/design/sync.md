@@ -260,4 +260,7 @@ Installation tokens get 5,000 to 12,500 requests an hour. Speki's own background
 User tokens carry the per-user calls: access checks (at most once a minute while active, mostly 304),
 commits and history.
 
-`gh` records `x-ratelimit-remaining` per token kind as a metric and logs a warning below 10%.
+`gh` records `x-ratelimit-remaining` per token kind as a metric and logs a warning below 10%, at most
+once every 10 minutes per kind. Each request is counted once, by the credential it carries: an
+installation's calls go through the app's transport, which only counts the ones signed with the app's
+JWT.
