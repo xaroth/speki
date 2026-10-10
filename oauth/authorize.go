@@ -10,10 +10,13 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/seal"
+	"github.com/eve-online-tools/speki/telemetry"
 )
 
 //go:embed pages/*.html
@@ -42,6 +45,8 @@ type authRequest struct {
 	RedirectURI   string `json:"redirect_uri"`
 	State         string `json:"state,omitempty"`
 	CodeChallenge string `json:"code_challenge"`
+	AllowWrite    bool   `json:"allow_write"`    // the client asked for speki:write, or for no speki scope in particular
+	RedirectGiven bool   `json:"redirect_given"` // the request named its redirect_uri, so the token request must too
 }
 
 type consentValue struct {
@@ -53,6 +58,7 @@ type transaction struct {
 	Request  authRequest `json:"request"`
 	Write    bool        `json:"write"`
 	Verifier string      `json:"verifier"` // PKCE verifier for GitHub
+	Nonce    string      `json:"nonce"`    // the state sent to GitHub, which names the cookie too
 }
 
 // authorize validates an authorization request and shows the consent page. A request whose client or
@@ -72,6 +78,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirectURI := q.Get("redirect_uri")
+	redirectGiven := redirectURI != ""
 	if redirectURI == "" && len(c.RedirectURIs) == 1 {
 		redirectURI = c.RedirectURIs[0]
 	}
@@ -87,12 +94,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		RedirectURI:   redirectURI,
 		State:         q.Get("state"),
 		CodeChallenge: q.Get("code_challenge"),
+		AllowWrite:    allowsWrite(q.Get("scope")),
+		RedirectGiven: redirectGiven,
 	}
 	switch {
 	case q.Get("response_type") != "code":
 		s.redirectError(w, r, req, "unsupported_response_type", "only the code flow is supported")
 		return
-	case req.CodeChallenge == "" || q.Get("code_challenge_method") != "S256":
+	case !validChallenge(req.CodeChallenge) || q.Get("code_challenge_method") != "S256":
 		s.redirectError(w, r, req, "invalid_request", "PKCE with S256 is required")
 		return
 	case q.Get("resource") != "" && q.Get("resource") != s.Resource():
@@ -108,12 +117,30 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	setCookie(w, consentCookie, cookie, consentLifetime)
 	s.page(w, r, http.StatusOK, "consent.html", map[string]any{
-		"Client":   c.Name,
-		"Host":     c.Host,
-		"Redirect": redirectHost(redirectURI),
-		"Local":    c.Host == "",
-		"Consent":  consent,
+		"Client":     c.Name,
+		"Host":       c.Host,
+		"Redirect":   redirectHost(redirectURI),
+		"Local":      c.Host == "",
+		"Consent":    consent,
+		"AllowWrite": req.AllowWrite,
 	})
+}
+
+// allowsWrite reads the scope parameter: whether write access may be offered. Scopes speki doesn't know
+// (offline_access, openid and the like) are ignored, as RFC 6749 allows; the token response says what
+// was granted. A request naming no speki scope lets the user choose.
+func allowsWrite(scope string) bool {
+	fields := strings.Fields(scope)
+	return slices.Contains(fields, ScopeWrite) || !slices.Contains(fields, ScopeRead)
+}
+
+// validChallenge reports whether c can be an S256 PKCE challenge: 43 base64url characters (RFC 7636).
+func validChallenge(c string) bool {
+	if len(c) != 43 {
+		return false
+	}
+	_, err := base64.RawURLEncoding.DecodeString(c)
+	return err == nil
 }
 
 // consent handles the consent form: it checks the form belongs to this browser, then sends the user to
@@ -141,7 +168,8 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 
 	nonce := randomToken()
 	verifier := randomToken()
-	tx := transaction{Request: cv.Request, Write: r.PostForm.Get("access") == "write", Verifier: verifier}
+	write := r.PostForm.Get("access") == "write" && cv.Request.AllowWrite
+	tx := transaction{Request: cv.Request, Write: write, Verifier: verifier, Nonce: nonce}
 	sealed, err := s.keys.Seal(seal.Transaction, tx, s.now().Add(consentLifetime))
 	if err != nil {
 		s.serverError(w, r, err)
@@ -160,9 +188,17 @@ type codeValue struct {
 	ClientName    string        `json:"client_name"`
 	RedirectURI   string        `json:"redirect_uri"`
 	CodeChallenge string        `json:"code_challenge"`
+	RedirectGiven bool          `json:"redirect_given"`
 	Scopes        []string      `json:"scopes"`
+	Resource      string        `json:"resource"`
 	SignedIn      time.Time     `json:"signed_in"`
 }
+
+// Refusal is what Config.CheckUser returns to turn a user away. Its reason is shown to them; any other
+// error means the check itself failed.
+type Refusal struct{ Reason string }
+
+func (r *Refusal) Error() string { return r.Reason }
 
 // callback is where GitHub sends the user back. It exchanges GitHub's code, checks the user may get in,
 // and sends the user back to the client with speki's own code.
@@ -174,7 +210,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = s.keys.Open(seal.Transaction, cookie.Value, &tx)
 	}
-	if nonce == "" || err != nil {
+	if nonce == "" || err != nil || subtle.ConstantTimeCompare([]byte(tx.Nonce), []byte(nonce)) != 1 {
 		s.errorPage(w, r, http.StatusBadRequest, "This sign-in expired.", "Start signing in again from your program.")
 		return
 	}
@@ -207,10 +243,18 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.cfg.CheckUser != nil {
 		err = s.cfg.CheckUser(r.Context(), tokens.AccessToken)
-		if err != nil {
-			s.logger.InfoContext(r.Context(), "sign-in refused", "login", user.Login, "reason", err)
+		var refusal *Refusal
+		switch {
+		case errors.As(err, &refusal):
+			s.logger.InfoContext(r.Context(), "sign-in refused", "login", user.Login, "reason", refusal.Reason)
 			s.signIns.WithLabelValues("refused").Inc()
-			s.errorPage(w, r, http.StatusForbidden, "You can't use this speki.", err.Error())
+			s.errorPage(w, r, http.StatusForbidden, "You can't use this speki.", refusal.Reason)
+			return
+		case err != nil: // GitHub's own words never reach the browser
+			s.logger.WarnContext(r.Context(), "checking a sign-in with GitHub failed", "login", user.Login, "err", err)
+			s.signIns.WithLabelValues("failed").Inc()
+			s.errorPage(w, r, http.StatusBadGateway, "Speki couldn't check your access with GitHub.",
+				"Try again in a moment. If it keeps failing, give this to whoever runs speki: request "+telemetry.RequestIDFrom(r.Context())+".")
 			return
 		}
 	}
@@ -227,7 +271,9 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		ClientName:    tx.Request.ClientName,
 		RedirectURI:   tx.Request.RedirectURI,
 		CodeChallenge: tx.Request.CodeChallenge,
+		RedirectGiven: tx.Request.RedirectGiven,
 		Scopes:        scopes,
+		Resource:      s.Resource(),
 		SignedIn:      s.now(),
 	}, s.now().Add(codeLifetime))
 	if err != nil {

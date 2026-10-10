@@ -29,8 +29,8 @@ sdk := mcp.NewStreamableHTTPHandler(
   definitions, so clients can cache the list.
 
 `mcpserver.Handler` wraps `sdk` in the middleware described in
-[architecture.md](architecture.md#the-mcp-stack): cross-origin check, body limit, token check, grant,
-rate limit.
+[architecture.md](architecture.md#the-mcp-stack): cross-origin check, body limit, token check, rate
+limit, grant.
 
 ## Instructions
 
@@ -153,6 +153,9 @@ message so an operator can find it.
 ## Limits
 
 - Structured content is capped at 1 MiB. `list`, `search` and `query` page or truncate before that.
-- Per-user rate limit: 10 tool calls per second, burst 30, per instance. Over the limit is a `rate_limited`
-  tool error with the wait time.
+- Per-user rate limit: 10 requests per second, burst 30, per instance, enforced before the grant (see
+  [architecture.md](architecture.md#the-mcp-stack)). Over the limit is an HTTP 429 with `Retry-After`, not
+  a tool error: the request hasn't been read as MCP yet, and checking it any later would let turned-away
+  users drive GitHub lookups unthrottled. `rate_limited` as a tool error is GitHub asking speki to slow
+  down during a write.
 - One `query` per user at a time. A second one waits for the first, within its own time limit.

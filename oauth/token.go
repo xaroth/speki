@@ -84,8 +84,12 @@ func (s *Server) codeGrant(w http.ResponseWriter, r *http.Request) {
 	case f.Get("client_id") != c.ClientID:
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the code was issued to another client")
 		return
-	case f.Get("redirect_uri") != "" && f.Get("redirect_uri") != c.RedirectURI:
-		oauthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri doesn't match")
+	case (c.RedirectGiven || f.Get("redirect_uri") != "") && f.Get("redirect_uri") != c.RedirectURI:
+		// Required when authorize was given one (RFC 6749 4.1.3), and must match whenever it's sent.
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri is missing or doesn't match")
+		return
+	case c.Resource != s.Resource():
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "the code was issued for another server")
 		return
 	case subtle.ConstantTimeCompare([]byte(challenge(f.Get("code_verifier"))), []byte(c.CodeChallenge)) != 1:
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the PKCE verifier doesn't match")
@@ -150,7 +154,7 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if found {
-			writeJSON(w, http.StatusOK, resp)
+			s.writeRefreshResult(w, resp, scopes)
 			return
 		}
 		owner := []byte(randomToken())
@@ -188,7 +192,7 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refres
 		return
 	}
 	if found {
-		writeJSON(w, http.StatusOK, resp)
+		s.writeRefreshResult(w, resp, scopes)
 		return
 	}
 
@@ -224,6 +228,31 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, rv refres
 		s.logger.WarnContext(ctx, "keeping refresh result failed", "err", err)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// writeRefreshResult answers with the result of a refresh another request made with the same token, if
+// it was for the same scopes: a stored result never widens what this request asked for.
+func (s *Server) writeRefreshResult(w http.ResponseWriter, resp tokenResponse, scopes []string) {
+	if !sameScopes(strings.Fields(resp.Scope), scopes) {
+		oauthError(w, http.StatusBadRequest, "invalid_scope", "this refresh token was just refreshed with other scopes")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// sameScopes reports whether a and b hold the same scopes, in any order.
+func sameScopes(a, b []string) bool {
+	for _, s := range a {
+		if !slices.Contains(b, s) {
+			return false
+		}
+	}
+	for _, s := range b {
+		if !slices.Contains(a, s) {
+			return false
+		}
+	}
+	return true
 }
 
 // issue seals a new access and refresh token pair.
