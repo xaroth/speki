@@ -52,6 +52,12 @@ type installation struct {
 	client *github.Client
 }
 
+// CheckPrivateKey reports whether pem is a GitHub App private key New accepts.
+func CheckPrivateKey(pem []byte) error {
+	_, err := ghinstallation.NewAppsTransport(http.DefaultTransport, 1, pem)
+	return err
+}
+
 // New returns a client for the app described by cfg. Request metrics are registered with reg.
 func New(cfg Config, reg prometheus.Registerer) (*Client, error) {
 	apiURL := cfg.APIURL

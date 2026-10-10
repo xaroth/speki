@@ -71,9 +71,11 @@ telemetry:
 Every key has an environment variable: `SPEKI_` plus the path in upper case with `_` between parts.
 `github.client_secret_file` becomes `SPEKI_GITHUB_CLIENT_SECRET_FILE`. Secrets can be given directly
 (`SPEKI_GITHUB_CLIENT_SECRET`) or as a file path (`..._FILE`). Files are better: they don't show up in
-process listings or crash dumps.
+process listings or crash dumps. Environment variables win over the YAML file, including over a secret
+file it names, which then isn't read.
 
-Speki refuses to start when something required is missing or a value is invalid, and says which key.
+Speki refuses to start when something required is missing or a value is invalid, and lists every such
+key at once.
 
 ### The key file
 

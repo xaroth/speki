@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -57,7 +58,7 @@ func run(ctx context.Context, args, environ []string, stdout, stderr io.Writer) 
 
 	level, err := telemetry.ParseLevel(cfg.Telemetry.LogLevel)
 	if err != nil {
-		return err
+		level = slog.LevelInfo // service.New reports it, with any other problems
 	}
 	logger := telemetry.NewLogger(stderr, level)
 

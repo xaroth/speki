@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/telemetry"
 )
 
@@ -131,6 +133,13 @@ func (c Config) validate() error {
 	}
 	if c.GitHub.PrivateKey == "" {
 		errs = append(errs, errors.New("github.private_key (or github.private_key_file) is required"))
+	} else if err := gh.CheckPrivateKey([]byte(c.GitHub.PrivateKey.Reveal())); err != nil {
+		errs = append(errs, fmt.Errorf("github.private_key: %w", err))
+	}
+	for _, id := range c.GitHub.AllowedAccounts {
+		if id <= 0 {
+			errs = append(errs, fmt.Errorf("github.allowed_accounts: %d isn't an account ID", id))
+		}
 	}
 	if c.GitHub.ClientID == "" || c.GitHub.ClientSecret == "" {
 		errs = append(errs, errors.New("github.client_id and github.client_secret are required"))
@@ -138,9 +147,19 @@ func (c Config) validate() error {
 	errs = append(errs, checkPublicURL(c.PublicURL))
 	if c.Auth.Keys == "" {
 		errs = append(errs, errors.New("auth.keys (or auth.keys_file) is required"))
+	} else if _, err := seal.ParseKeyring([]byte(c.Auth.Keys.Reveal())); err != nil {
+		errs = append(errs, fmt.Errorf("auth.keys: %w", err))
 	}
-	if c.Sync.PollInterval < 0 || c.Sync.DiscoveryInterval < 0 {
-		errs = append(errs, errors.New("sync intervals must be positive"))
+	for _, h := range c.Auth.ClientMetadataHosts {
+		if h == "" || strings.ContainsAny(h, ":/@ ") {
+			errs = append(errs, fmt.Errorf("auth.client_metadata_hosts: %q isn't a host name (write claude.ai, not https://claude.ai)", h))
+		}
+	}
+	if c.Sync.PollInterval < 0 {
+		errs = append(errs, errors.New("sync.poll_interval must be positive"))
+	}
+	if c.Sync.DiscoveryInterval < 0 {
+		errs = append(errs, errors.New("sync.discovery_interval must be positive"))
 	}
 	_, err := telemetry.ParseLevel(c.Telemetry.LogLevel)
 	if err != nil {

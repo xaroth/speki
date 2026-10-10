@@ -73,7 +73,7 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		{
 			name: "bad private key",
 			cfg:  with(func(c *Config) { c.GitHub.PrivateKey = "not a key" }),
-			want: []string{"github app key"},
+			want: []string{"github.private_key"},
 		},
 		{
 			name: "plain http public URL",
@@ -84,6 +84,28 @@ func TestNewRejectsBadConfig(t *testing.T) {
 			name: "bad key file",
 			cfg:  with(func(c *Config) { c.Auth.Keys = "keys: []" }),
 			want: []string{"auth.keys"},
+		},
+		{
+			name: "bad keys reported together",
+			cfg: with(func(c *Config) {
+				c.GitHub.PrivateKey, c.Auth.Keys, c.Telemetry.LogLevel = "not a key", "keys: []", "loud"
+			}),
+			want: []string{"github.private_key", "auth.keys", "log_level"},
+		},
+		{
+			name: "metadata host with a scheme",
+			cfg:  with(func(c *Config) { c.Auth.ClientMetadataHosts = []string{"https://claude.ai"} }),
+			want: []string{"client_metadata_hosts"},
+		},
+		{
+			name: "account ID that isn't one",
+			cfg:  with(func(c *Config) { c.GitHub.AllowedAccounts = []int64{0} }),
+			want: []string{"allowed_accounts"},
+		},
+		{
+			name: "negative interval",
+			cfg:  with(func(c *Config) { c.Sync.DiscoveryInterval = -1 }),
+			want: []string{"sync.discovery_interval"},
 		},
 	}
 	for _, tt := range tests {
