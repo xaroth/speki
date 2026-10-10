@@ -32,7 +32,7 @@ guidelines: |
 
 | Field | Required | Used for |
 |---|---|---|
-| `title` | yes | Shown in `list` and `guide` |
+| `title` | yes | Shown in `list` and `guide`. Keep it under 100 characters |
 | `description` | yes | Tells agents what belongs in this vault, so they search and write in the right place. Keep it under 300 characters |
 | `guidelines` | no | Writing rules for agents. Returned by `guide` and when listing the vault. Keep it under 2,000 characters |
 

@@ -159,9 +159,9 @@ for. Below about 1.2 GiB, the kernel can kill the process before SQLite's own li
 | `/.well-known/oauth-authorization-server` | `listen` | OAuth metadata |
 | `/oauth/...` | `listen` | Sign-in, consent, token and registration endpoints |
 | `/healthz` | `listen` | 200 while the process runs |
-| `/readyz` | `listen` | 200 once the first round of vault discovery has finished (vaults on disk are served before that) |
+| `/readyz` | `listen` | 200 once the first round of vault discovery has finished, or once looking up the app's owner has failed (vaults on disk are served before that) |
 | `/metrics` | `metrics_listen` | Prometheus metrics |
-| `/status` | `metrics_listen` | Every vault's state, commit, last sync and last error, as JSON |
+| `/status` | `metrics_listen` | Readiness, every vault's state, commit, last sync and last error, and any `speki.yaml` that couldn't be used, as JSON |
 
 Speki runs two separate HTTP servers. The public one (`listen`, default `:8080`) serves only what MCP
 clients and browsers need. The internal one (`metrics_listen`, default `:9090`) serves only metrics and the
