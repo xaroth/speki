@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -72,7 +73,8 @@ type Vault struct {
 	failures int
 	retryAt  time.Time // when a failed vault, or a failing sync, is tried again
 
-	syncMu       syncLock // one open, sync, reclone or removal at a time; guards the fields below
+	syncMu       syncLock    // one open, sync, reclone or removal at a time; guards the fields below
+	scheduled    atomic.Bool // a rebuild, re-initialisation or reclone is queued in the background
 	removed      bool
 	freshCloneAt time.Time    // last attempt, so a failing fresh clone isn't retried on every sync
 	gitMu        sync.RWMutex // fetches exclude reads of the git copy
@@ -99,6 +101,16 @@ func (l syncLock) Unlock() {
 	case <-l:
 	default:
 		panic("library: unlock of an unlocked sync lock")
+	}
+}
+
+// TryLock takes the lock if it's free, and reports whether it did.
+func (l syncLock) TryLock() bool {
+	select {
+	case l <- struct{}{}:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -177,6 +189,9 @@ func (v *Vault) setState(s State, err error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.status.State = s
+	if s == StateBuilding && err == nil {
+		return // starting over isn't a success: the failure count and backoff stay until one
+	}
 	v.recordLocked(err)
 }
 

@@ -122,10 +122,20 @@ Every `sync.poll_interval` (default 60 seconds), `library` checks every vault, 4
 
 1. `GET /repos/{owner}/{repo}/git/ref/heads/{branch}` with `If-None-Match`. A 304 means nothing changed and
    costs no rate limit.
-2. If the head differs from the index's commit, sync.
+2. If the head differs from the index's commit, fetch and apply the changes, in the round.
 
-A vault that fails to sync keeps serving its last good index and is retried with backoff. Its error shows
-on the status page.
+Anything slower runs in the background, four vaults at a time, so one vault can't hold up the others: a
+full rebuild, a fresh clone, cloning a vault that failed to open, and switching to a new default branch
+(cloned next to the old copy while the old index keeps serving). A vault busy with one of those is
+skipped by the round and checked again at the next.
+
+A vault whose head check or sync fails keeps serving its last good index, shows the error on the status
+page, and is retried with backoff that grows from two minutes to 30, across restarts of its clone too.
+
+On startup, `library` restores only vaults whose git copy is usable without the network. The rest are
+cloned again in the background once discovery finds them. An index file that can't be opened for a
+reason that may pass (a cancelled start, too many open files) is kept; only a corrupt one, one of another
+schema or one without a recorded commit is discarded.
 
 ## Writes
 

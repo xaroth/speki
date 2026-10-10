@@ -119,6 +119,11 @@ func (l *Library) restore(ctx context.Context, id int64) (*Vault, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Only a copy that's usable without the network: a restart serves from disk within seconds, and
+	// discovery clones the rest in the background.
+	if !gitsync.Usable(filepath.Join(dir, gitDir), info.DefaultBranch) {
+		return nil, errors.New("no usable git copy; it's cloned again once discovery finds the vault")
+	}
 	v := newVault(info, dir)
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
@@ -260,17 +265,34 @@ func (l *Library) initialise(ctx context.Context, v *Vault) {
 	l.logger.Info("vault ready", "vault", v.Info().Name, "commit", v.index.Commit())
 }
 
-// reclone replaces a vault's git copy, after its default branch changed.
+// reclone replaces a vault's git copy after its default branch changed: it clones the new branch next to
+// the old copy, swaps, and rebuilds, while the old index keeps serving.
 func (l *Library) reclone(ctx context.Context, v *Vault) {
-	v.syncMu.Lock()
-	v.gitMu.Lock()
-	if v.mirror != nil {
-		v.mirror = nil
-		_ = os.RemoveAll(filepath.Join(v.dir, gitDir))
+	select {
+	case l.opening <- struct{}{}:
+		defer func() { <-l.opening }()
+	case <-ctx.Done():
+		return
 	}
-	v.gitMu.Unlock()
-	v.syncMu.Unlock()
-	l.initialise(ctx, v)
+	v.syncMu.Lock()
+	if v.removed {
+		v.syncMu.Unlock()
+		return
+	}
+	if v.mirror == nil { // never opened: the normal way in
+		v.syncMu.Unlock()
+		l.initialise(ctx, v)
+		return
+	}
+	defer v.syncMu.Unlock()
+	err := l.freshClone(ctx, v)
+	if err == nil {
+		err = l.syncLocked(ctx, v, false)
+	}
+	if err != nil && !errors.Is(err, errRemoved) {
+		l.logger.Warn("switching to the new default branch failed", "vault", v.Info().Name, "err", err)
+		v.recordFailure(err)
+	}
 }
 
 func (l *Library) remove(v *Vault) {

@@ -34,6 +34,7 @@ type remote struct {
 
 	mu      sync.Mutex
 	lookups int
+	headErr error            // when set, BranchHead fails with it
 	ids     map[string]int64 // repository IDs by name; ours/kb is 100 unless set
 }
 
@@ -112,7 +113,11 @@ func (r *remote) head() string {
 func (r *remote) BranchHead(_ context.Context, _ int64, _, _, etag string) (gh.Head, error) {
 	r.mu.Lock()
 	r.lookups++
+	headErr := r.headErr
 	r.mu.Unlock()
+	if headErr != nil {
+		return gh.Head{}, headErr
+	}
 	h := r.head()
 	if etag == h {
 		return gh.Head{ETag: etag}, nil
@@ -541,5 +546,87 @@ func TestCopyWithoutObjectsCatchesUp(t *testing.T) {
 	}
 	if got := search(t, v, "second"); len(got) != 1 {
 		t.Errorf("after the sync: %v", got)
+	}
+}
+
+// A vault that can't be cloned backs off longer with every attempt.
+func TestFailedVaultBacksOffMore(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	missing := kb
+	missing.Name = "ours/missing"
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{missing}})
+	l.background.Wait()
+	v := l.vaults[missing.RepoID]
+	first := v.retryAt
+	v.mu.Lock()
+	v.retryAt = time.Now() // due again
+	v.mu.Unlock()
+	l.initialise(t.Context(), v)
+	if v.failures != 2 || !v.retryAt.After(first.Add(time.Minute)) {
+		t.Errorf("after two failures: %d failures, retry at %v (first %v)", v.failures, v.retryAt, first)
+	}
+}
+
+// A failing head check shows on the status page and backs off.
+func TestFailedHeadCheckIsRecorded(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	r.mu.Lock()
+	r.headErr = errors.New("401 Bad credentials")
+	r.mu.Unlock()
+	l.Poll(t.Context())
+	if st := v.Status(); st.Error == "" || v.due() {
+		t.Errorf("status %+v, due %v", st, v.due())
+	}
+}
+
+// A vault busy with a long sync doesn't hold up a poll round.
+func TestPollSkipsABusyVault(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	r.push(map[string]string{"a.md": "# A\n\nchanged\n"})
+	v.syncMu.Lock() // a rebuild is running
+	done := make(chan struct{})
+	go func() {
+		l.Poll(t.Context())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("the poll round waited for a busy vault")
+	}
+	v.syncMu.Unlock()
+}
+
+// A restart only restores vaults whose git copy is usable without the network.
+func TestRestoreSkipsCopiesThatNeedTheNetwork(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	dataDir := t.TempDir()
+	l := newLibrary(t, r, dataDir)
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	serving(t, l)
+	l.Close()
+
+	err := os.RemoveAll(filepath.Join(dataDir, "100", gitDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l2 := newLibrary(t, r, dataDir)
+	err = l2.Restore(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l2.Vault(kb.RepoID); ok {
+		t.Error("restored a vault that would have needed a clone")
 	}
 }

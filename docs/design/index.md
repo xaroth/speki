@@ -147,9 +147,10 @@ func (x *Index) Build(ctx context.Context, commit string, files iter.Seq2[Change
 
 `Apply` runs in one transaction. For each change it parses the content with `document.Parse`, deletes the
 old row (cascading to tags, links and headings, and removing it from the FTS tables with the
-external-content delete command) and inserts the new one. A change that fails (a path that isn't UTF-8,
-a constraint error) is skipped and logged with its path. It never fails the whole transaction, so one bad
-file can't stop a vault from updating. `meta.commit` is updated in the same transaction. Readers see the old
+external-content delete command) and inserts the new one. A file that's unusable in itself (not UTF-8,
+frontmatter over 64 KiB) is skipped and logged with its path, and keeps its last good version in the
+index if it had one, so one bad file can't stop a vault from updating. Any other failure aborts the whole
+transaction and the next sync tries again. `meta.commit` is updated in the same transaction. Readers see the old
 state or the new one, never a mix.
 
 `Build` writes the next generation with `journal_mode=OFF` and `synchronous=OFF`: it inserts all rows,
