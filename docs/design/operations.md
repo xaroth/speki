@@ -113,9 +113,12 @@ The SQLite driver needs cgo, so builds need a C compiler.
 
 - `Taskfile.yml` with `build`, `test`, `lint`, `vet`, `vuln`, `fuzz`, `run` and `ci` tasks. Build tags
   `sqlite_fts5,sqlite_omit_load_extension`.
-- CI (`.github/workflows/ci.yml`, on pull requests and pushes to `main`): the latest Go 1.27 with cgo,
-  `go vet`, `golangci-lint` (staticcheck included), `go test -race`, 30 seconds of `FuzzParseTouch`,
-  `govulncheck`, and `docker build`. The jobs run the same Taskfile tasks as a local `task ci`.
+- CI (`.github/workflows/ci.yml`, on pull requests and pushes to `main`, skipping docs-only changes):
+  the latest Go 1.27 with cgo, `golangci-lint` (govet and staticcheck included) and `go test -race`, the
+  same as a local `task ci`. `go test` runs the `FuzzParseTouch` seed corpus. `docker build` runs on
+  pushes to `main` only.
+- `govulncheck` (`vuln.yml`) runs on pull requests that change `go.mod` or `go.sum`, and monthly.
+- Fuzzing (`fuzz.yml`) runs `FuzzParseTouch` on manual dispatch only, for 5 minutes by default.
 - The image `EXPOSE`s only the public port (8080). The metrics port is reachable on the container network
   but not published by default.
 - The image is built in two stages: `golang:1.27-bookworm` to build, `gcr.io/distroless/base-debian12` to

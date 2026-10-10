@@ -1,0 +1,27 @@
+name: Fuzz
+
+on:
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: How long to fuzz, as a Go duration
+        default: 5m
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task fuzz FUZZTIME="$FUZZTIME"
+        env:
+          FUZZTIME: ${{ inputs.fuzztime }}

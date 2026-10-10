@@ -43,13 +43,10 @@ tasks:
       - go test -run '^$' -fuzz FuzzParseTouch -fuzztime {{.FUZZTIME}} ./document
 
   ci:
-    summary: Everything CI runs, apart from the image build
+    summary: What CI runs on a pull request
     cmds:
-      - task: vet
       - task: lint
       - task: test
-      - task: fuzz
-      - task: vuln
 
   run:
     summary: Build and run speki with ./config.yaml

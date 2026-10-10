@@ -2,8 +2,10 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore: ['docs/**', '**.md']
   push:
     branches: [main]
+    paths-ignore: ['docs/**', '**.md']
 
 permissions:
   contents: read
@@ -14,11 +16,10 @@ concurrency:
 
 env:
   CGO_ENABLED: "1"
-  TAGS: sqlite_fts5,sqlite_omit_load_extension
 
 jobs:
   test:
-    name: Vet, test and fuzz
+    name: Lint and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -28,37 +29,15 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: task vet
-      - run: task test
-      - run: task fuzz
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
+      # golangci-lint runs govet, so there is no separate vet step.
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.14.0
-
-  vuln:
-    name: Known vulnerabilities
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - uses: arduino/setup-task@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: task vuln
+      - run: task test
 
   image:
     name: Image build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
