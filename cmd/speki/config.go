@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -57,18 +58,18 @@ func loadConfig(path string, environ []string) (service.Config, error) {
 		if err != nil {
 			return cfg, fmt.Errorf("config %s: line %d: %s: %w", path, f.line, f.key, err)
 		}
-		f.field.SetString(content)
+		reflect.ValueOf(&cfg).Elem().FieldByIndex(f.field).SetString(content)
 	}
 	return cfg, nil
 }
 
 // secretFile is a "<secret>_file: path" entry of the YAML, read once the environment has had its say.
 type secretFile struct {
-	key   string        // as written, private_key_file
-	line  int           // where it was written
-	path  string        // the file
-	env   string        // the variable that overrides it, SPEKI_GITHUB_PRIVATE_KEY
-	field reflect.Value // the secret it fills in
+	key   string // as written, private_key_file
+	line  int    // where it was written
+	path  string // the file
+	env   string // the variable that overrides it, SPEKI_GITHUB_PRIVATE_KEY
+	field []int  // the secret it fills in, as an index path into service.Config
 }
 
 // decodeYAML decodes raw into cfg, rejecting unknown keys: a typo should fail, not be ignored. A secret
@@ -88,22 +89,32 @@ func decodeYAML(raw []byte, cfg *service.Config) ([]secretFile, error) {
 		return nil, fmt.Errorf("line %d: want a mapping of settings", root.Line)
 	}
 	var files []secretFile
-	err = takeSecretFiles(root, reflect.ValueOf(cfg).Elem(), strings.TrimSuffix(envPrefix, "_"), &files)
+	err = takeSecretFiles(root, reflect.TypeFor[service.Config](), nil, strings.TrimSuffix(envPrefix, "_"), &files)
 	if err != nil {
 		return nil, err
 	}
 	return files, root.Decode(cfg)
 }
 
-// takeSecretFiles checks the keys of a mapping node against the fields of v, recursing into nested
-// sections. It reports unknown keys, and takes every "<secret>_file: path" out of the node into files.
-func takeSecretFiles(n *yaml.Node, v reflect.Value, prefix string, files *[]secretFile) error {
+// takeSecretFiles checks the keys of a mapping node against the fields of t, recursing into nested
+// sections. It reports unknown and repeated keys, and takes every "<secret>_file: path" out of the node
+// into files. Anchors, aliases and merge keys are refused rather than half checked: settings files
+// don't need them.
+func takeSecretFiles(n *yaml.Node, t reflect.Type, index []int, prefix string, files *[]secretFile) error {
 	var kept []*yaml.Node
+	seen := make(map[string]bool)
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, value := n.Content[i], n.Content[i+1]
-		if f, ok := fieldByTag(v.Type(), key.Value); ok {
+		if key.Value == "<<" || key.Anchor != "" || value.Anchor != "" || value.Kind == yaml.AliasNode {
+			return fmt.Errorf("line %d: anchors, aliases and merge keys aren't supported in the config file", key.Line)
+		}
+		if seen[key.Value] {
+			return fmt.Errorf("line %d: %s appears twice", key.Line, key.Value)
+		}
+		seen[key.Value] = true
+		if f, ok := fieldByTag(t, key.Value); ok {
 			if f.Type.Kind() == reflect.Struct && value.Kind == yaml.MappingNode {
-				err := takeSecretFiles(value, v.FieldByIndex(f.Index), prefix+"_"+strings.ToUpper(key.Value), files)
+				err := takeSecretFiles(value, f.Type, slices.Concat(index, f.Index), prefix+"_"+strings.ToUpper(key.Value), files)
 				if err != nil {
 					return err
 				}
@@ -112,7 +123,7 @@ func takeSecretFiles(n *yaml.Node, v reflect.Value, prefix string, files *[]secr
 			continue
 		}
 		base, isFile := strings.CutSuffix(key.Value, "_file")
-		f, ok := fieldByTag(v.Type(), base)
+		f, ok := fieldByTag(t, base)
 		if !isFile || !ok || f.Type != reflect.TypeFor[service.Secret]() {
 			return fmt.Errorf("line %d: unknown setting %q", key.Line, key.Value)
 		}
@@ -127,7 +138,7 @@ func takeSecretFiles(n *yaml.Node, v reflect.Value, prefix string, files *[]secr
 			line:  key.Line,
 			path:  value.Value,
 			env:   prefix + "_" + strings.ToUpper(base),
-			field: v.FieldByIndex(f.Index),
+			field: slices.Concat(index, f.Index),
 		})
 	}
 	n.Content = kept
@@ -147,7 +158,7 @@ func fieldByTag(t reflect.Type, tag string) (reflect.StructField, bool) {
 	for i := range t.NumField() {
 		f := t.Field(i)
 		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
-		if name == tag {
+		if name == tag && name != "" && name != "-" {
 			return f, true
 		}
 	}

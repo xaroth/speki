@@ -205,6 +205,11 @@ func TestConfigErrorLines(t *testing.T) {
 		{"# comment\n\ngithub:\n  private_key_file: " + keyFile + "\n  app_id: 1\n  typo: x\n", "line 6"},
 		{"github:\n  private_key_file: " + keyFile + "\nsync:\n  poll_interval: soon\n", "line 4"},
 		{"- a\n- b\n", "line 1"},
+		{"base: &b\n  app_id: 1\ngithub: *b\n", "anchors"},
+		{"github:\n  <<: {app_id: 1}\n", "merge keys"},
+		{"github:\n  private_key_file: a\n  private_key_file: b\n", "line 3: private_key_file appears twice"},
+		{"-: x\n", "unknown setting"},
+		{"github: just text\n", "line 1"},
 	} {
 		_, err := loadConfig(writeFile(t, tt.file), nil)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {

@@ -94,7 +94,7 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		},
 		{
 			name: "metadata host with a scheme",
-			cfg:  with(func(c *Config) { c.Auth.ClientMetadataHosts = []string{"https://claude.ai"} }),
+			cfg:  with(func(c *Config) { c.Auth.ClientMetadataHosts = []string{"https://claude.ai", "Claude.ai", "claude.ai."} }),
 			want: []string{"client_metadata_hosts"},
 		},
 		{

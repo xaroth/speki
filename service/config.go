@@ -151,8 +151,8 @@ func (c Config) validate() error {
 		errs = append(errs, fmt.Errorf("auth.keys: %w", err))
 	}
 	for _, h := range c.Auth.ClientMetadataHosts {
-		if h == "" || strings.ContainsAny(h, ":/@ ") {
-			errs = append(errs, fmt.Errorf("auth.client_metadata_hosts: %q isn't a host name (write claude.ai, not https://claude.ai)", h))
+		if h == "" || strings.ContainsAny(h, ":/@ ") || h != strings.ToLower(h) || strings.HasSuffix(h, ".") {
+			errs = append(errs, fmt.Errorf("auth.client_metadata_hosts: %q isn't a host name in lower case (write claude.ai, not https://claude.ai)", h))
 		}
 	}
 	if c.Sync.PollInterval < 0 {
