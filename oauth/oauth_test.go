@@ -33,6 +33,7 @@ type fakeGitHub struct {
 	refreshes map[string]bool // used refresh tokens
 	next      int
 	slow      chan struct{} // when set, Refresh waits for it
+	entered   chan struct{} // when set, Refresh sends on it once it's called
 	down      bool          // when set, Refresh fails as if GitHub were unreachable
 	appConfig bool          // when set, GitHub refuses the app's client secret
 	during    func()        // when set, Refresh calls it after GitHub spent the old token
@@ -58,6 +59,9 @@ func (f *fakeGitHub) Exchange(_ context.Context, _ gh.OAuthConfig, code, verifie
 }
 
 func (f *fakeGitHub) Refresh(ctx context.Context, _ gh.OAuthConfig, refresh string) (gh.UserTokens, error) {
+	if f.entered != nil {
+		f.entered <- struct{}{}
+	}
 	if f.slow != nil {
 		<-f.slow
 	}
@@ -278,7 +282,7 @@ func TestFullFlowWithRegisteredClient(t *testing.T) {
 	}
 
 	// The code works once.
-	_, rec = h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}})
+	_, rec = h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1:6000/callback"}, "code_verifier": {verifier}})
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "already used") {
 		t.Errorf("replayed code: %d %s", rec.Code, rec.Body)
 	}
@@ -313,7 +317,7 @@ func (h *harness) signedIn() (string, tokenResponse) {
 	h.t.Helper()
 	clientID := h.register("http://127.0.0.1/callback")
 	code := h.signIn(clientID, "http://127.0.0.1/callback", "write")
-	resp, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}})
+	resp, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}})
 	if rec.Code != http.StatusOK {
 		h.t.Fatalf("token: %d %s", rec.Code, rec.Body)
 	}
@@ -324,6 +328,7 @@ func TestConcurrentRefreshesBothSucceed(t *testing.T) {
 	h := newHarness(t)
 	clientID, first := h.signedIn()
 	h.github.slow = make(chan struct{})
+	h.github.entered = make(chan struct{}, 2)
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
 
 	type result struct {
@@ -331,13 +336,14 @@ func TestConcurrentRefreshesBothSucceed(t *testing.T) {
 		code int
 	}
 	results := make(chan result, 2)
-	for range 2 {
-		go func() {
-			resp, rec := h.tokens(form)
-			results <- result{resp, rec.Code}
-		}()
+	refresh := func() {
+		resp, rec := h.tokens(form)
+		results <- result{resp, rec.Code}
 	}
-	close(h.github.slow) // let the one that got the lock reach GitHub
+	go refresh()
+	<-h.github.entered // the first holds the lock and waits on GitHub
+	go refresh()       // so the second has to wait for its result
+	close(h.github.slow)
 	a, b := <-results, <-results
 	if a.code != http.StatusOK || b.code != http.StatusOK || a.resp.AccessToken != b.resp.AccessToken {
 		t.Errorf("concurrent refreshes: %d, %d, same answer %v", a.code, b.code, a.resp.AccessToken == b.resp.AccessToken)
@@ -423,7 +429,7 @@ func TestReadOnlySignIn(t *testing.T) {
 	h := newHarness(t)
 	clientID := h.register("http://127.0.0.1/callback")
 	code := h.signIn(clientID, "http://127.0.0.1/callback", "read")
-	resp, _ := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}})
+	resp, _ := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}})
 	if resp.Scope != "speki:read" {
 		t.Errorf("scope = %q", resp.Scope)
 	}
@@ -436,7 +442,7 @@ func TestMetadataDocumentClient(t *testing.T) {
 	h := newHarness(t)
 	clientID := "https://claude.ai/oauth/client.json"
 	code := h.signIn(clientID, "https://claude.ai/api/mcp/auth_callback", "write")
-	_, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}})
+	_, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"https://claude.ai/api/mcp/auth_callback"}, "code_verifier": {verifier}})
 	if rec.Code != http.StatusOK {
 		t.Errorf("token: %d %s", rec.Code, rec.Body)
 	}
@@ -506,7 +512,7 @@ func TestConsentAndCallbackRejects(t *testing.T) {
 		t.Errorf("callback without transaction: %d", rec.Code)
 	}
 
-	h.checkFn = func(context.Context, string) error { return errors.New("not in the required organisation") }
+	h.checkFn = func(context.Context, string) error { return &Refusal{Reason: "not in the required organisation"} }
 	page = h.do(http.MethodGet, authorizeURL(clientID, "http://127.0.0.1/callback", nil), nil)
 	consent = consentField.FindStringSubmatch(page.Body.String())[1]
 	rec = h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent}, "decision": {"allow"}}.Encode()), cookie(page, consentCookie))
@@ -538,7 +544,7 @@ func TestTokenRejects(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}}
+			form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}}
 			for k, v := range tt.form {
 				form[k] = v
 			}
@@ -549,7 +555,7 @@ func TestTokenRejects(t *testing.T) {
 		})
 	}
 	// None of those used the code up.
-	_, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}})
+	_, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}})
 	if rec.Code != http.StatusOK {
 		t.Errorf("valid exchange after failed ones: %d %s", rec.Code, rec.Body)
 	}
@@ -561,7 +567,7 @@ func TestExpiredCode(t *testing.T) {
 	h.s.now = func() time.Time { return time.Now().Add(-5 * time.Minute) } // the code is sealed in the past
 	code := h.signIn(clientID, "http://127.0.0.1/callback", "write")
 	h.s.now = time.Now
-	_, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}})
+	_, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}})
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "expired") {
 		t.Errorf("expired code: %d %s", rec.Code, rec.Body)
 	}
@@ -632,6 +638,8 @@ func TestPublicAddr(t *testing.T) {
 		"127.0.0.1": false, "10.0.0.1": false, "192.168.1.1": false, "169.254.169.254": false,
 		"100.64.0.1": false, "0.0.0.0": false, "::1": false, "::": false, "fe80::1": false,
 		"::ffff:127.0.0.1": false, "64:ff9b::7f00:1": false, "fd00::1": false,
+		"0.1.2.3": false, "192.0.0.1": false, "198.18.0.1": false, "240.0.0.1": false, "::127.0.0.1": false,
+		"2002:7f00:1::": false, "64:ff9b:1::1": false, "100::1": false, "2001:db8::1": false,
 	} {
 		if got := publicAddr(netip.MustParseAddr(addr)); got != want {
 			t.Errorf("publicAddr(%s) = %v", addr, got)
@@ -640,7 +648,181 @@ func TestPublicAddr(t *testing.T) {
 }
 
 func TestOneLine(t *testing.T) {
-	if got := oneLine("Claude\nCo-authored-by: x\u0085", 64); got != "ClaudeCo-authored-by: x" {
+	if got := oneLine("Claude\nCo-authored-by: x\u0085"); got != "ClaudeCo-authored-by: x" {
 		t.Errorf("oneLine = %q", got)
+	}
+	if got := oneLine("Claude\u202edoC\u200b"); got != "ClaudedoC" {
+		t.Errorf("oneLine kept format characters: %q", got)
+	}
+}
+
+// authorizeTo runs authorize with extra parameters and returns the response.
+func (h *harness) authorizeTo(clientID string, extra url.Values) *httptest.ResponseRecorder {
+	h.t.Helper()
+	return h.do(http.MethodGet, authorizeURL(clientID, "http://127.0.0.1/callback", extra), nil)
+}
+
+func TestAuthorizeChecksScopesAndChallenge(t *testing.T) {
+	h := newHarness(t)
+	clientID := h.register("http://127.0.0.1/callback")
+
+	for name, extra := range map[string]url.Values{
+		"unknown scope":   {"scope": {"speki:read admin"}},
+		"short challenge": {"code_challenge": {"x"}},
+	} {
+		rec := h.authorizeTo(clientID, extra)
+		back, _ := url.Parse(rec.Header().Get("Location"))
+		if rec.Code != http.StatusFound || back.Query().Get("error") == "" {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+
+	// A client asking only for speki:read gets no write option, and no write access even if the form
+	// claims it.
+	page := h.authorizeTo(clientID, url.Values{"scope": {"speki:read"}})
+	if strings.Contains(page.Body.String(), `value="write"`) {
+		t.Error("write offered to a read-only request")
+	}
+	consent := consentField.FindStringSubmatch(page.Body.String())[1]
+	rec := h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent}, "access": {"write"}, "decision": {"allow"}}.Encode()), cookie(page, consentCookie))
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	nonce := loc.Query().Get("state")
+	rec = h.do(http.MethodGet, "/oauth/github/callback?code=good&state="+nonce, nil, cookie(rec, txCookie+nonce))
+	back, _ := url.Parse(rec.Header().Get("Location"))
+	resp, _ := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {back.Query().Get("code")}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1/callback"}, "code_verifier": {verifier}})
+	if resp.Scope != "speki:read" {
+		t.Errorf("scope = %q, want speki:read", resp.Scope)
+	}
+}
+
+func TestTokenNeedsRedirectURI(t *testing.T) {
+	h := newHarness(t)
+	clientID := h.register("http://127.0.0.1/callback")
+	code := h.signIn(clientID, "http://127.0.0.1/callback", "write")
+	_, rec := h.tokens(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "code_verifier": {verifier}})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "redirect_uri") {
+		t.Errorf("without redirect_uri: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestStoredRefreshNeverWidens(t *testing.T) {
+	h := newHarness(t)
+	clientID, first := h.signedIn()
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
+	if _, rec := h.tokens(form); rec.Code != http.StatusOK {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
+	}
+	form.Set("scope", ScopeRead)
+	resp, rec := h.tokens(form) // the stored result has both scopes
+	if rec.Code == http.StatusOK && strings.Contains(resp.Scope, ScopeWrite) {
+		t.Errorf("a read-only refresh got %q", resp.Scope)
+	}
+	if strings.Contains(rec.Body.String(), "invalid_grant") {
+		t.Errorf("answered invalid_grant, which signs the user out: %s", rec.Body)
+	}
+}
+
+func TestRegistrationStaysUsable(t *testing.T) {
+	h := newHarness(t)
+	var uris []string
+	for i := range 4 {
+		uris = append(uris, fmt.Sprintf("http://127.0.0.1/%d/%s", i, strings.Repeat("x", 180)))
+	}
+	body, _ := json.Marshal(map[string]any{"client_name": strings.Repeat("n", 64), "redirect_uris": uris})
+	rec := h.do(http.MethodPost, "/oauth/register", strings.NewReader(string(body)))
+	var resp struct {
+		ClientID string `json:"client_id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if rec.Code == http.StatusCreated && len(resp.ClientID) > maxClientID {
+		t.Errorf("registered a client ID of %d bytes, which authorize refuses", len(resp.ClientID))
+	}
+}
+
+func TestCallbackChecks(t *testing.T) {
+	h := newHarness(t)
+	clientID := h.register("http://127.0.0.1/callback")
+	toGitHub := func() (*httptest.ResponseRecorder, string) {
+		page := h.authorizeTo(clientID, nil)
+		consent := consentField.FindStringSubmatch(page.Body.String())[1]
+		rec := h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent}, "decision": {"allow"}}.Encode()), cookie(page, consentCookie))
+		loc, _ := url.Parse(rec.Header().Get("Location"))
+		return rec, loc.Query().Get("state")
+	}
+
+	// A transaction cookie for another sign-in doesn't fit this one.
+	recA, nonceA := toGitHub()
+	_, nonceB := toGitHub()
+	other := cookie(recA, txCookie+nonceA)
+	other.Name = txCookie + nonceB
+	if rec := h.do(http.MethodGet, "/oauth/github/callback?code=good&state="+nonceB, nil, other); rec.Code != http.StatusBadRequest {
+		t.Errorf("another sign-in's transaction: %d", rec.Code)
+	}
+
+	// GitHub failing during the access check shows a generic page, not GitHub's words.
+	h.checkFn = func(context.Context, string) error {
+		return errors.New("user installations: GET https://api.github.com/user/installations: 502 Bad Gateway")
+	}
+	rec, nonce := toGitHub()
+	rec = h.do(http.MethodGet, "/oauth/github/callback?code=good&state="+nonce, nil, cookie(rec, txCookie+nonce))
+	if rec.Code != http.StatusBadGateway || strings.Contains(rec.Body.String(), "api.github.com") {
+		t.Errorf("GitHub failure: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestExpiredValues(t *testing.T) {
+	h := newHarness(t)
+	past := time.Now().Add(-time.Hour)
+	clientID, _ := h.signedIn()
+
+	access, _ := h.s.keys.Seal(seal.Access, accessValue{UserID: 7, Login: "octocat", Token: "ghu_1", Audience: issuer + "/mcp"}, past)
+	if _, status := h.identity(access); status != http.StatusUnauthorized {
+		t.Errorf("expired access token: %d", status)
+	}
+	refresh, _ := h.s.keys.Seal(seal.Refresh, refreshValue{UserID: 7, Refresh: "ghr_x", ClientID: clientID, Audience: issuer + "/mcp"}, past)
+	if _, rec := h.tokens(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); rec.Code != http.StatusBadRequest {
+		t.Errorf("expired refresh token: %d", rec.Code)
+	}
+	consent, _ := h.s.keys.Seal(seal.Consent, consentValue{CookieHash: hash("c")}, past)
+	rec := h.do(http.MethodPost, "/oauth/authorize", strings.NewReader(url.Values{"consent": {consent}, "decision": {"allow"}}.Encode()), &http.Cookie{Name: consentCookie, Value: "c"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expired consent: %d", rec.Code)
+	}
+	tx, _ := h.s.keys.Seal(seal.Transaction, transaction{Nonce: "n"}, past)
+	rec = h.do(http.MethodGet, "/oauth/github/callback?code=good&state=n", nil, &http.Cookie{Name: txCookie + "n", Value: tx})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expired transaction: %d", rec.Code)
+	}
+}
+
+func TestMetadataURLs(t *testing.T) {
+	h := newHarness(t)
+	fetches := 0
+	h.s.clients.fetch = func(context.Context, string) ([]byte, error) {
+		fetches++
+		return nil, errors.New("not found")
+	}
+	if rec := h.authorizeTo("https://claude.ai/oauth/client.json?n=1", nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("metadata URL with a query: %d", rec.Code)
+	}
+	for range 3 {
+		h.authorizeTo("https://claude.ai/oauth/missing.json", nil)
+	}
+	if fetches != 1 {
+		t.Errorf("a failing metadata URL was fetched %d times", fetches)
+	}
+}
+
+// The real fetcher refuses to connect to addresses that aren't public, whatever the host name says.
+func TestMetadataFetcherRefusesPrivateAddresses(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	fetch := newMetadataFetcher([]string{u.Hostname()})
+	_, err := fetch(t.Context(), srv.URL+"/client.json")
+	if err == nil || !strings.Contains(err.Error(), "refusing") {
+		t.Errorf("fetch from loopback: %v", err)
 	}
 }

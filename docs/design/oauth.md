@@ -50,6 +50,11 @@ Format: `v1.<key id>.<base64url(nonce || ciphertext)>`. The payload is JSON with
 and the purpose and key ID as associated data. A refresh token can't be presented as an access token, and
 the format has no algorithm field to tamper with.
 
+The transaction carries the nonce that names its cookie and is GitHub's `state`, so a transaction cookie
+from another sign-in doesn't fit. The code carries the resource it was issued for. The consent value
+records whether the client asked for `speki:write`; when it asked only for `speki:read`, the consent page
+offers read-only access and nothing else.
+
 `Open` allows 60 seconds of clock skew on `exp`, for instances whose clocks drift a little.
 
 | Purpose | Contents | Lifetime | Held by |

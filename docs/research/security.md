@@ -59,7 +59,9 @@ What we do, following the MCP [security best practices](https://modelcontextprot
 - The state sent to GitHub is created after consent, bound to a `__Host-` cookie, and good for 10 minutes.
   On return both must match. Otherwise an attacker could make a victim finish a sign-in that ends with the
   attacker's GitHub account, and the victim's agent would write into the attacker's vaults.
-- Speki includes `iss` in authorization responses (RFC 9207) and requires `resource` to equal its own URL.
+- Speki includes `iss` in authorization responses (RFC 9207). A `resource` parameter must equal speki's
+  own URL. One left out is accepted, since tokens are always bound to speki's URL anyway, and refusing it
+  would lock out clients that don't send it.
 - Fetching a client metadata document only goes to allow-listed hosts, through an HTTP client that refuses
   private, loopback, link-local, CGNAT and NAT64 addresses after DNS resolution, ignores proxy settings,
   follows no redirects, has a 5 second timeout and reads at most 64 KiB.

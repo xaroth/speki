@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/eve-online-tools/speki/seal"
 )
@@ -45,13 +46,16 @@ type clientResolver struct {
 
 type cachedClient struct {
 	client  client
+	err     error // a failed fetch, remembered for a while too
 	expires time.Time
+	used    time.Time // for evicting the least recently used
 }
 
 const (
-	metadataCacheSize = 100
-	metadataCacheTime = 10 * time.Minute
-	metadataMaxBytes  = 64 << 10
+	metadataCacheSize  = 100
+	metadataCacheTime  = 10 * time.Minute
+	metadataFailedTime = time.Minute
+	metadataMaxBytes   = 64 << 10
 )
 
 func newClientResolver(keys *seal.Keyring, hosts []string) *clientResolver {
@@ -81,17 +85,42 @@ func (r *clientResolver) resolve(ctx context.Context, clientID string) (client, 
 
 func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (client, error) {
 	u, err := url.Parse(clientID)
-	if err != nil || u.User != nil || u.Port() != "" || !slices.Contains(r.hosts, u.Hostname()) {
-		return client{}, fmt.Errorf("%w: metadata documents are only accepted from %s", errUnknownClient, strings.Join(r.hosts, ", "))
+	if err != nil || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" || !slices.Contains(r.hosts, u.Hostname()) {
+		return client{}, fmt.Errorf("%w: metadata documents are only accepted from %s, without a query", errUnknownClient, strings.Join(r.hosts, ", "))
 	}
 	now := time.Now()
 	r.mu.Lock()
 	c, ok := r.cache[clientID]
-	r.mu.Unlock()
 	if ok && now.Before(c.expires) {
-		return c.client, nil
+		c.used = now
+		r.cache[clientID] = c
+		r.mu.Unlock()
+		return c.client, c.err
 	}
+	r.mu.Unlock()
 
+	cl, err := r.fetchClient(ctx, u, clientID)
+	expires := now.Add(metadataCacheTime)
+	if err != nil {
+		expires = now.Add(metadataFailedTime) // so a stream of bad IDs doesn't mean a stream of fetches
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.cache[clientID]; !ok && len(r.cache) >= metadataCacheSize {
+		oldest := ""
+		for k, e := range r.cache {
+			if oldest == "" || e.used.Before(r.cache[oldest].used) {
+				oldest = k
+			}
+		}
+		delete(r.cache, oldest)
+	}
+	r.cache[clientID] = cachedClient{client: cl, err: err, expires: expires, used: now}
+	return cl, err
+}
+
+// fetchClient fetches and checks a client metadata document.
+func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID string) (client, error) {
 	raw, err := r.fetch(ctx, clientID)
 	if err != nil {
 		return client{}, fmt.Errorf("%w: fetching its metadata document: %w", errUnknownClient, err)
@@ -110,18 +139,7 @@ func (r *clientResolver) metadataClient(ctx context.Context, clientID string) (c
 			return client{}, fmt.Errorf("%w: redirect URI %q isn't on %s or loopback", errUnknownClient, ru, u.Hostname())
 		}
 	}
-	cl := client{ID: clientID, Name: oneLine(doc.ClientName, 64), Host: u.Hostname(), RedirectURIs: doc.RedirectURIs}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.cache) >= metadataCacheSize {
-		for k := range r.cache { // drop one; the cache only saves fetches
-			delete(r.cache, k)
-			break
-		}
-	}
-	r.cache[clientID] = cachedClient{client: cl, expires: now.Add(metadataCacheTime)}
-	return cl, nil
+	return client{ID: clientID, Name: oneLine(doc.ClientName), Host: u.Hostname(), RedirectURIs: doc.RedirectURIs}, nil
 }
 
 // register handles dynamic client registration. Only local programs register, so only loopback
@@ -147,7 +165,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	name := oneLine(req.ClientName, 64)
+	name := oneLine(req.ClientName)
 	if name == "" {
 		name = "unnamed program"
 	}
@@ -155,6 +173,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "sealing client registration", "err", err)
 		oauthError(w, http.StatusInternalServerError, "server_error", "registration failed")
+		return
+	}
+	if len(id) > maxClientID { // authorize would refuse it
+		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "the registration is too long: use fewer or shorter redirect URIs, or a shorter name")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -203,15 +225,18 @@ func sameHTTPSHost(u, host string) bool {
 	return err == nil && p.Scheme == "https" && p.User == nil && p.Hostname() == host && p.Fragment == ""
 }
 
-// oneLine keeps the printable characters of s on one line, at most limit runes.
-func oneLine(s string, limit int) string {
+// maxClientName is the longest client name speki shows, in runes.
+const maxClientName = 64
+
+// oneLine keeps the printable characters of s on one line, at most maxClientName runes.
+func oneLine(s string) string {
 	var b strings.Builder
 	n := 0
 	for _, r := range s {
-		if n == limit {
+		if n == maxClientName {
 			break
 		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) { // Cf: bidi overrides and the like
 			continue
 		}
 		b.WriteRune(r)
@@ -280,21 +305,36 @@ func refusePrivate(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-var (
-	cgnat = netip.MustParsePrefix("100.64.0.0/10")
-	nat64 = netip.MustParsePrefix("64:ff9b::/96")
-)
+// specialPurpose lists the address blocks of the IANA special-purpose registries that aren't public
+// unicast and aren't covered by netip's own checks.
+var specialPurpose = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/96"), // IPv4-compatible, such as ::127.0.0.1
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"), // 6to4, which can embed any IPv4 address
+}
 
 func publicAddr(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	return ip.IsValid() &&
-		!ip.IsUnspecified() &&
-		!ip.IsLoopback() &&
-		!ip.IsPrivate() &&
-		!ip.IsLinkLocalUnicast() &&
-		!ip.IsLinkLocalMulticast() &&
-		!ip.IsMulticast() &&
-		!ip.IsInterfaceLocalMulticast() &&
-		!cgnat.Contains(ip) &&
-		!nat64.Contains(ip)
+	if !ip.IsValid() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
+		return false
+	}
+	for _, p := range specialPurpose {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }

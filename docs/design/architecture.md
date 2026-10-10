@@ -125,11 +125,13 @@ then fail with `read_only_session`.
 2. `http.MaxBytesHandler`, 2 MiB.
 3. `oauth.Middleware`: opens the bearer token, checks audience and expiry, puts the `oauth.Identity` on the
    context. A bad token is a 401 with the `WWW-Authenticate` header that starts sign-in.
-4. Grant middleware: calls `access.Resolver.Resolve` and puts the `Grant` on the context. When GitHub
+4. Per-user rate limiter: 10 requests a second, bursts of 30, per instance. Over the limit is an HTTP 429
+   with `Retry-After`. It runs before the grant, so a user who is turned away can't make speki ask GitHub
+   about them without limit.
+5. Grant middleware: calls `access.Resolver.Resolve` and puts the `Grant` on the context. When GitHub
    rejects the user's GitHub token, it answers 401 (the client refreshes, which fails, and the user signs in
    again). When the org gate or the "at least one vault" rule fails, it answers 403 with a message saying
    which.
-5. Per-user rate limiter.
 6. The go-sdk handler, which routes to the tool handlers.
 
 Doing steps 3 and 4 as HTTP middleware matters: inside a tool handler it's too late to answer with a
