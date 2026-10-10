@@ -31,7 +31,7 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	var sources []index.Source
 	if len(req.Vaults) == 0 {
 		for _, v := range g.Readable() {
-			c, ok := b.copies(v.RepoID)
+			c, ok := b.vaults.Copy(v.RepoID)
 			if ok {
 				sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
 			}

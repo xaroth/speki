@@ -102,13 +102,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		CheckUser: resolver.CheckMember,
 	}, keys, github, store.NewMemory(), logger)
 
-	kb := knowledge.New(func(id int64) (knowledge.Copy, bool) {
-		v, ok := lib.Vault(id)
-		if !ok {
-			return nil, false // not a typed nil inside the interface
-		}
-		return v, true
-	}, github, logger)
+	kb := knowledge.New(libraryVaults{lib}, github, logger)
 	mcp := mcpserver.New(auth, resolver, kb, cfg.Version, logger)
 	metrics.MustRegister(mcp.Collector())
 
@@ -302,4 +296,23 @@ func newServer(h http.Handler) *http.Server {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+}
+
+// libraryVaults hands knowledge the library's vaults.
+type libraryVaults struct{ lib *library.Library }
+
+func (l libraryVaults) Copy(repoID int64) (knowledge.Copy, bool) {
+	v, ok := l.lib.Vault(repoID)
+	if !ok {
+		return nil, false // not a typed nil inside the interface
+	}
+	return v, true
+}
+
+func (l libraryVaults) Sync(ctx context.Context, repoID int64) error {
+	v, ok := l.lib.Vault(repoID)
+	if !ok {
+		return fmt.Errorf("vault %d isn't served", repoID)
+	}
+	return l.lib.Sync(ctx, v)
 }

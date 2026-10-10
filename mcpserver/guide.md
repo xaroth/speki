@@ -10,6 +10,11 @@ Search before answering questions about the team's systems, services, infrastruc
 decisions, and when working out how one of them works. Someone may already have written it down. Say
 which documents an answer came from, by vault and path.
 
+When you learn something worth keeping (how something works, a fix, a decision and its reason), write it
+back. Update the document that covers it, or create one if none does, and tell the user what you saved.
+Mark outdated documents `status: deprecated` instead of leaving them wrong or deleting them. Follow the
+vault's guidelines below.
+
 ## Finding things
 
 - `search` takes plain words. Words match by stem ("configuring" finds "configured"), the last word also
@@ -29,6 +34,20 @@ outline of its headings with line numbers: pass `from_line` and `line_count` to 
 
 `history` lists the latest commits of a vault or one document, with who made them and from which client.
 
+## Changing documents
+
+Every change is a commit to the vault's GitHub repository, made as the user.
+
+- `edit` replaces an exact piece of text, copied from `read`. It's the tool for changing part of a
+  document. The text has to appear exactly once (whitespace and line endings count), unless you set
+  `replace_all`.
+- `write` creates a document, or replaces one entirely. Writing back part of a document loses the rest,
+  so use `edit` for that.
+- `move` renames a document and `delete` removes it. Both list the documents that link to the old path;
+  fix those links with `edit`.
+- Give a short commit message saying why, in one line.
+- Speki sets `created` and `updated` itself. A change must not add new frontmatter problems.
+
 ## Documents
 
 A document is a markdown file whose path in the vault identifies it, such as `services/esi-proxy.md`.
@@ -47,7 +66,17 @@ Other keys are kept as they are. Links between documents are relative markdown l
 ## Versions
 
 Every document has a version: the git blob SHA of its content, 40 hex characters. `search`, `list` and
-`read` show it. It changes whenever the document does.
+`read` show it, and it changes whenever the document does. Pass the version you read to `write`, `edit`,
+`move` and `delete`. If someone changed the document in the meantime, the change fails with `conflict`
+and the current version: read the document again and redo your change. Changes to other documents in the
+vault don't cause conflicts.
+
+## Errors
+
+A failed call starts with a code. `read_only_session` means the user connected speki without write access,
+`no_write_access` that they can't push to that vault on GitHub, and `vault_read_only` that the vault only
+takes changes through pull requests: tell the user in each case. `secret_detected` means GitHub found a
+secret in the content: remove it and tell the user.
 
 ## Trust
 

@@ -79,7 +79,7 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(v)
 	}
-	if strings.HasPrefix(r.URL.Path, "/user") || strings.HasPrefix(r.URL.Path, "/repos/"+fakeRepo+"/commits") {
+	if strings.HasPrefix(r.URL.Path, "/user") || strings.HasPrefix(r.URL.Path, "/repos/"+fakeRepo+"/commits") || r.URL.Path == "/graphql" {
 		if r.Header.Get("Authorization") != "Bearer "+fakeUserToken {
 			w.WriteHeader(http.StatusUnauthorized)
 			write(map[string]any{"message": "Bad credentials"})
@@ -101,12 +101,14 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		write(map[string]any{"total_count": 1, "installations": []any{map[string]any{"id": 1}}})
 	case "/user/installations/1/repositories":
 		write(map[string]any{"total_count": 1, "repositories": []any{
-			map[string]any{"id": 100, "permissions": map[string]any{"pull": true}},
+			map[string]any{"id": 100, "permissions": map[string]any{"pull": true, "push": true}},
 		}})
 	case "/repos/" + fakeRepo + "/commits":
 		write([]any{map[string]any{"sha": "c1", "author": map[string]any{"login": "octocat"},
 			"commit": map[string]any{"message": "Add fleet notes\n\nSpeki-Client: Claude Code\n",
 				"author": map[string]any{"name": "Octo", "date": "2026-10-09T14:02:11Z"}}}})
+	case "/graphql":
+		f.commit(w, r)
 	case "/app":
 		write(map[string]any{"id": 1, "owner": map[string]any{"id": 42}})
 	case "/app/installations":
@@ -173,4 +175,56 @@ func testKeys() Secret {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	return Secret("keys:\n  - id: test\n    secret: " + base64.StdEncoding.EncodeToString(b) + "\n    primary: true\n")
+}
+
+// commit answers GraphQL createCommitOnBranch by committing to the repository on disk.
+func (f *fakeGitHub) commit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Variables struct {
+			Input struct {
+				Head    string `json:"expectedHeadOid"`
+				Message struct {
+					Headline string `json:"headline"`
+					Body     string `json:"body"`
+				} `json:"message"`
+				FileChanges struct {
+					Additions []struct{ Path, Contents string } `json:"additions"`
+					Deletions []struct{ Path string }           `json:"deletions"`
+				} `json:"fileChanges"`
+			} `json:"input"`
+		} `json:"variables"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	in := req.Variables.Input
+	w.Header().Set("Content-Type", "application/json")
+	head, err := f.repo.Head()
+	if err != nil {
+		f.t.Error(err)
+		return
+	}
+	if in.Head != head.Hash().String() {
+		_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{map[string]any{"type": "STALE_DATA", "message": "Expected branch to point to " + in.Head}}})
+		return
+	}
+	wt, err := f.repo.Worktree()
+	if err != nil {
+		f.t.Error(err)
+		return
+	}
+	for _, a := range in.FileChanges.Additions {
+		content, _ := base64.StdEncoding.DecodeString(a.Contents)
+		full := filepath.Join(f.dir, a.Path)
+		_ = os.MkdirAll(filepath.Dir(full), 0o755)
+		_ = os.WriteFile(full, content, 0o644)
+		_, _ = wt.Add(a.Path)
+	}
+	for _, d := range in.FileChanges.Deletions {
+		_, _ = wt.Remove(d.Path)
+	}
+	sha, err := wt.Commit(in.Message.Headline+"\n\n"+in.Message.Body, &git.CommitOptions{Author: &object.Signature{Name: "octocat", Email: "o@x", When: time.Now()}})
+	if err != nil {
+		f.t.Error(err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"createCommitOnBranch": map[string]any{"commit": map[string]any{"oid": sha.String()}}}})
 }

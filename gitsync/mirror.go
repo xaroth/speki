@@ -194,6 +194,42 @@ func (m *Mirror) Files(commit string) ([]File, error) {
 	}
 }
 
+// Paths returns the path of every file in the tree at commit, of any kind: what a new document must not
+// collide with. Folders are implied by the paths.
+func (m *Mirror) Paths(commit string) ([]string, error) {
+	tree, err := commitTree(m.repo, plumbing.NewHash(commit))
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	err = m.walkPaths(tree, "", &paths)
+	if err != nil {
+		return nil, fmt.Errorf("paths at %s: %w", commit, err)
+	}
+	return paths, nil
+}
+
+// walkPaths collects the paths under tree. It looks every subtree up itself, so a missing object is an
+// error rather than the end of the walk, and file names git allows but go-git's walker rejects are kept.
+func (m *Mirror) walkPaths(tree *object.Tree, prefix string, paths *[]string) error {
+	for _, e := range tree.Entries {
+		name := prefix + e.Name
+		if e.Mode != filemode.Dir {
+			*paths = append(*paths, name)
+			continue
+		}
+		sub, err := object.GetTree(m.repo.Storer, e.Hash)
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		err = m.walkPaths(sub, name+"/", paths)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Diff returns the markdown files that changed between two commits. Both must be in the copy.
 func (m *Mirror) Diff(from, to string) ([]Change, error) {
 	fromTree, err := commitTree(m.repo, plumbing.NewHash(from))

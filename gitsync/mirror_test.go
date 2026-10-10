@@ -11,6 +11,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 // source is a regular repository standing in for GitHub.
@@ -116,6 +117,16 @@ func TestOpenClonesEligibleFiles(t *testing.T) {
 	want := []string{"README.md", "deep/er/still/fine/file.md", "ops/fleet.md"}
 	if diff := cmp.Diff(want, paths(files)); diff != "" {
 		t.Errorf("files (-want +got):\n%s", diff)
+	}
+
+	all, err := m.Paths(head)
+	if err != nil {
+		t.Fatalf("Paths: %v", err)
+	}
+	wantAll := []string{".obsidian/workspace.md", "README.md", "big.md", "deep/er/still/fine/file.md", "link.md", "lfs.md",
+		"notes.txt", "ops/.hidden.md", "ops/fleet.md", "speki.yaml"}
+	if diff := cmp.Diff(wantAll, all, cmpopts.SortSlices(func(a, b string) bool { return a < b })); diff != "" {
+		t.Errorf("paths (-want +got):\n%s", diff)
 	}
 
 	content, err := m.Blob(files[0].Blob)

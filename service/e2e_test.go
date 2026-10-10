@@ -16,7 +16,7 @@ import (
 )
 
 // TestSignInAndSearch runs speki against a fake GitHub: a client registers, the user signs in through
-// the browser flow, and an MCP client uses the token to find and read a document.
+// the browser flow, and an MCP client uses the token to find, read, write and edit documents.
 func TestSignInAndSearch(t *testing.T) {
 	fake := newFakeGitHub(t, map[string]string{
 		"speki.yaml":   "title: KB\ndescription: Test vault.\nguidelines: One page per topic.\n",
@@ -52,7 +52,7 @@ func TestSignInAndSearch(t *testing.T) {
 	defer func() { _ = cs.Close() }()
 
 	text := callTool(t, cs, "guide", nil)
-	if !strings.Contains(text, "### ours/kb") || !strings.Contains(text, "One page per topic.") || !strings.Contains(text, "read only") {
+	if !strings.Contains(text, "### ours/kb") || !strings.Contains(text, "One page per topic.") || !strings.Contains(text, "read and write") {
 		t.Errorf("guide:\n%s", text)
 	}
 
@@ -86,6 +86,27 @@ func TestSignInAndSearch(t *testing.T) {
 		t.Errorf("history:\n%s", text)
 	}
 
+	// A new document is searchable right after it's written, and an edit right after that.
+	text = callTool(t, cs, "write", map[string]any{"vault": fakeRepo, "path": "ops/airships.md",
+		"content": "---\ntitle: Airships\n---\n# Airships\n\nDirigibles are kept in hangar nine.\n"})
+	if !strings.Contains(text, "Saved in commit") || strings.Contains(text, "Search may not") {
+		t.Errorf("write:\n%s", text)
+	}
+	text = callTool(t, cs, "search", map[string]any{"query": "dirigible hangar"})
+	if !strings.Contains(text, "ops/airships.md") {
+		t.Errorf("search after write:\n%s", text)
+	}
+	callTool(t, cs, "edit", map[string]any{"vault": fakeRepo, "path": "ops/airships.md", "old_text": "hangar nine", "new_text": "hangar ten"})
+	text = callTool(t, cs, "read", map[string]any{"vault": fakeRepo, "path": "ops/airships.md"})
+	if !strings.Contains(text, "hangar ten") || !strings.Contains(text, "created: ") {
+		t.Errorf("read after edit:\n%s", text)
+	}
+	head, _ := fake.repo.Head()
+	commit, _ := fake.repo.CommitObject(head.Hash())
+	if commit.Message != "Update ops/airships.md\n\nSpeki-Client: e2e" {
+		t.Errorf("commit message = %q", commit.Message)
+	}
+
 	res, err = cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "read", Arguments: map[string]any{"vault": "ours/other", "path": "fleet.md"}})
 	if err != nil || !res.IsError {
 		t.Errorf("read from an unknown vault: %v %+v", err, res)
@@ -115,8 +136,8 @@ func callTool(t *testing.T, cs *mcp.ClientSession, name string, args any) string
 
 var consentField = regexp.MustCompile(`name="consent" value="([^"]+)"`)
 
-// signIn registers a client and goes through the browser flow as a read-only user, returning the
-// access token.
+// signIn registers a client and goes through the browser flow with write access, returning the access
+// token.
 func signIn(t *testing.T, base string) string {
 	t.Helper()
 	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -180,7 +201,7 @@ func signIn(t *testing.T, base string) string {
 	}
 
 	toGitHub := do(http.MethodPost, base+"/oauth/authorize",
-		url.Values{"consent": {string(m[1])}, "access": {"read"}, "decision": {"allow"}}, page.cookies, http.StatusSeeOther)
+		url.Values{"consent": {string(m[1])}, "access": {"write"}, "decision": {"allow"}}, page.cookies, http.StatusSeeOther)
 	loc, _ := url.Parse(toGitHub.header.Get("Location"))
 	back := do(http.MethodGet, base+"/oauth/github/callback?code=github-code&state="+loc.Query().Get("state"),
 		nil, toGitHub.cookies, http.StatusFound)
