@@ -22,7 +22,7 @@ type VaultSummary struct {
 	Guidelines  string `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
 	CanWrite    bool   `json:"can_write"`
 	Documents   int    `json:"documents"`
-	State       string `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly) or failed (it couldn't be opened; tell the user)"`
+	State       string `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly), failed (it couldn't be opened; tell the user) or gone (just removed or reopening; try again shortly)"`
 }
 
 func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummary {
@@ -36,7 +36,7 @@ func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummar
 			Documents:   v.Documents,
 			State:       string(v.State),
 		}
-		if guidelines {
+		if guidelines && v.State == "" { // an unserved vault's config may be stale, and it can't be written yet
 			s.Guidelines = v.Guidelines
 		}
 		out = append(out, s)
@@ -58,7 +58,7 @@ func served(vaults []knowledge.VaultInfo) int {
 // SkippedVault is a vault you can read that a search or query didn't cover.
 type SkippedVault struct {
 	Vault string `json:"vault"`
-	State string `json:"state" jsonschema:"building: speki is indexing it for the first time; try again shortly. failed: speki couldn't open it; tell the user"`
+	State string `json:"state" jsonschema:"building: speki is indexing it for the first time; try again shortly. failed: speki couldn't open it; tell the user. gone: just removed or reopening; try again shortly"`
 }
 
 func skippedVaults(skipped []knowledge.Skipped) []SkippedVault {
@@ -71,8 +71,11 @@ func skippedVaults(skipped []knowledge.Skipped) []SkippedVault {
 
 // stateText says why speki doesn't serve a vault, and what to do about it.
 func stateText(state string) string {
-	if state == string(access.StateFailed) {
+	switch access.State(state) {
+	case access.StateFailed:
 		return "failed to open; tell the user"
+	case access.StateGone:
+		return "just removed or reopening; try again shortly"
 	}
 	return "still building its index; try again shortly"
 }
@@ -86,7 +89,12 @@ func writeSkipped(b *strings.Builder, what string, skipped []SkippedVault) {
 	for i, s := range skipped {
 		parts[i] = fmt.Sprintf("%s (%s)", oneLine(s.Vault), stateText(s.State))
 	}
-	fmt.Fprintf(b, "Not %s, so this result says nothing about them: %s.\n", what, strings.Join(parts, ", "))
+	fmt.Fprintf(
+		b,
+		"Not %s, so this result says nothing about them: %s.\n",
+		what,
+		strings.Join(parts, ", "),
+	)
 }
 
 // GuideInput takes nothing.

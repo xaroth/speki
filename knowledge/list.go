@@ -31,6 +31,13 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 	for _, v := range g.Readable() {
 		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
+			out = append(out, VaultInfo{
+				Name:        v.Name,
+				Title:       v.Config.Title,
+				Description: v.Config.Description,
+				Guidelines:  v.Config.Guidelines,
+				State:       access.StateGone,
+			})
 			continue
 		}
 		stats, err := c.Index().Stats(ctx)

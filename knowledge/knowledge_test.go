@@ -350,10 +350,10 @@ func TestVaults(t *testing.T) {
 		t.Errorf("vaults (-want +got):\n%s", diff)
 	}
 
-	delete(f.copies, 2) // readable, but not served right now
+	delete(f.copies, 2) // served when the grant was made, but not any more
 	got, _ = f.base.Vaults(t.Context(), f.grant)
-	if len(got) != 1 {
-		t.Errorf("unserved vault listed: %+v", got)
+	if len(got) != 2 || got[1].Name != "ours/shared" || got[1].State != access.StateGone || got[1].Documents != 0 {
+		t.Errorf("vault gone since the grant: %+v", got)
 	}
 }
 
@@ -375,7 +375,10 @@ func TestUnavailableVaultsSkipped(t *testing.T) {
 	f := newFixture(t)
 	withUnavailable(t, f)
 	ctx := t.Context()
-	want := []Skipped{{Name: "ours/new", State: access.StateBuilding}, {Name: "ours/old", State: access.StateFailed}}
+	want := []Skipped{
+		{Name: "ours/new", State: access.StateBuilding},
+		{Name: "ours/old", State: access.StateFailed},
+	}
 
 	res, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin"})
 	if err != nil {
@@ -419,13 +422,47 @@ func TestUnavailableVaultsSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantVaults := []VaultInfo{
-		{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", CanWrite: true, Documents: 3},
+		{
+			Name:        "ours/kb",
+			Title:       "KB",
+			Description: "Our knowledge.",
+			Guidelines:  "One page per service.",
+			CanWrite:    true,
+			Documents:   3,
+		},
 		{Name: "ours/new", Title: "New", State: access.StateBuilding},
 		{Name: "ours/old", State: access.StateFailed},
 		{Name: "ours/shared", Documents: 1},
 	}
 	if diff := cmp.Diff(wantVaults, vaults); diff != "" {
 		t.Errorf("vaults (-want +got):\n%s", diff)
+	}
+
+	// A served vault that goes away after the grant was made is skipped too, not silently left out.
+	delete(f.copies, shared.RepoID)
+	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range res.Hits {
+		if h.Source != "ours/kb" {
+			t.Errorf("hit from a vault that isn't served: %+v", h)
+		}
+	}
+	want = []Skipped{
+		{Name: "ours/new", State: access.StateBuilding},
+		{Name: "ours/old", State: access.StateFailed},
+		{Name: "ours/shared", State: access.StateGone},
+	}
+	if diff := cmp.Diff(want, res.Skipped); diff != "" {
+		t.Errorf("search skipped (-want +got):\n%s", diff)
+	}
+	q, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, q.Skipped); diff != "" {
+		t.Errorf("query skipped (-want +got):\n%s", diff)
 	}
 }
 

@@ -26,6 +26,7 @@ type fakeGitHub struct {
 	revoked map[string]bool
 	teams   map[string][]string // login -> org/slug
 	asked   []string            // org/slug, per TeamMember call
+	teamErr error               // returned by TeamMember when set
 	calls   int
 }
 
@@ -34,6 +35,9 @@ func (f *fakeGitHub) TeamMember(_ context.Context, token, org, slug, login strin
 	defer f.mu.Unlock()
 	f.calls++
 	f.asked = append(f.asked, org+"/"+slug)
+	if f.teamErr != nil {
+		return false, f.teamErr
+	}
 	if f.revoked[token] {
 		return false, gh.ErrUnauthorized
 	}
@@ -109,6 +113,14 @@ var infra = vault.Vault{RepoID: 101, Name: "ours/infra"}
 var other = vault.Vault{RepoID: 102, Name: "ours/other"}
 var docs = vault.Vault{RepoID: 999, Name: "ours/docs"}
 
+// configured returns v with c as its speki.yaml settings.
+func configured(v vault.Vault, c vault.Config) vault.Vault {
+	v.Config = c
+	return v
+}
+
+func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
 func setup() (*fakeGitHub, *Resolver) {
 	f := &fakeGitHub{
 		members: map[string][]string{"alice": {"ours"}, "alice2": {"ours"}, "bob": {"ours"}, "eve": {"elsewhere"}},
@@ -120,7 +132,7 @@ func setup() (*fakeGitHub, *Resolver) {
 		},
 		revoked: map[string]bool{},
 	}
-	r := NewResolver(f, served(kb, infra, other), []string{"ours", "partners"}, store.NewMemory())
+	r := NewResolver(f, served(kb, infra, other), []string{"ours", "partners"}, store.NewMemory(), discard())
 	return f, r
 }
 
@@ -157,7 +169,7 @@ func TestReadRole(t *testing.T) {
 	}}
 	gated := vault.Vault{RepoID: 100, Name: "ours/gated", Config: vault.Config{ReadRole: gh.RoleTriage}}
 	open := vault.Vault{RepoID: 101, Name: "ours/open"}
-	r := NewResolver(f, served(gated, open), nil, store.NewMemory())
+	r := NewResolver(f, served(gated, open), nil, store.NewMemory(), discard())
 	tests := []struct {
 		token    string
 		readable []string
@@ -209,7 +221,7 @@ func TestReadersAndWriters(t *testing.T) {
 		Writers: []vault.Principal{{Org: "ours", Team: "leads"}},
 	}}
 	open := vault.Vault{RepoID: 101, Name: "ours/open"}
-	r := NewResolver(f, served(gated, open), nil, store.NewMemory())
+	r := NewResolver(f, served(gated, open), nil, store.NewMemory(), discard())
 	tests := []struct {
 		login    string
 		readable []string
@@ -314,7 +326,14 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 		unavailable []string // name:state
 		err         error
 	}{
-		{name: "one served, one building", token: "alice", serving: []vault.Vault{kb}, building: []vault.Vault{infra}, readable: []string{"ours/kb"}, unavailable: []string{"ours/infra:building"}},
+		{
+			name:        "one served, one building",
+			token:       "alice",
+			serving:     []vault.Vault{kb},
+			building:    []vault.Vault{infra},
+			readable:    []string{"ours/kb"},
+			unavailable: []string{"ours/infra:building"},
+		},
 		{
 			name:        "served, building and failed",
 			token:       "alice",
@@ -324,19 +343,61 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 			readable:    []string{"ours/kb"},
 			unavailable: []string{"ours/docs:failed", "ours/infra:building"},
 		},
-		{name: "others' vaults building", token: "bob", serving: []vault.Vault{docs}, building: []vault.Vault{kb, infra}, failed: []vault.Vault{other}, readable: []string{"ours/docs"}},
-		{name: "only others' vaults building", token: "bob", building: []vault.Vault{kb, infra}, err: ErrNoVaults},
-		{name: "own vault failed, others' building", token: "alice", building: []vault.Vault{other}, failed: []vault.Vault{kb}, err: ErrVaultsFailed},
+		{
+			name:     "others' vaults building",
+			token:    "bob",
+			serving:  []vault.Vault{docs},
+			building: []vault.Vault{kb, infra},
+			failed:   []vault.Vault{other},
+			readable: []string{"ours/docs"},
+		},
+		{
+			name:     "read role and readers exclude",
+			token:    "alice",
+			serving:  []vault.Vault{kb},
+			building: []vault.Vault{configured(infra, vault.Config{ReadRole: gh.RoleWrite})},
+			failed:   []vault.Vault{configured(docs, vault.Config{Readers: []vault.Principal{{Login: "bob"}}})},
+			readable: []string{"ours/kb"},
+		},
+		{
+			name:     "team readers exclude",
+			token:    "alice",
+			serving:  []vault.Vault{kb},
+			building: []vault.Vault{configured(docs, vault.Config{Readers: []vault.Principal{{Org: "ours", Team: "admins"}}})},
+			readable: []string{"ours/kb"},
+		},
+		{
+			name:        "team readers include",
+			token:       "alice",
+			serving:     []vault.Vault{kb},
+			building:    []vault.Vault{configured(docs, vault.Config{Readers: []vault.Principal{{Org: "ours", Team: "editors"}}})},
+			readable:    []string{"ours/kb"},
+			unavailable: []string{"ours/docs:building"},
+		},
+		{
+			name:     "only others' vaults building",
+			token:    "bob",
+			building: []vault.Vault{kb, infra},
+			err:      ErrNoVaults,
+		},
+		{
+			name:     "own vault failed, others' building",
+			token:    "alice",
+			building: []vault.Vault{other},
+			failed:   []vault.Vault{kb},
+			err:      ErrVaultsFailed,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f, _ := setup()
+				f.teams = map[string][]string{"alice": {"ours/editors"}}
 				lib := served(tt.serving...)
 				lib.building, lib.failed = tt.building, tt.failed
-				r := NewResolver(f, lib, nil, store.NewMemory())
+				r := NewResolver(f, lib, nil, store.NewMemory(), discard())
 				start := time.Now()
-				g, err := r.Resolve(t.Context(), User{Token: tt.token})
+				g, err := r.Resolve(t.Context(), User{Login: tt.token, Token: tt.token})
 				if waited := time.Since(start); waited != 0 {
 					t.Errorf("waited %v", waited)
 				}
@@ -374,6 +435,62 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 	}
 }
 
+// A failed read check on a vault that isn't served leaves that vault out, rather than turning away a user
+// who has served vaults. Without served vaults, the error stands.
+func TestUnavailableCheckFails(t *testing.T) {
+	f, _ := setup()
+	f.teamErr = errors.New("GitHub is down")
+	gated := configured(docs, vault.Config{Readers: []vault.Principal{{Org: "ours", Team: "editors"}}})
+	lib := served(kb)
+	lib.building = []vault.Vault{gated}
+	var logs strings.Builder
+	r := NewResolver(f, lib, nil, store.NewMemory(), slog.New(slog.NewTextHandler(&logs, nil)))
+	u := User{Login: "alice", Token: "alice"}
+	g, err := r.Resolve(t.Context(), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Unavailable()) != 0 || len(g.Readable()) != 1 {
+		t.Errorf("readable %v, unavailable %v", g.Readable(), g.Unavailable())
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "ours/docs") {
+		t.Errorf("logs = %s", logs.String())
+	}
+
+	lib.setQuietly(nil, []vault.Vault{gated}, nil)
+	if _, err := r.Resolve(t.Context(), u); !errors.Is(err, f.teamErr) {
+		t.Errorf("without served vaults: err = %v", err)
+	}
+
+	f.teamErr = nil
+	f.revoked["alice"] = true
+	lib.setQuietly([]vault.Vault{kb}, []vault.Vault{gated}, nil) // repositories still cached: only the team check sees it
+	if _, err := r.Resolve(t.Context(), u); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("revoked token: err = %v", err)
+	}
+}
+
+func TestUnavailableTeamChecksCached(t *testing.T) {
+	f, _ := setup()
+	f.teams = map[string][]string{"alice": {"ours/editors"}}
+	gated := configured(docs, vault.Config{Readers: []vault.Principal{{Org: "ours", Team: "editors"}}})
+	lib := served(kb)
+	lib.building = []vault.Vault{gated}
+	r := NewResolver(f, lib, nil, store.NewMemory(), discard())
+	for range 3 {
+		g, err := r.Resolve(t.Context(), User{Login: "alice", Token: "alice"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(g.Unavailable()) != 1 {
+			t.Errorf("unavailable = %v", g.Unavailable())
+		}
+	}
+	if len(f.asked) != 1 {
+		t.Errorf("asked GitHub about teams %d times: %v", len(f.asked), f.asked)
+	}
+}
+
 type resolved struct {
 	grant *Grant
 	err   error
@@ -394,7 +511,7 @@ func TestWaitForBuildingVault(t *testing.T) {
 		f, _ := setup()
 		lib := served()
 		lib.building = []vault.Vault{kb, infra}
-		r := NewResolver(f, lib, nil, store.NewMemory())
+		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
 		start := time.Now()
 		done := resolveLater(t.Context(), r, User{Token: "alice"})
 		synctest.Wait()
@@ -432,7 +549,7 @@ func TestNotReadyAfterWait(t *testing.T) {
 		f, _ := setup()
 		lib := served()
 		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory())
+		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
 		r.wait = time.Second
 		start := time.Now()
 		_, err := r.Resolve(t.Context(), User{Token: "alice"})
@@ -450,7 +567,7 @@ func TestWaitEndsWithContext(t *testing.T) {
 		f, _ := setup()
 		lib := served()
 		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory())
+		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
 		ctx, cancel := context.WithCancel(t.Context())
 		start := time.Now()
 		done := resolveLater(ctx, r, User{Token: "alice"})
@@ -481,7 +598,7 @@ func TestWaitEndsWhenBuildingStops(t *testing.T) {
 				f, _ := setup()
 				lib := served()
 				lib.building = []vault.Vault{kb}
-				r := NewResolver(f, lib, nil, store.NewMemory())
+				r := NewResolver(f, lib, nil, store.NewMemory(), discard())
 				start := time.Now()
 				done := resolveLater(t.Context(), r, User{Token: "alice"})
 				synctest.Wait()
@@ -503,7 +620,7 @@ func TestLastLookWhenWaitEnds(t *testing.T) {
 		f, _ := setup()
 		lib := served()
 		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory())
+		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
 		done := resolveLater(t.Context(), r, User{Token: "alice"})
 		synctest.Wait()
 		lib.setQuietly([]vault.Vault{kb}, nil, nil) // served, but the waiter isn't woken
@@ -519,7 +636,7 @@ func TestStopEndsWaits(t *testing.T) {
 		f, _ := setup()
 		lib := served()
 		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory())
+		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
 		start := time.Now()
 		done := resolveLater(t.Context(), r, User{Token: "alice"})
 		synctest.Wait()
@@ -566,7 +683,7 @@ func TestWakingDoesNotCheckReadersAgain(t *testing.T) {
 		lib := served()
 		lib.building = []vault.Vault{gated}
 		c := &countingCache{Memory: store.NewMemory()}
-		r := NewResolver(f, lib, nil, c)
+		r := NewResolver(f, lib, nil, c, discard())
 		done := resolveLater(t.Context(), r, User{Login: "alice", Token: "alice"})
 		synctest.Wait()
 		gets := c.count()
@@ -615,7 +732,7 @@ func TestCachePerToken(t *testing.T) {
 
 func TestNoRequiredOrgs(t *testing.T) {
 	f, _ := setup()
-	r := NewResolver(f, served(kb), nil, store.NewMemory())
+	r := NewResolver(f, served(kb), nil, store.NewMemory(), discard())
 	_, err := r.Resolve(t.Context(), User{Token: "eve"})
 	if err != nil {
 		t.Errorf("without required orgs: %v", err)
@@ -641,8 +758,8 @@ func TestCacheShared(t *testing.T) {
 	t.Cleanup(func() { _ = shared.Close() })
 	f, _ := setup()
 	vaults := served(kb)
-	one := NewResolver(f, vaults, []string{"ours"}, shared)
-	two := NewResolver(f, vaults, []string{"ours"}, shared)
+	one := NewResolver(f, vaults, []string{"ours"}, shared, discard())
+	two := NewResolver(f, vaults, []string{"ours"}, shared, discard())
 
 	_, err = one.Resolve(t.Context(), User{Token: "alice"})
 	if err != nil {
@@ -678,7 +795,7 @@ func (failingCache) Set(context.Context, string, []byte, time.Duration) error {
 
 func TestCacheDownAsksGitHub(t *testing.T) {
 	f, _ := setup()
-	r := NewResolver(f, served(kb), nil, failingCache{})
+	r := NewResolver(f, served(kb), nil, failingCache{}, discard())
 	_, err := r.Resolve(t.Context(), User{Token: "alice"})
 	if err != nil {
 		t.Errorf("with the cache down: %v", err)
@@ -699,7 +816,7 @@ func (b blockingGitHub) UserRepositories(ctx context.Context, token string) ([]g
 func TestConcurrentMissesShareOneLookup(t *testing.T) {
 	f, _ := setup()
 	b := blockingGitHub{fakeGitHub: f, release: make(chan struct{})}
-	r := NewResolver(b, served(kb), nil, store.NewMemory())
+	r := NewResolver(b, served(kb), nil, store.NewMemory(), discard())
 
 	// A caller that leaves doesn't fail the lookup for the others.
 	gone, cancel := context.WithCancel(t.Context())

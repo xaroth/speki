@@ -25,12 +25,12 @@ vault's guidelines below.
 - Matches in titles, aliases and tags count for more than matches in the body. Deprecated documents rank
   lower.
 - `list` shows a vault's folders and documents, 200 at a time. Without a vault, it lists your vaults,
-  with a `state` on those speki can't serve right now: `building` (indexing it for the first time) or
-  `failed` (it couldn't be opened).
+  with a `state` on those speki can't serve right now: `building` (indexing it for the first time),
+  `failed` (it couldn't be opened) or `gone` (just removed or reopening).
 - `search` and `query` without `vaults` name the vaults they skipped for that reason, in
   `skipped_vaults`. The result says nothing about those vaults: don't conclude something is
-  undocumented, and don't write a document that may duplicate one there. Try a building vault again in a
-  minute, and tell the user about a failed one.
+  undocumented, and don't write a document that may duplicate one there. Try a building or gone vault
+  again in a minute, and tell the user about a failed one.
 - `query` runs read-only SQL over the vaults' metadata, links and text, for questions search can't
   answer: "runbooks not updated this year", "what links here", "documents without a description". Call
   `schema` first.

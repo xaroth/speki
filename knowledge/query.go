@@ -24,7 +24,7 @@ type QueryResult struct {
 // Query runs one SELECT over the user's vaults, one query per user at a time, within index.QueryTimeout
 // (waiting for the user's earlier query included).
 func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (QueryResult, error) {
-	sources, skipped, err := b.sources(g, req.Vaults)
+	sources, notServed, err := b.sources(g, req.Vaults)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -45,7 +45,7 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (Qu
 	rows, err := b.sandbox.Query(ctx, sources, req.SQL)
 	switch {
 	case err == nil:
-		return QueryResult{Rows: rows, Skipped: skipped}, nil
+		return QueryResult{Rows: rows, Skipped: notServed}, nil
 	case errors.Is(err, index.ErrBadQuery):
 		return QueryResult{}, errorf(CodeInvalid, "%s", strings.TrimPrefix(err.Error(), index.ErrBadQuery.Error()+": "))
 	case errors.Is(err, index.ErrQueryTimeout):

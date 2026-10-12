@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -58,6 +59,7 @@ type State string
 const (
 	StateBuilding State = "building" // being cloned and indexed for the first time
 	StateFailed   State = "failed"   // failed to open; speki retries it with backoff
+	StateGone     State = "gone"     // served when the grant was made, but not any more: removed, or reopening
 )
 
 // Unavailable is a vault the user may read that speki doesn't serve right now.
@@ -155,6 +157,7 @@ type library interface {
 type Resolver struct {
 	github       githubAPI
 	library      library
+	logger       *slog.Logger
 	requiredOrgs []string
 	cache        cache // by GitHub token, never by user: tokens can differ in scope or be revoked
 	ttl          time.Duration
@@ -174,10 +177,17 @@ type cached struct {
 }
 
 // NewResolver returns a resolver. requiredOrgs may be empty.
-func NewResolver(github githubAPI, lib library, requiredOrgs []string, c cache) *Resolver {
+func NewResolver(
+	github githubAPI,
+	lib library,
+	requiredOrgs []string,
+	c cache,
+	logger *slog.Logger,
+) *Resolver {
 	return &Resolver{
 		github:       github,
 		library:      lib,
+		logger:       logger,
 		requiredOrgs: requiredOrgs,
 		cache:        c,
 		ttl:          5 * time.Minute,
@@ -271,20 +281,37 @@ func (res *resolution) grant(ctx context.Context) (*Grant, error) {
 			writable = append(writable, v.RepoID)
 		}
 	}
-	var unavailable []Unavailable
+	unavailable, err := res.unavailable(ctx, building, failed)
+	if err != nil {
+		return nil, err
+	}
+	return NewGrant(res.u, readable, writable, unavailable...), nil
+}
+
+// unavailable returns the vaults among building and failed that the user may read. A user with served
+// vaults isn't turned away over a vault they can't use yet: one whose read check fails is left out,
+// unless GitHub no longer accepts the sign-in.
+func (res *resolution) unavailable(ctx context.Context, building, failed []vault.Vault) ([]Unavailable, error) {
+	var out []Unavailable
 	for _, l := range []struct {
 		vs    []vault.Vault
 		state State
 	}{{building, StateBuilding}, {failed, StateFailed}} {
-		vs, err := res.readable(ctx, l.vs)
-		if err != nil {
-			return nil, err
-		}
-		for _, v := range vs {
-			unavailable = append(unavailable, Unavailable{Vault: v, State: l.state})
+		for _, v := range l.vs {
+			ok, err := res.canRead(ctx, v)
+			if errors.Is(err, ErrUnauthorized) {
+				return nil, err
+			}
+			if err != nil {
+				res.r.logger.WarnContext(ctx, "read check for a vault that isn't served failed; leaving it out", "vault", v.Name, "err", err)
+				continue
+			}
+			if ok {
+				out = append(out, Unavailable{Vault: v, State: l.state})
+			}
 		}
 	}
-	return NewGrant(res.u, readable, writable, unavailable...), nil
+	return out, nil
 }
 
 // unserved says why the user gets no vault: errLoading for one being built, ErrVaultsFailed for one that

@@ -34,7 +34,7 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 		return SearchResult{}, errorf(CodeInvalid, "the query is empty. Give one or more words to search for")
 	}
 
-	sources, skipped, err := b.sources(g, req.Vaults)
+	sources, notServed, err := b.sources(g, req.Vaults)
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -59,5 +59,5 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	case err != nil:
 		return SearchResult{}, err
 	}
-	return SearchResult{Results: res, Skipped: skipped}, nil
+	return SearchResult{Results: res, Skipped: notServed}, nil
 }

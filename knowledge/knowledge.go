@@ -4,10 +4,12 @@
 package knowledge
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -122,27 +124,25 @@ type Skipped struct {
 	State access.State
 }
 
-// skipped returns the vaults the user may read that speki doesn't serve.
-func skipped(g *access.Grant) []Skipped {
-	var out []Skipped
-	for _, u := range g.Unavailable() {
-		out = append(out, Skipped{Name: u.Vault.Name, State: u.State})
-	}
-	return out
-}
-
 // sources returns the indexes to search or query: the named vaults, each once however often it's named,
 // or every vault the user may read when names is empty, with the ones that aren't served as skipped.
 func (b *Base) sources(g *access.Grant, names []string) ([]index.Source, []Skipped, error) {
 	var sources []index.Source
 	if len(names) == 0 {
+		var notServed []Skipped
+		for _, u := range g.Unavailable() {
+			notServed = append(notServed, Skipped{Name: u.Vault.Name, State: u.State})
+		}
 		for _, v := range g.Readable() {
 			c, ok := b.vaults.Copy(v.RepoID)
-			if ok { // not ok: removed since the grant was made
-				sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
+			if !ok {
+				notServed = append(notServed, Skipped{Name: v.Name, State: access.StateGone})
+				continue
 			}
+			sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
 		}
-		return sources, skipped(g), nil
+		slices.SortFunc(notServed, func(a, b Skipped) int { return cmp.Compare(a.Name, b.Name) })
+		return sources, notServed, nil
 	}
 	seen := map[int64]bool{}
 	for _, name := range names {

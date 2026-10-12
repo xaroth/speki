@@ -9,16 +9,17 @@ root. Wherever a tool takes `vaults`, leaving it out means every vault the user 
 
 ## Vaults speki can't serve
 
-A vault the user can read may not be served yet: speki is still cloning and indexing it (`building`), or
-it failed to open (`failed`; speki retries it with backoff and the operator sees why on the status page).
-Such a vault is never searched or read, but it isn't hidden either:
+A vault the user can read may not be served: speki is still cloning and indexing it (`building`), it
+failed to open (`failed`; speki retries it with backoff and the operator sees why on the status page), or
+it stopped being served while the request ran (`gone`: just removed, or reopening). Such a vault is never
+searched or read, but it isn't hidden either:
 
 - `list` without `vault` shows it with its `state`.
 - `search` and `query` without `vaults` name it in `skipped_vaults`, with its state, and say so in the
   text: `Not searched, so this result says nothing about them: ours/new (still building its index; try
   again shortly)`. The key is left out when every readable vault was covered.
-- Naming it in any tool fails with `unavailable`, saying whether it's still building its index or failed
-  to open. A vault the user can't read still answers `not_found`.
+- Naming a building or failed vault in any tool fails with `unavailable`, saying which. A vault the user
+  can't read, or one that's gone, answers `not_found`.
 
 ## Versions
 
@@ -74,7 +75,7 @@ description, guidelines and whether the user can write to it.
 ## list
 
 Without `vault`: the user's vaults, sorted by name. One speki can't serve right now has a `state`,
-`building` or `failed`, and no documents or write access.
+`building`, `failed` or `gone`, and no documents, guidelines or write access.
 
 ```json
 { "vaults": [
