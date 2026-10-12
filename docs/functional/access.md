@@ -31,8 +31,8 @@ A request is accepted when all of these hold:
 If 2 or 3 fails, the client gets an HTTP 403 saying which of the two it was. It never names organisations
 or vaults the user can't see.
 
-Speki checks 2 and 3 again at most every 60 seconds per user. Someone removed from an organisation or a
-repository loses access within a minute.
+Speki checks 2 and 3 again at most every 60 seconds per user. Someone removed from an organisation, a
+repository or a team loses access within a minute.
 
 ## What a user can see and change
 
@@ -40,13 +40,12 @@ Access follows GitHub, per vault:
 
 | On GitHub, the user can | In speki, they can |
 |---|---|
-| read the repository, with at least the vault's `read_role` | `list`, `search`, `query`, `read` and `history` in that vault |
-| push to the repository | also `write`, `edit`, `move` and `delete`, if they signed in with read and write |
+| read the repository with at least the vault's `read_role`, and is in its `readers` | `list`, `search`, `query`, `read` and `history` in that vault |
+| also push to the repository, and is in the vault's `writers` | also `write`, `edit`, `move` and `delete`, if they signed in with read and write |
 | nothing | nothing. The vault doesn't exist for them |
 
-A vault's `speki.yaml` can raise the role needed to see it with `read_role` (see
-[vaults.md](vaults.md#limiting-who-sees-a-vault)). Below that role the user can't see the vault, even with
-read access on GitHub.
+A vault's `speki.yaml` can narrow GitHub's permissions with `read_role`, `readers` and `writers`. Left out,
+they don't narrow anything. See [vaults.md](vaults.md#limiting-who-reads-and-writes-a-vault).
 
 A vault the user can't read behaves like a vault that doesn't exist. Errors don't tell the two apart.
 

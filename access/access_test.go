@@ -19,7 +19,20 @@ type fakeGitHub struct {
 	members map[string][]string // token -> orgs
 	repos   map[string][]gh.RepoAccess
 	revoked map[string]bool
+	teams   map[string][]string // login -> org/slug
+	asked   []string            // org/slug, per TeamMember call
 	calls   int
+}
+
+func (f *fakeGitHub) TeamMember(_ context.Context, token, org, slug, login string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.asked = append(f.asked, org+"/"+slug)
+	if f.revoked[token] {
+		return false, gh.ErrUnauthorized
+	}
+	return slices.Contains(f.teams[login], org+"/"+slug), nil
 }
 
 func (f *fakeGitHub) ActiveMember(_ context.Context, token, org string) (bool, error) {
@@ -124,6 +137,84 @@ func TestReadRole(t *testing.T) {
 				t.Errorf("CanWrite(ours/gated) = %v", g.CanWrite(100))
 			}
 		})
+	}
+}
+
+func TestReadersAndWriters(t *testing.T) {
+	rw := []gh.RepoAccess{{RepoID: 100, Role: gh.RoleWrite}, {RepoID: 101, Role: gh.RoleWrite}}
+	f := &fakeGitHub{
+		repos: map[string][]gh.RepoAccess{
+			"alice": rw,
+			"carol": rw,
+			"dave":  rw,
+			"erin":  {{RepoID: 100, Role: gh.RoleRead}, {RepoID: 101, Role: gh.RoleRead}},
+			"frank": rw,
+		},
+		teams: map[string][]string{
+			"alice": {"ours/editors"},
+			"dave":  {"ours/editors", "ours/leads"},
+			"erin":  {"ours/editors", "ours/leads"},
+			"frank": {"ours/leads"},
+		},
+	}
+	gated := vault.Vault{RepoID: 100, Name: "ours/gated", Config: vault.Config{
+		Readers: []vault.Principal{{Org: "ours", Team: "editors"}, {Login: "Carol"}},
+		Writers: []vault.Principal{{Org: "ours", Team: "leads"}},
+	}}
+	open := vault.Vault{RepoID: 101, Name: "ours/open"}
+	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{gated, open} }, nil)
+	tests := []struct {
+		login    string
+		readable []string
+		writable bool // ours/gated
+	}{
+		{login: "alice", readable: []string{"ours/gated", "ours/open"}},                // reader, not a writer
+		{login: "carol", readable: []string{"ours/gated", "ours/open"}},                // listed by login
+		{login: "dave", readable: []string{"ours/gated", "ours/open"}, writable: true}, // reader, writer, push
+		{login: "erin", readable: []string{"ours/gated", "ours/open"}},                 // writer without push
+		{login: "frank", readable: []string{"ours/open"}},                              // writer who isn't a reader
+	}
+	for _, tt := range tests {
+		t.Run(tt.login, func(t *testing.T) {
+			g, err := r.Resolve(t.Context(), User{Login: tt.login, Token: tt.login, Write: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, v := range g.Readable() {
+				names = append(names, v.Name)
+			}
+			if diff := cmp.Diff(tt.readable, names); diff != "" {
+				t.Errorf("readable (-want +got):\n%s", diff)
+			}
+			if g.CanWrite(100) != tt.writable {
+				t.Errorf("CanWrite(ours/gated) = %v", g.CanWrite(100))
+			}
+			if g.CanWrite(101) != (tt.login != "erin") {
+				t.Errorf("CanWrite(ours/open) = %v", g.CanWrite(101))
+			}
+		})
+	}
+
+	// Team answers are cached with the rest.
+	calls := f.calls
+	_, err := r.Resolve(t.Context(), User{Login: "dave", Token: "dave", Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.calls != calls {
+		t.Error("second resolve asked GitHub about teams again")
+	}
+
+	// A read-only session doesn't ask about writers.
+	f.repos["dave-ro"] = rw
+	f.asked = nil
+	_, err = r.Resolve(t.Context(), User{Login: "dave", Token: "dave-ro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"ours/editors"}, f.asked); diff != "" {
+		t.Errorf("teams asked about (-want +got):\n%s", diff)
 	}
 }
 

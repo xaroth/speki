@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -244,7 +246,8 @@ func (r *Registry) discoverRepo(
 
 	cfg := Config{}
 	if err == nil {
-		cfg, err = ParseConfig(raw)
+		owner, _, _ := strings.Cut(repo.FullName, "/")
+		cfg, err = ParseConfig(raw, owner)
 	}
 	if err != nil {
 		problems[repo.ID] = Problem{RepoID: repo.ID, Name: repo.FullName, Error: err.Error()}
@@ -263,7 +266,7 @@ func diff(prev, next map[int64]Vault) Changes {
 		switch {
 		case !ok:
 			c.Added = append(c.Added, v)
-		case old != v:
+		case !reflect.DeepEqual(old, v):
 			c.Changed = append(c.Changed, v)
 		}
 	}

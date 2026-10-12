@@ -35,7 +35,8 @@ Agent
 
 A user who signs in sees the vaults they can read on GitHub, as long as speki's app is installed there.
 In those vaults they can search, list, read and run queries. In vaults where they can push on GitHub they
-can also write, edit, move and delete documents, unless they signed in read-only.
+can also write, edit, move and delete documents, unless they signed in read-only. A vault's `speki.yaml` can narrow
+both to listed users and teams.
 
 Every change is a commit on the vault's default branch, authored by the user. The git history is the audit
 log.

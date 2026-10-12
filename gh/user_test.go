@@ -53,6 +53,10 @@ func fakeUserGitHub(t *testing.T) *httptest.Server {
 			write(http.StatusOK, map[string]any{"state": "active"})
 		case "/user/memberships/orgs/invited":
 			write(http.StatusOK, map[string]any{"state": "pending"})
+		case "/orgs/ours/teams/editors/memberships/octocat":
+			write(http.StatusOK, map[string]any{"state": "active"})
+		case "/orgs/ours/teams/invited/memberships/octocat":
+			write(http.StatusOK, map[string]any{"state": "pending"})
 		case "/user/installations":
 			write(http.StatusOK, map[string]any{"total_count": 1, "installations": []any{map[string]any{"id": 1}}})
 		case "/user/installations/1/repositories":
@@ -159,6 +163,17 @@ func TestUserLookups(t *testing.T) {
 		if err != nil || got != want {
 			t.Errorf("ActiveMember(%s) = %v, %v", org, got, err)
 		}
+	}
+
+	for team, want := range map[string]bool{"editors": true, "invited": false, "secret": false} {
+		got, err := c.TeamMember(ctx, "ghu_good", "ours", team, "octocat")
+		if err != nil || got != want {
+			t.Errorf("TeamMember(%s) = %v, %v", team, got, err)
+		}
+	}
+	_, err = c.TeamMember(ctx, "ghu_revoked", "ours", "editors", "octocat")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("revoked token: %v", err)
 	}
 
 	repos, err := c.UserRepositories(ctx, "ghu_good")

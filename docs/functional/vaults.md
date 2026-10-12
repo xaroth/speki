@@ -36,6 +36,8 @@ guidelines: |
 | `description` | yes | Tells agents what belongs in this vault, so they search and write in the right place. Keep it under 300 characters |
 | `guidelines` | no | Writing rules for agents. Returned by `guide` and when listing the vault. Keep it under 2,000 characters |
 | `read_role` | no | The lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`, `maintain` or `admin` |
+| `readers` | no | Users and teams that may read the vault. Leave it out to let everyone with read access in |
+| `writers` | no | Users and teams that may write to the vault. Leave it out to let every reader with push access write |
 
 Speki ignores unknown keys, so a newer `speki.yaml` doesn't break an older speki.
 
@@ -44,21 +46,37 @@ KiB is rejected. A new
 vault with a bad file isn't added. An existing vault keeps running with its last good configuration. Either
 way the problem is logged and shown on speki's status page, so an operator can see what's wrong.
 
-## Limiting who sees a vault
+## Limiting who reads and writes a vault
 
-By default anyone with read access to the repository sees the vault. In an organisation whose base
-permission is Read, that's every member. To limit a vault to people with a role above that, set
-`read_role`:
+By default anyone with read access to the repository can read the vault, and anyone with push access can
+write to it. In an organisation whose base permission is Read, that's every member. Three keys narrow
+this. Use whichever fits; they combine.
 
 ```yaml
 read_role: triage
+readers: [ours/knowledge, ours/fc-leads, alice]
+writers: ["@ours/knowledge"]
 ```
 
-Users below `triage` then don't see the vault at all. Giving the people who should see it the Triage role,
-directly or through a team, keeps them read-only on GitHub except for issues and pull requests. Writing
-still needs `write` or higher.
+| To | The user needs |
+|---|---|
+| read | at least `read_role` on the repository, and to be in `readers` |
+| write | all of the above, push access to the repository, and to be in `writers` |
 
-Anyone who can push to the default branch can change `read_role`. When that matters, protect `speki.yaml`
+`read_role` is the lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`,
+`maintain` or `admin`. Triage keeps people read-only on GitHub except for issues and pull requests, so
+granting it, directly or through a team, is a way to pick who sees a vault without giving them write
+access.
+
+`readers` and `writers` list GitHub logins (`alice`) or teams as `org/team-slug`. A leading `@` is allowed,
+as in CODEOWNERS, but YAML needs quotes around it. Teams must belong to the organisation that owns the
+vault. Members of a child team count as members of its parent. Checking teams uses the app's "Members:
+read" organisation permission, which speki already needs.
+
+A key that's left out doesn't narrow anything. An empty list is rejected, so a typo can't silently open or
+close a vault. Users are matched by login. A renamed account needs its new login listed.
+
+Anyone who can push to the default branch can change these keys. When that matters, protect `speki.yaml`
 with a push ruleset that restricts its path. Speki only writes `.md` files, so the ruleset doesn't block it.
 
 ## What speki reads from a vault
