@@ -123,6 +123,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		github,
 		lib.Vaults,
 		cfg.Access.RequiredOrgs,
+		shared,
 	)
 	auth := oauth.New(
 		oauth.Config{

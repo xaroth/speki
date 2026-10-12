@@ -200,16 +200,16 @@ The first connection opens a browser to sign in ([access.md](access.md)).
 ## One instance or several
 
 With no `redis` configured, speki runs as a single instance and keeps its short-lived state in memory:
-used authorization codes, refresh locks and refresh results. Each instance also keeps its own short
-access cache per user, which isn't shared. A restart loses that state, which only
-means a few users get checked against GitHub again.
+used authorization codes, refresh locks, refresh results and the access cache (what GitHub said each
+user may see, kept for a minute). A restart loses that state, which only means a few users get checked
+against GitHub again.
 
 With `redis` configured, any number of instances can run behind a load balancer without sticky sessions.
 They share that state through Redis, and when one instance writes to a vault, it tells the others, so
 they pick up the change within seconds instead of at the next poll. Every instance needs the same
 configuration: the same `public_url`, GitHub App and keys, and the same Redis. An instance that can't
 reach Redis at startup refuses to start. If Redis goes away later, sign-in and refresh fail until it's
-back, and changes reach the other instances at their next poll.
+back, every request checks access with GitHub, and changes reach the other instances at their next poll.
 
 Speki's keys in Redis are small and short-lived (minutes), all prefixed `speki:`. Configure Redis not to
 evict them (`maxmemory-policy noeviction`): every speki key has a time to live, so policies such as
