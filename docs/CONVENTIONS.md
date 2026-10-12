@@ -15,7 +15,9 @@ written down here.
 - A package's exported API is its contract with the rest of speki. Keep it small, and unexport helpers.
 - A package that needs something from another declares an interface for exactly what it uses, in the
   file that uses it. Return concrete types.
-- No package-level state outside `cmd/speki`. Loggers, clients and clocks are passed in.
+- No package-level state outside `cmd/speki`. Loggers, clients and clocks are passed in. Two exceptions:
+  Prometheus metrics are package-level `promauto` variables, so every metric is registered without
+  anyone wiring it up, and `store` sets go-redis's logger, which go-redis keeps globally.
 
 ## Errors
 
