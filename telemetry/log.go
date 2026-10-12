@@ -1,4 +1,4 @@
-// Package telemetry sets up logging and request IDs shared by the rest of speki.
+// Package telemetry sets up logging, tracing and request IDs shared by the rest of speki.
 package telemetry
 
 import (

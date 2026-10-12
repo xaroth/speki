@@ -194,7 +194,6 @@ func TestSecretsFromFiles(t *testing.T) {
 	}
 }
 
-// Errors name the line as written, whatever secret files the YAML reads.
 // Any text setting can come from a file.
 func TestTextSettingsFromFiles(t *testing.T) {
 	t.Chdir(t.TempDir())
@@ -209,6 +208,7 @@ func TestTextSettingsFromFiles(t *testing.T) {
 	}
 }
 
+// Errors name the line as written, whatever secret files the YAML reads.
 func TestConfigErrorLines(t *testing.T) {
 	dir := t.TempDir()
 	keyFile := filepath.Join(dir, "key.pem")

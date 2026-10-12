@@ -145,7 +145,6 @@ func firstH1(hs []Heading) string {
 	return ""
 }
 
-// frontmatter is a document's frontmatter block.
 type frontmatter struct {
 	open, close string     // the delimiter lines as written, including line endings
 	content     []byte     // between the delimiters
