@@ -1,380 +1,257 @@
-package gh
+package gh_test
 
 import (
-	"bytes"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"fmt"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
-	"strconv"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-cmp/cmp"
-	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/eve-online-tools/speki/gh"
 )
 
-func testKey(t *testing.T) []byte {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-}
+var kb = gh.Repository{ID: 100, FullName: "ours/kb", DefaultBranch: "main", PushedAt: time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)}
 
-// fakeGitHub serves the handful of endpoints the client uses.
-type fakeGitHub struct {
-	t          *testing.T
-	tokenCalls atomic.Int32
-}
-
-func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	auth := r.Header.Get("Authorization")
-	app := strings.HasPrefix(auth, "Bearer ") && strings.Count(auth, ".") == 2 // a JWT
-	install := auth == "token ghs_inst1" || auth == "Bearer ghs_inst1"
-	write := func(v any) {
-		w.Header().Set("Content-Type", "application/json")
-		if install { // each credential has its own budget
-			w.Header().Set("X-RateLimit-Remaining", "3000")
-		} else {
-			w.Header().Set("X-RateLimit-Remaining", "4999")
-		}
-		_ = json.NewEncoder(w).Encode(v)
-	}
-
-	switch {
-	case r.URL.Path == "/app" && app:
-		write(map[string]any{"id": 1, "owner": map[string]any{"id": 42, "login": "eve-online-tools"}})
-	case r.URL.Path == "/app/installations" && app:
-		if r.URL.Query().Get("page") == "2" {
-			write([]any{map[string]any{"id": 2, "account": map[string]any{"id": 7, "login": "other"}, "suspended_at": "2026-01-01T00:00:00Z"}})
-			return
-		}
-		w.Header().Set("Link", fmt.Sprintf(`<http://%s/app/installations?page=2>; rel="next"`, r.Host))
-		write([]any{map[string]any{"id": 1, "account": map[string]any{"id": 42, "login": "eve-online-tools"}, "suspended_at": nil}})
-	case r.URL.Path == "/app/installations/1/access_tokens" && app:
-		f.tokenCalls.Add(1)
-		w.WriteHeader(http.StatusCreated)
-		write(map[string]any{"token": "ghs_inst1", "expires_at": time.Now().Add(time.Hour)})
-	case r.URL.Path == "/app/installations/9/access_tokens" && app:
-		w.WriteHeader(http.StatusNotFound)
-		write(map[string]any{"message": "Not Found"})
-	case r.URL.Path == "/app/installations/8/access_tokens" && app:
-		w.WriteHeader(http.StatusForbidden)
-		write(map[string]any{"message": "You have exceeded a secondary rate limit"})
-	case r.URL.Path == "/repos/eve-online-tools/kb/contents/docs" && install:
-		write([]any{map[string]any{"type": "file", "name": "a.md"}})
-	case r.URL.Path == "/repos/eve-online-tools/kb/git/ref/heads/feature/x y" && install:
-		w.Header().Set("ETag", `"v2"`)
-		write(map[string]any{"ref": "refs/heads/feature/x y", "object": map[string]any{"sha": "def456", "type": "commit"}})
-	case r.URL.Path == "/installation/repositories" && install:
-		write(map[string]any{"total_count": 1, "repositories": []any{map[string]any{
-			"id": 100, "full_name": "eve-online-tools/kb", "default_branch": "main",
-			"pushed_at": "2026-10-09T10:00:00Z",
-		}}})
-	case r.URL.Path == "/repos/eve-online-tools/kb/contents/speki.yaml" && install:
-		if r.URL.Query().Get("ref") != "main" {
-			f.t.Errorf("contents ref = %q", r.URL.Query().Get("ref"))
-		}
-		write(map[string]any{"type": "file", "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte("title: KB\n"))})
-	case r.URL.Path == "/repos/eve-online-tools/kb/git/ref/heads/main" && install:
-		if r.Header.Get("If-None-Match") == `"v1"` {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		w.Header().Set("ETag", `"v1"`)
-		write(map[string]any{"ref": "refs/heads/main", "object": map[string]any{"sha": "abc123", "type": "commit"}})
-	case r.URL.Path == "/repos/eve-online-tools/big/contents/speki.yaml" && install:
-		write(map[string]any{"type": "file", "encoding": "none", "size": 2_000_000, "content": ""})
-	case r.URL.Path == "/repos/eve-online-tools/kb" && install:
-		write(map[string]any{"id": 100, "full_name": "eve-online-tools/kb"})
-	case strings.HasPrefix(r.URL.Path, "/repos/") && install:
-		w.WriteHeader(http.StatusNotFound)
-		write(map[string]any{"message": "Not Found"})
-	default:
-		f.t.Errorf("unexpected request %s %s (auth %q)", r.Method, r.URL.Path, auth)
-		w.WriteHeader(http.StatusTeapot)
+// withKB is installation 1 with the repository ours/kb on branch main.
+func withKB() gh.FakeOption {
+	return func(tb testing.TB, f *gh.Fake) {
+		tb.Helper()
+		gh.ExpectInstallation(gh.Installation{ID: 1, AccountID: 42}, kb)(tb, f)
+		gh.ExpectBranch(kb.FullName, "main", "abc123")(tb, f)
 	}
 }
 
-func newTestClient(t *testing.T) (*Client, *fakeGitHub) {
-	t.Helper()
-	fake := &fakeGitHub{t: t}
-	srv := httptest.NewServer(fake)
-	t.Cleanup(srv.Close)
-	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+func TestCheckPrivateKey(t *testing.T) {
+	t.Parallel()
+	fake := gh.NewFake(t)
+	testCases := []struct {
+		name    string
+		key     []byte
+		wantErr bool
+	}{
+		{name: "RSA key", key: fake.PrivateKey},
+		{name: "not a key", key: []byte("not a key"), wantErr: true},
 	}
-	return c, fake
-}
-
-func TestNewRejectsBadKey(t *testing.T) {
-	_, err := New(Config{AppID: 1, PrivateKey: []byte("not a key")})
-	if err == nil {
-		t.Fatal("New accepted a bad key")
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if err := gh.CheckPrivateKey(testCase.key); (err != nil) != testCase.wantErr {
+				t.Errorf("CheckPrivateKey: got %v, want error %t", err, testCase.wantErr)
+			}
+			if _, err := gh.New(gh.Config{AppID: 1, PrivateKey: testCase.key}); (err != nil) != testCase.wantErr {
+				t.Errorf("New: got %v, want error %t", err, testCase.wantErr)
+			}
+		})
 	}
 }
 
 func TestAppOwner(t *testing.T) {
-	c, _ := newTestClient(t)
-	id, err := c.AppOwner(t.Context())
+	t.Parallel()
+	fake := gh.NewFake(t, gh.ExpectAppOwner(42))
+	got, err := fake.AppOwner(t.Context())
 	if err != nil {
 		t.Fatalf("AppOwner: %v", err)
 	}
-	if id != 42 {
-		t.Errorf("owner = %d, want 42", id)
+	if got != 42 {
+		t.Errorf("got owner %d, want 42", got)
 	}
 }
 
-func TestInstallationsPaginates(t *testing.T) {
-	c, _ := newTestClient(t)
-	got, err := c.Installations(t.Context())
-	if err != nil {
-		t.Fatalf("Installations: %v", err)
-	}
-	want := []Installation{
+func TestInstallations(t *testing.T) {
+	t.Parallel()
+	want := []gh.Installation{
 		{ID: 1, AccountID: 42},
 		{ID: 2, AccountID: 7, Suspended: true},
+	}
+	fake := gh.NewFake(t, gh.ExpectPageSize(1), gh.ExpectInstallation(want[0]), gh.ExpectInstallation(want[1]))
+	got, err := fake.Installations(t.Context())
+	if err != nil {
+		t.Fatalf("Installations: %v", err)
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("installations (-want +got):\n%s", diff)
 	}
 }
 
-func TestRepositoriesAndFile(t *testing.T) {
-	c, fake := newTestClient(t)
-
-	repos, err := c.Repositories(t.Context(), 1)
-	if err != nil {
-		t.Fatalf("Repositories: %v", err)
+func TestRepositories(t *testing.T) {
+	t.Parallel()
+	other := gh.Repository{ID: 101, FullName: "ours/other", DefaultBranch: "master"}
+	testCases := []struct {
+		name         string
+		installation int64
+		want         []gh.Repository
+		wantErr      bool
+		wantNotFound bool
+	}{
+		{name: "paged", installation: 1, want: []gh.Repository{kb, other}},
+		{name: "installation gone", installation: 9, wantErr: true, wantNotFound: true},
+		{name: "token refused", installation: 8, wantErr: true}, // a 403 may be a rate limit, not gone
 	}
-	want := []Repository{{ID: 100, FullName: "eve-online-tools/kb", DefaultBranch: "main", PushedAt: time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)}}
-	if diff := cmp.Diff(want, repos); diff != "" {
-		t.Errorf("repositories (-want +got):\n%s", diff)
-	}
-
-	content, err := c.File(t.Context(), 1, "eve-online-tools/kb", "main", "speki.yaml")
-	if err != nil {
-		t.Fatalf("File: %v", err)
-	}
-	if string(content) != "title: KB\n" {
-		t.Errorf("content = %q", content)
-	}
-
-	_, err = c.File(t.Context(), 1, "eve-online-tools/kb", "main", "missing.yaml")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("missing file: err = %v, want ErrNotFound", err)
-	}
-
-	_, err = c.File(t.Context(), 1, "eve-online-tools/kb", "main", "docs")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("folder: err = %v, want ErrNotFound", err)
-	}
-
-	if n := fake.tokenCalls.Load(); n != 1 {
-		t.Errorf("installation token fetched %d times, want once", n)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, gh.ExpectPageSize(1),
+				gh.ExpectInstallation(gh.Installation{ID: 1}, kb, other),
+				gh.ExpectInstallation(gh.Installation{ID: 8}), gh.ExpectInstallation_Refused(8))
+			got, err := fake.Repositories(t.Context(), testCase.installation)
+			if (err != nil) != testCase.wantErr || errors.Is(err, gh.ErrNotFound) != testCase.wantNotFound {
+				t.Fatalf("got %v, want error %t, ErrNotFound %t", err, testCase.wantErr, testCase.wantNotFound)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("repositories (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
-func TestGoneInstallation(t *testing.T) {
-	c, _ := newTestClient(t)
-	_, err := c.Repositories(t.Context(), 9)
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
+func TestFile(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		repo    string
+		path    string
+		want    string
+		wantErr error
+	}{
+		{name: "file", repo: kb.FullName, path: "speki.yaml", want: "title: KB\n"},
+		{name: "missing", repo: kb.FullName, path: "missing.yaml", wantErr: gh.ErrNotFound},
+		{name: "folder", repo: kb.FullName, path: "docs", wantErr: gh.ErrNotFound},
+		{name: "over 64 KiB", repo: kb.FullName, path: "big.md", wantErr: gh.ErrTooLarge},
+		{name: "over 1 MB, sent without content", repo: kb.FullName, path: "huge.md", wantErr: gh.ErrTooLarge},
+		{name: "repository not seen", repo: "ours/gone", path: "speki.yaml", wantErr: gh.ErrNotFound},
 	}
-	_, err = c.InstallationTokens(9).Token(t.Context())
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("token: err = %v, want ErrNotFound", err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, withKB(),
+				gh.ExpectFile(kb.FullName, "speki.yaml", []byte("title: KB\n")),
+				gh.ExpectFile(kb.FullName, "docs/a.md", []byte("a")),
+				gh.ExpectFile(kb.FullName, "big.md", make([]byte, 64<<10+1)),
+				gh.ExpectFile(kb.FullName, "huge.md", make([]byte, 1<<20+1)))
+			got, err := fake.File(t.Context(), 1, testCase.repo, "main", testCase.path)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
+			}
+			if string(got) != testCase.want {
+				t.Errorf("got %q, want %q", got, testCase.want)
+			}
+		})
+	}
+
+	t.Run("rejects a repository name without an owner", func(t *testing.T) {
+		t.Parallel()
+		fake := gh.NewFake(t, withKB())
+		if _, err := fake.File(t.Context(), 1, "kb", "main", "speki.yaml"); err == nil {
+			t.Error("got no error, want one")
+		}
+		if got := fake.Requests(); len(got) != 0 {
+			t.Errorf("got requests %q, want none", got)
+		}
+	})
+}
+
+// An installation's token is fetched once and used for its calls until it expires.
+func TestInstallationTokenIsReused(t *testing.T) {
+	t.Parallel()
+	fake := gh.NewFake(t, withKB(), gh.ExpectFile(kb.FullName, "speki.yaml", []byte("x")))
+	if _, err := fake.Repositories(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.File(t.Context(), 1, kb.FullName, "main", "speki.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.InstallationTokens(1).Token(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"POST /app/installations/1/access_tokens",
+		"GET /installation/repositories?per_page=100",
+		"GET /repos/ours/kb/contents/speki.yaml?ref=main",
+	}
+	if diff := cmp.Diff(want, fake.Requests()); diff != "" {
+		t.Errorf("requests (-want +got):\n%s", diff)
 	}
 }
 
-func TestRefusedTokenIsNotGone(t *testing.T) {
-	c, _ := newTestClient(t)
-	_, err := c.Repositories(t.Context(), 8)
-	if err == nil || errors.Is(err, ErrNotFound) {
-		t.Errorf("403 on token creation: err = %v, want a plain error", err)
+func TestInstallationTokens(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name         string
+		installation int64
+		want         string
+		wantNotFound bool
+	}{
+		{name: "token", installation: 1, want: "ghs_fake_1"},
+		{name: "installation gone", installation: 9, wantNotFound: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, withKB())
+			got, err := fake.InstallationTokens(testCase.installation).Token(t.Context())
+			if errors.Is(err, gh.ErrNotFound) != testCase.wantNotFound || err != nil && !testCase.wantNotFound {
+				t.Fatalf("got %v, want ErrNotFound %t", err, testCase.wantNotFound)
+			}
+			if got != testCase.want {
+				t.Errorf("got token %q, want %q", got, testCase.want)
+			}
+		})
 	}
 }
 
 func TestBranchHead(t *testing.T) {
-	c, _ := newTestClient(t)
-
-	head, err := c.BranchHead(t.Context(), 1, "eve-online-tools/kb", "main", "")
-	if err != nil {
-		t.Fatalf("BranchHead: %v", err)
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		repo    string
+		branch  string
+		etag    string
+		want    gh.Head
+		wantErr error
+	}{
+		{name: "head", repo: kb.FullName, branch: "main", want: gh.Head{SHA: "abc123", ETag: `"abc123"`}},
+		{name: "unchanged", repo: kb.FullName, branch: "main", etag: `"abc123"`, want: gh.Head{ETag: `"abc123"`}},
+		{name: "changed", repo: kb.FullName, branch: "main", etag: `"old"`, want: gh.Head{SHA: "abc123", ETag: `"abc123"`}},
+		{name: "branch with a slash and a space", repo: kb.FullName, branch: "feature/x y", want: gh.Head{SHA: "def456", ETag: `"def456"`}},
+		{name: "repository not seen", repo: "ours/gone", branch: "main", wantErr: gh.ErrNotFound},
 	}
-	if head.SHA != "abc123" || head.ETag != `"v1"` {
-		t.Errorf("head = %+v", head)
-	}
-
-	again, err := c.BranchHead(t.Context(), 1, "eve-online-tools/kb", "main", head.ETag)
-	if err != nil {
-		t.Fatalf("conditional BranchHead: %v", err)
-	}
-	if again.SHA != "" || again.ETag != head.ETag {
-		t.Errorf("unchanged head = %+v, want empty SHA and the same ETag", again)
-	}
-
-	odd, err := c.BranchHead(t.Context(), 1, "eve-online-tools/kb", "feature/x y", "")
-	if err != nil || odd.SHA != "def456" {
-		t.Errorf("branch with slash and space: %+v, %v", odd, err)
-	}
-
-	_, err = c.BranchHead(t.Context(), 1, "eve-online-tools/gone", "main", "")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("missing repo: err = %v, want ErrNotFound", err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, withKB(), gh.ExpectBranch(kb.FullName, "feature/x y", "def456"))
+			got, err := fake.BranchHead(t.Context(), 1, testCase.repo, testCase.branch, testCase.etag)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("head (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
 func TestRepositoryID(t *testing.T) {
-	c, _ := newTestClient(t)
-	id, err := c.RepositoryID(t.Context(), 1, "eve-online-tools/kb")
-	if err != nil || id != 100 {
-		t.Errorf("RepositoryID = %d, %v", id, err)
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		repo    string
+		want    int64
+		wantErr error
+	}{
+		{name: "found", repo: kb.FullName, want: 100},
+		{name: "not seen", repo: "ours/gone", wantErr: gh.ErrNotFound},
 	}
-	_, err = c.RepositoryID(t.Context(), 1, "eve-online-tools/gone")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("missing repo: %v", err)
-	}
-}
-
-// An installation call counts once, as installation, and its token request as app; the app's budget
-// isn't overwritten by the installation's.
-func TestMetricsByKind(t *testing.T) {
-	c, _ := newTestClient(t)
-	tests := []struct {
-		kind, status string
-		want         float64
-	}{{"app", "201", 1}, {"app", "200", 0}, {"installation", "200", 1}}
-	before := make([]float64, len(tests)) // the counters are shared by the whole test binary
-	for i, tt := range tests {
-		before[i] = testutil.ToFloat64(githubRequests.WithLabelValues(tt.kind, tt.status))
-	}
-	githubRemaining.Reset() // shared by the whole test binary
-	githubRemaining.WithLabelValues("app").Set(4999)
-	_, err := c.RepositoryID(t.Context(), 1, "eve-online-tools/kb")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, tt := range tests {
-		if got := testutil.ToFloat64(githubRequests.WithLabelValues(tt.kind, tt.status)) - before[i]; got != tt.want {
-			t.Errorf("%s %s requests = %v, want %v", tt.kind, tt.status, got, tt.want)
-		}
-	}
-	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("app")); got == 3000 {
-		t.Error("the app's budget shows the installation's")
-	}
-	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 3000 {
-		t.Errorf("installation remaining = %v, want 3000", got)
-	}
-}
-
-// The installation gauge shows the lowest recent budget, and a budget below 10% is warned about at most
-// every warnEvery.
-func TestRateBudget(t *testing.T) {
-	var logged bytes.Buffer
-	m := newMetrics(slog.New(slog.NewTextHandler(&logged, nil)))
-	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	m.now = func() time.Time { return now }
-	githubRemaining.Reset() // shared by the whole test binary
-	header := func(remaining string) http.Header {
-		return http.Header{"X-Ratelimit-Remaining": {remaining}, "X-Ratelimit-Limit": {"5000"}}
-	}
-	m.record("installation", 1, header("100"))
-	m.record("installation", 2, header("4000"))
-	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 100 {
-		t.Errorf("installation remaining = %v, want the lowest, 100", got)
-	}
-	m.record("installation", 1, header("50"))
-	if n := strings.Count(logged.String(), "budget is low"); n != 1 || !strings.Contains(logged.String(), "installation=1") {
-		t.Errorf("%d warnings:\n%s", n, logged.String())
-	}
-	m.record("installation", 2, header("20"))
-	if n := strings.Count(logged.String(), "budget is low"); n != 2 || !strings.Contains(logged.String(), "installation=2") {
-		t.Errorf("each installation is warned about once; got %d warnings:\n%s", n, logged.String())
-	}
-
-	// Installation 1's reading ages out; installation 2's budget is refilled at its reset.
-	m.record("installation", 2, http.Header{
-		"X-Ratelimit-Remaining": {"20"},
-		"X-Ratelimit-Limit":     {"5000"},
-		"X-Ratelimit-Reset":     {strconv.FormatInt(now.Add(time.Minute).Unix(), 10)},
-	})
-	start := now
-	now = now.Add(2 * time.Minute)
-	m.record("installation", 3, header("3900"))
-	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 50 {
-		t.Errorf("installation remaining = %v after installation 2's refill, want installation 1's 50", got)
-	}
-	now = start.Add(budgetWindow + time.Second)
-	m.record("installation", 3, header("3900"))
-	if got := testutil.ToFloat64(githubRemaining.WithLabelValues("installation")); got != 3900 {
-		t.Errorf("installation remaining = %v after installation 1's reading aged out, want 3900", got)
-	}
-
-	now = now.Add(warnEvery)
-	m.record("installation", 1, header("40"))
-	if n := strings.Count(logged.String(), "budget is low"); n != 3 {
-		t.Errorf("a low budget is warned about again after %v; got %d warnings:\n%s", warnEvery, n, logged.String())
-	}
-}
-
-// A failed installation token request counts as the app's, not as an installation call, and its
-// response body is closed.
-func TestTokenFailureCounts(t *testing.T) {
-	c, _ := newTestClient(t)
-	app403 := testutil.ToFloat64(githubRequests.WithLabelValues("app", "403"))
-	installErrors := testutil.ToFloat64(githubRequests.WithLabelValues("installation", "error"))
-	_, err := c.RepositoryID(t.Context(), 8, "eve-online-tools/kb")
-	if err == nil {
-		t.Fatal("RepositoryID succeeded without a token")
-	}
-	if got := testutil.ToFloat64(githubRequests.WithLabelValues("app", "403")) - app403; got != 1 {
-		t.Errorf("app 403 requests = %v, want 1", got)
-	}
-	if got := testutil.ToFloat64(githubRequests.WithLabelValues("installation", "error")) - installErrors; got != 0 {
-		t.Errorf("installation errors = %v, want 0", got)
-	}
-	body := &closeCounter{Reader: strings.NewReader("{}")}
-	err = &ghinstallation.HTTPError{Response: &http.Response{StatusCode: http.StatusForbidden, Body: body}}
-	closeTokenError(err)
-	closeTokenError(fmt.Errorf("wrapped: %w", err))
-	closeTokenError(&ghinstallation.HTTPError{Response: &http.Response{}}) // no body: no panic
-	if body.closed == 0 {
-		t.Error("the token error's body wasn't closed")
-	}
-	if signedByApp(&http.Request{Header: http.Header{"Authorization": {"Bearer ghu_user"}}}) {
-		t.Error("a user token counted as the app's JWT")
-	}
-}
-
-type closeCounter struct {
-	io.Reader
-	closed int
-}
-
-func (c *closeCounter) Close() error {
-	c.closed++
-	return nil
-}
-
-func TestFileTooLarge(t *testing.T) {
-	c, _ := newTestClient(t)
-	_, err := c.File(t.Context(), 1, "eve-online-tools/big", "main", "speki.yaml")
-	if !errors.Is(err, ErrTooLarge) {
-		t.Errorf("a 2 MB file: %v, want ErrTooLarge", err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, withKB())
+			got, err := fake.RepositoryID(t.Context(), 1, testCase.repo)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
+			}
+			if got != testCase.want {
+				t.Errorf("got ID %d, want %d", got, testCase.want)
+			}
+		})
 	}
 }

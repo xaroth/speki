@@ -1,229 +1,189 @@
-package gh
+package gh_test
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/eve-online-tools/speki/gh"
 )
 
-// fakeUserGitHub answers the OAuth and user endpoints for the user token "ghu_good".
-func fakeUserGitHub(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		write := func(status int, v any) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			_ = json.NewEncoder(w).Encode(v)
-		}
-		if r.URL.Path == "/login/oauth/access_token" {
-			_ = r.ParseForm()
-			if r.Form.Get("client_secret") != "secret" {
-				write(http.StatusOK, map[string]any{"error": "incorrect_client_credentials"})
-				return
+func TestMe(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		token   string
+		want    gh.User
+		wantErr error
+	}{
+		{name: "user", token: writer, want: gh.User{ID: 7, Login: "octocat"}},
+		{name: "token revoked", token: revoked, wantErr: gh.ErrUnauthorized},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, withKB(), withUsers())
+			got, err := fake.Me(t.Context(), testCase.token)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
 			}
-			switch {
-			case r.Form.Get("code") == "good" && r.Form.Get("code_verifier") == "verifier":
-				write(http.StatusOK, map[string]any{"access_token": "ghu_good", "expires_in": 28800,
-					"refresh_token": "ghr_1", "refresh_token_expires_in": 15897600})
-			case r.Form.Get("code") == "forever":
-				write(http.StatusOK, map[string]any{"access_token": "ghu_forever"})
-			case r.Form.Get("refresh_token") == "ghr_1":
-				write(http.StatusOK, map[string]any{"access_token": "ghu_good", "expires_in": 28800,
-					"refresh_token": "ghr_2", "refresh_token_expires_in": 15897600})
-			case r.Form.Get("refresh_token") != "":
-				write(http.StatusOK, map[string]any{"error": "bad_refresh_token"})
-			default:
-				write(http.StatusOK, map[string]any{"error": "bad_verification_code"})
+			if got != testCase.want {
+				t.Errorf("got %+v, want %+v", got, testCase.want)
 			}
-			return
-		}
-		if r.Header.Get("Authorization") != "Bearer ghu_good" {
-			write(http.StatusUnauthorized, map[string]any{"message": "Bad credentials"})
-			return
-		}
-		switch r.URL.Path {
-		case "/user":
-			write(http.StatusOK, map[string]any{"id": 7, "login": "octocat"})
-		case "/user/memberships/orgs/ours":
-			write(http.StatusOK, map[string]any{"state": "active"})
-		case "/user/memberships/orgs/invited":
-			write(http.StatusOK, map[string]any{"state": "pending"})
-		case "/orgs/ours/teams/editors/memberships/octocat":
-			write(http.StatusOK, map[string]any{"state": "active"})
-		case "/orgs/ours/teams/invited/memberships/octocat":
-			write(http.StatusOK, map[string]any{"state": "pending"})
-		case "/user/installations":
-			write(http.StatusOK, map[string]any{"total_count": 1, "installations": []any{map[string]any{"id": 1}}})
-		case "/user/installations/1/repositories":
-			write(http.StatusOK, map[string]any{"total_count": 4, "repositories": []any{
-				map[string]any{"id": 100, "permissions": map[string]any{"pull": true, "triage": true, "push": true}},
-				map[string]any{"id": 101, "permissions": map[string]any{"pull": true}},
-				map[string]any{"id": 102, "permissions": map[string]any{"pull": true, "triage": true}},
-				map[string]any{"id": 103, "permissions": map[string]any{"admin": true, "maintain": true, "push": true, "triage": true, "pull": true}},
-			}})
-		case "/repos/ours/kb/commits":
-			q := r.URL.Query()
-			if q.Get("sha") != "main" || q.Get("path") != "a.md" || q.Get("per_page") != "2" {
-				t.Errorf("commits query = %s", r.URL.RawQuery)
+		})
+	}
+}
+
+func TestActiveMember(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		token   string
+		org     string
+		want    bool
+		wantErr error
+	}{
+		{name: "active", token: writer, org: "ours", want: true},
+		{name: "invited", token: writer, org: "invited"},
+		{name: "not a member", token: writer, org: "strangers"},
+		{name: "token revoked", token: revoked, org: "ours", wantErr: gh.ErrUnauthorized},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, withKB(), withUsers(),
+				gh.ExpectOrgMembership(writer, "ours", "active"),
+				gh.ExpectOrgMembership(writer, "invited", "pending"))
+			got, err := fake.ActiveMember(t.Context(), testCase.token, testCase.org)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
 			}
-			write(http.StatusOK, []any{
-				map[string]any{"sha": "c2", "author": map[string]any{"login": "octocat"},
-					"commit": map[string]any{"message": "Update a.md", "author": map[string]any{"name": "Octo", "date": "2026-10-09T14:02:11Z"}}},
-				map[string]any{"sha": "c1", "author": nil,
-					"commit": map[string]any{"message": "Create a.md", "author": map[string]any{"name": "Someone", "date": "2026-10-08T10:00:00Z"}}},
-			})
-		default:
-			write(http.StatusNotFound, map[string]any{"message": "Not Found"})
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func newUserTestClient(t *testing.T) (*Client, OAuthConfig) {
-	t.Helper()
-	srv := fakeUserGitHub(t)
-	c, err := New(Config{AppID: 1, PrivateKey: testKey(t), APIURL: srv.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c, OAuthConfig{ClientID: "id", ClientSecret: "secret", URL: srv.URL}
-}
-
-func TestExchangeAndRefresh(t *testing.T) {
-	c, o := newUserTestClient(t)
-	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	c.now = func() time.Time { return now }
-	ctx := t.Context()
-
-	tok, err := c.Exchange(ctx, o, "good", "verifier", "https://speki/cb")
-	if err != nil {
-		t.Fatalf("Exchange: %v", err)
-	}
-	want := UserTokens{
-		AccessToken:    "ghu_good",
-		AccessExpires:  now.Add(8 * time.Hour),
-		RefreshToken:   "ghr_1",
-		RefreshExpires: now.Add(184 * 24 * time.Hour),
-	}
-	if diff := cmp.Diff(want, tok); diff != "" {
-		t.Errorf("tokens (-want +got):\n%s", diff)
-	}
-
-	_, err = c.Exchange(ctx, o, "bad", "verifier", "https://speki/cb")
-	if !errors.Is(err, ErrBadGrant) {
-		t.Errorf("bad code: %v", err)
-	}
-	wrongSecret := o
-	wrongSecret.ClientSecret = "wrong"
-	_, err = c.Exchange(ctx, wrongSecret, "good", "verifier", "https://speki/cb")
-	if !errors.Is(err, ErrAppConfig) || errors.Is(err, ErrBadGrant) {
-		t.Errorf("wrong client secret: %v", err)
-	}
-	_, err = c.Exchange(ctx, o, "forever", "verifier", "https://speki/cb")
-	if err == nil || errors.Is(err, ErrBadGrant) {
-		t.Errorf("token without expiry: %v", err)
-	}
-
-	tok, err = c.Refresh(ctx, o, "ghr_1")
-	if err != nil || tok.RefreshToken != "ghr_2" {
-		t.Errorf("Refresh = %+v, %v", tok, err)
-	}
-	_, err = c.Refresh(ctx, o, "ghr_used")
-	if !errors.Is(err, ErrBadGrant) {
-		t.Errorf("used refresh token: %v", err)
-	}
-
-	u := o.AuthorizeURL("https://speki/cb", "st", "ch")
-	if u != o.URL+"/login/oauth/authorize?client_id=id&code_challenge=ch&code_challenge_method=S256&prompt=select_account&redirect_uri=https%3A%2F%2Fspeki%2Fcb&state=st" {
-		t.Errorf("authorize URL = %s", u)
+			if got != testCase.want {
+				t.Errorf("got %t, want %t", got, testCase.want)
+			}
+		})
 	}
 }
 
-func TestUserLookups(t *testing.T) {
-	c, _ := newUserTestClient(t)
-	ctx := t.Context()
-
-	me, err := c.Me(ctx, "ghu_good")
-	if err != nil || me != (User{ID: 7, Login: "octocat"}) {
-		t.Errorf("Me = %+v, %v", me, err)
+func TestTeamMember(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		token   string
+		team    string
+		want    bool
+		wantErr error
+	}{
+		{name: "active", token: writer, team: "editors", want: true},
+		{name: "invited", token: writer, team: "invited"},
+		{name: "team not seen", token: writer, team: "secret"},
+		{name: "token revoked", token: revoked, team: "editors", wantErr: gh.ErrUnauthorized},
 	}
-	_, err = c.Me(ctx, "ghu_revoked")
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Errorf("revoked token: %v", err)
-	}
-
-	for org, want := range map[string]bool{"ours": true, "invited": false, "strangers": false} {
-		got, err := c.ActiveMember(ctx, "ghu_good", org)
-		if err != nil || got != want {
-			t.Errorf("ActiveMember(%s) = %v, %v", org, got, err)
-		}
-	}
-
-	for team, want := range map[string]bool{"editors": true, "invited": false, "secret": false} {
-		got, err := c.TeamMember(ctx, "ghu_good", "ours", team, "octocat")
-		if err != nil || got != want {
-			t.Errorf("TeamMember(%s) = %v, %v", team, got, err)
-		}
-	}
-	_, err = c.TeamMember(ctx, "ghu_revoked", "ours", "editors", "octocat")
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Errorf("revoked token: %v", err)
-	}
-
-	repos, err := c.UserRepositories(ctx, "ghu_good")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []RepoAccess{
-		{RepoID: 100, Role: RoleWrite},
-		{RepoID: 101, Role: RoleRead},
-		{RepoID: 102, Role: RoleTriage},
-		{RepoID: 103, Role: RoleAdmin},
-	}
-	if diff := cmp.Diff(want, repos); diff != "" {
-		t.Errorf("repositories (-want +got):\n%s", diff)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, withKB(), withUsers(),
+				gh.ExpectTeamMembership("ours", "editors", "octocat", "active"),
+				gh.ExpectTeamMembership("ours", "invited", "octocat", "pending"))
+			got, err := fake.TeamMember(t.Context(), testCase.token, "ours", testCase.team, "octocat")
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
+			}
+			if got != testCase.want {
+				t.Errorf("got %t, want %t", got, testCase.want)
+			}
+		})
 	}
 }
 
-func TestCommits(t *testing.T) {
-	c, _ := newUserTestClient(t)
-	got, err := c.Commits(t.Context(), "ghu_good", "ours/kb", "main", "a.md", 2)
-	if err != nil {
-		t.Fatal(err)
+func TestUserRepositories(t *testing.T) {
+	t.Parallel()
+	repos := []gh.Repository{{ID: 101, FullName: "ours/a"}, {ID: 102, FullName: "ours/b"}, {ID: 103, FullName: "ours/c"}}
+	testCases := []struct {
+		name    string
+		token   string
+		want    []gh.RepoAccess
+		wantErr error
+	}{
+		{
+			name:  "every role, paged, across installations",
+			token: writer,
+			want: []gh.RepoAccess{
+				{RepoID: 100, Role: gh.RoleWrite},
+				{RepoID: 101, Role: gh.RoleRead},
+				{RepoID: 102, Role: gh.RoleTriage},
+				{RepoID: 103, Role: gh.RoleMaintain},
+				{RepoID: 200, Role: gh.RoleAdmin},
+			},
+		},
+		{name: "token revoked", token: revoked, wantErr: gh.ErrUnauthorized},
 	}
-	want := []Commit{
-		{SHA: "c2", Author: "octocat", Date: time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC), Message: "Update a.md"},
-		{SHA: "c1", Author: "Someone", Date: time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC), Message: "Create a.md"},
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("commits (-want +got):\n%s", diff)
-	}
-	_, err = c.Commits(t.Context(), "ghu_revoked", "ours/kb", "main", "", 2)
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Errorf("revoked token: %v", err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := gh.NewFake(t, gh.ExpectPageSize(2),
+				gh.ExpectInstallation(gh.Installation{ID: 1}, append([]gh.Repository{kb}, repos...)...),
+				gh.ExpectInstallation(gh.Installation{ID: 2}, gh.Repository{ID: 200, FullName: "theirs/kb"}),
+				gh.ExpectInstallation(gh.Installation{ID: 3}, gh.Repository{ID: 300, FullName: "theirs/hidden"}),
+				gh.ExpectUser(writer, gh.User{ID: 7, Login: "octocat"}),
+				gh.ExpectRole(writer, kb.FullName, gh.RoleWrite),
+				gh.ExpectRole(writer, "ours/a", gh.RoleRead),
+				gh.ExpectRole(writer, "ours/b", gh.RoleTriage),
+				gh.ExpectRole(writer, "ours/c", gh.RoleMaintain),
+				gh.ExpectRole(writer, "theirs/kb", gh.RoleAdmin))
+			got, err := fake.UserRepositories(t.Context(), testCase.token)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("repositories (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
 func TestRoleText(t *testing.T) {
-	for r := RoleNone; r <= RoleAdmin; r++ {
-		raw, err := r.MarshalText()
-		if err != nil {
-			t.Fatal(err)
-		}
-		var got Role
-		err = got.UnmarshalText(raw)
-		if err != nil || got != r {
-			t.Errorf("%s round-tripped to %s, %v", r, got, err)
-		}
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		role    gh.Role
+		text    string
+		wantErr bool
+	}{
+		{name: "none", role: gh.RoleNone, text: "none"},
+		{name: "read", role: gh.RoleRead, text: "read"},
+		{name: "triage", role: gh.RoleTriage, text: "triage"},
+		{name: "write", role: gh.RoleWrite, text: "write"},
+		{name: "maintain", role: gh.RoleMaintain, text: "maintain"},
+		{name: "admin", role: gh.RoleAdmin, text: "admin"},
+		{name: "out of range", role: gh.RoleAdmin + 1, text: "Role(6)", wantErr: true},
 	}
-	var r Role
-	if err := r.UnmarshalText([]byte("owner")); err == nil {
-		t.Error("unknown role accepted")
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if got := testCase.role.String(); got != testCase.text {
+				t.Errorf("String: got %q, want %q", got, testCase.text)
+			}
+			raw, err := testCase.role.MarshalText()
+			if (err != nil) != testCase.wantErr {
+				t.Fatalf("MarshalText: got %v, want error %t", err, testCase.wantErr)
+			}
+			if testCase.wantErr {
+				return
+			}
+			var got gh.Role
+			if err := got.UnmarshalText(raw); err != nil || got != testCase.role {
+				t.Errorf("UnmarshalText(%q): got %v, %v, want %v", raw, got, err, testCase.role)
+			}
+		})
 	}
+
+	t.Run("unknown name", func(t *testing.T) {
+		t.Parallel()
+		var r gh.Role
+		if err := r.UnmarshalText([]byte("owner")); err == nil {
+			t.Error("got no error, want one")
+		}
+	})
 }
