@@ -30,7 +30,7 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 	}
 	ctx, cancel := context.WithTimeout(ctx, index.QueryTimeout)
 	defer cancel()
-	done, err := b.queryTurn(ctx, g.User().ID)
+	done, err := b.queries.lock(ctx, g.User().ID)
 	if err != nil {
 		return index.Rows{}, errorf(CodeTimeout, "your previous query was still running. Wait for it, or make it faster")
 	}
@@ -50,21 +50,4 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (in
 		return index.Rows{}, errorf(CodeNotFound, "a vault was removed during the query. Run it again")
 	}
 	return index.Rows{}, err
-}
-
-// queryTurn waits until the user has no other query running, or ctx ends, and returns its release.
-func (b *Base) queryTurn(ctx context.Context, user int64) (func(), error) {
-	b.mu.Lock()
-	turn, ok := b.queries[user]
-	if !ok {
-		turn = make(chan struct{}, 1)
-		b.queries[user] = turn
-	}
-	b.mu.Unlock()
-	select {
-	case turn <- struct{}{}:
-		return func() { <-turn }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
 }

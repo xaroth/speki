@@ -517,7 +517,7 @@ func TestWriteRecoversFromAMissingBlob(t *testing.T) {
 
 func TestWriteLockHonoursTheContext(t *testing.T) {
 	f := newFixture(t)
-	unlock, err := f.base.lock(t.Context(), ours.RepoID)
+	unlock, err := f.base.writes.lock(t.Context(), ours.RepoID)
 	if err != nil {
 		t.Fatal(err)
 	}

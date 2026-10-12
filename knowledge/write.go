@@ -453,7 +453,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 	if err != nil {
 		return Result{}, err
 	}
-	unlock, err := b.lock(ctx, v.RepoID)
+	unlock, err := b.writes.lock(ctx, v.RepoID)
 	if err != nil {
 		return Result{}, err
 	}

@@ -63,7 +63,7 @@ func TestQueryNeedsVaultsPastTen(t *testing.T) {
 
 func TestOneQueryPerUser(t *testing.T) {
 	f := newFixture(t)
-	done, err := f.base.queryTurn(t.Context(), f.grant.User().ID)
+	done, err := f.base.queries.lock(t.Context(), f.grant.User().ID)
 	if err != nil {
 		t.Fatal(err)
 	}
