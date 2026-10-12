@@ -125,7 +125,9 @@ END;
 `
 
 // rebuildFullText fills the full-text tables from documents in one pass. A rebuild reads every document,
-// so the broken ones are taken out after it, as the triggers would have left them out.
+// so the broken ones are taken out after it, as the triggers would have left them out. The tables then
+// differ from documents on purpose: another 'rebuild' would add broken rows back, and the integrity-check
+// that compares against the content table (rank 1) fails.
 const rebuildFullText = `
 INSERT INTO fts (fts) VALUES ('rebuild');
 INSERT INTO names (names) VALUES ('rebuild');
