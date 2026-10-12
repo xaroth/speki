@@ -112,7 +112,7 @@ func (b *Base) open(g *access.Grant, name string) (vault.Vault, Copy, error) {
 	}
 	c, ok := b.vaults.Copy(v.RepoID)
 	if !ok {
-		return vault.Vault{}, nil, noVault(name)
+		return vault.Vault{}, nil, goneVault(v.Name)
 	}
 	return v, c, nil
 }
@@ -176,10 +176,16 @@ func noVault(name string) *Error {
 	return errorf(CodeNotFound, "there's no vault named %q that you can read. Call list without arguments to see your vaults", name)
 }
 
-// indexError turns an index that closed under a request (its vault was just removed) into a not_found.
+// goneVault is the error for a vault in the grant that speki stopped serving since: what list shows as gone.
+func goneVault(name string) *Error {
+	return errorf(CodeUnavailable, "%s was just removed or is reopening. Try again shortly", name)
+}
+
+// indexError turns an index that closed under a request (its vault was just removed or is reopening) into
+// the gone vault's error.
 func indexError(name string, err error) error {
 	if errors.Is(err, index.ErrClosed) {
-		return noVault(name)
+		return goneVault(name)
 	}
 	return fmt.Errorf("%s: %w", name, err)
 }

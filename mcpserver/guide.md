@@ -83,7 +83,8 @@ vault don't cause conflicts.
 ## Errors
 
 A failed call starts with a code. `unavailable` on a vault you named means speki can't serve it right
-now: it's still building its index (try again shortly) or failed to open (tell the user).
+now: it's still building its index, or was just removed or is reopening (try again shortly in both
+cases), or it failed to open (tell the user).
 `read_only_session` means the user connected speki without write access, `no_write_access` that they may
 read that vault but not write to it, and `vault_read_only` that the vault only takes changes through pull
 requests: tell the user in each case. `secret_detected` means GitHub found a secret in the content:

@@ -107,9 +107,11 @@ read doesn't resolve, and the answer is the same `not_found` as for a vault that
 `Readable` and `Vault` only hold served vaults, so nothing queries an index that isn't ready. `Resolve`
 puts the user's readable vaults that are building or failed in `Unavailable`, from the same library
 snapshot and with the same read checks, so `knowledge` can name them as skipped and answer
-`unavailable` for them without revealing vaults the user can't read. When the user has served vaults, a
-read check on an unserved one that fails (other than a revoked sign-in) is logged and leaves that vault
-out, so a vault they can't use yet doesn't turn them away.
+`unavailable` for them without revealing vaults the user can't read. A vault in `Readable` whose copy
+closed since the grant was made (removed, or reopening) is `gone`: `list` shows it so, and naming it
+answers `unavailable` too. When the user has served vaults, a read check on an unserved one that fails
+(other than a revoked sign-in) is logged and leaves that vault out, so a vault they can't use yet doesn't
+turn them away.
 
 Vaults are keyed by repository ID internally, so a renamed or transferred repository keeps its grant,
 its cache entries and its files. People and agents use the `owner/repo` name.

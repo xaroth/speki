@@ -55,7 +55,7 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	case errors.Is(err, index.ErrTooManyWords):
 		return SearchResult{}, errorf(CodeInvalid, "%s. Search for the few words that matter most", err)
 	case errors.Is(err, index.ErrClosed):
-		return SearchResult{}, errorf(CodeNotFound, "a vault was removed during the search. Search again")
+		return SearchResult{}, errorf(CodeUnavailable, "a vault was just removed or is reopening. Search again")
 	case err != nil:
 		return SearchResult{}, err
 	}
