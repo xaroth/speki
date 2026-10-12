@@ -125,11 +125,11 @@ func (r *Resolver) Resolve(ctx context.Context, u User) (*Grant, error) {
 	var writable []int64
 	for _, v := range r.vaults() {
 		a, ok := repos[v.RepoID]
-		if !ok || !a.Pull {
+		if !ok || a.Role < max(v.Config.ReadRole, gh.RoleRead) {
 			continue
 		}
 		readable = append(readable, v)
-		if a.Push {
+		if a.Role >= gh.RoleWrite {
 			writable = append(writable, v.RepoID)
 		}
 	}

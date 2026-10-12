@@ -35,6 +35,7 @@ guidelines: |
 | `title` | yes | Shown in `list` and `guide`. Keep it under 100 characters |
 | `description` | yes | Tells agents what belongs in this vault, so they search and write in the right place. Keep it under 300 characters |
 | `guidelines` | no | Writing rules for agents. Returned by `guide` and when listing the vault. Keep it under 2,000 characters |
+| `read_role` | no | The lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`, `maintain` or `admin` |
 
 Speki ignores unknown keys, so a newer `speki.yaml` doesn't break an older speki.
 
@@ -42,6 +43,23 @@ A `speki.yaml` that doesn't parse, misses a required field, goes over a length l
 KiB is rejected. A new
 vault with a bad file isn't added. An existing vault keeps running with its last good configuration. Either
 way the problem is logged and shown on speki's status page, so an operator can see what's wrong.
+
+## Limiting who sees a vault
+
+By default anyone with read access to the repository sees the vault. In an organisation whose base
+permission is Read, that's every member. To limit a vault to people with a role above that, set
+`read_role`:
+
+```yaml
+read_role: triage
+```
+
+Users below `triage` then don't see the vault at all. Giving the people who should see it the Triage role,
+directly or through a team, keeps them read-only on GitHub except for issues and pull requests. Writing
+still needs `write` or higher.
+
+Anyone who can push to the default branch can change `read_role`. When that matters, protect `speki.yaml`
+with a push ruleset that restricts its path. Speki only writes `.md` files, so the ruleset doesn't block it.
 
 ## What speki reads from a vault
 

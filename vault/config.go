@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/eve-online-tools/speki/gh"
 )
 
 // ConfigFile is the file that makes a repository a vault.
@@ -23,9 +25,10 @@ const (
 
 // Config is a vault's speki.yaml.
 type Config struct {
-	Title       string `yaml:"title"`
-	Description string `yaml:"description"`
-	Guidelines  string `yaml:"guidelines"`
+	Title       string  `yaml:"title"`
+	Description string  `yaml:"description"`
+	Guidelines  string  `yaml:"guidelines"`
+	ReadRole    gh.Role `yaml:"read_role"` // the lowest repository role that sees the vault; unset means read
 }
 
 // ParseConfig reads speki.yaml. Unknown keys are ignored, so a newer file doesn't break an older speki.

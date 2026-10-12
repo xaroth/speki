@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/vault"
 )
@@ -51,10 +53,10 @@ func setup() (*fakeGitHub, *Resolver) {
 	f := &fakeGitHub{
 		members: map[string][]string{"alice": {"ours"}, "alice2": {"ours"}, "bob": {"ours"}, "eve": {"elsewhere"}},
 		repos: map[string][]gh.RepoAccess{
-			"alice":  {{RepoID: 100, Pull: true, Push: true}, {RepoID: 101, Pull: true}, {RepoID: 999, Pull: true}},
-			"alice2": {{RepoID: 100, Pull: true, Push: true}},
-			"bob":    {{RepoID: 999, Pull: true}},
-			"eve":    {{RepoID: 100, Pull: true}},
+			"alice":  {{RepoID: 100, Role: gh.RoleWrite}, {RepoID: 101, Role: gh.RoleRead}, {RepoID: 999, Role: gh.RoleRead}},
+			"alice2": {{RepoID: 100, Role: gh.RoleWrite}},
+			"bob":    {{RepoID: 999, Role: gh.RoleRead}},
+			"eve":    {{RepoID: 100, Role: gh.RoleRead}},
 		},
 		revoked: map[string]bool{},
 	}
@@ -84,6 +86,44 @@ func TestResolve(t *testing.T) {
 	}
 	if g.User().Token != "alice" || g.ReadOnlySession() {
 		t.Errorf("user = %+v", g.User())
+	}
+}
+
+func TestReadRole(t *testing.T) {
+	f := &fakeGitHub{repos: map[string][]gh.RepoAccess{
+		"reader":     {{RepoID: 100, Role: gh.RoleRead}, {RepoID: 101, Role: gh.RoleRead}},
+		"triager":    {{RepoID: 100, Role: gh.RoleTriage}, {RepoID: 101, Role: gh.RoleTriage}},
+		"maintainer": {{RepoID: 100, Role: gh.RoleMaintain}, {RepoID: 101, Role: gh.RoleMaintain}},
+	}}
+	gated := vault.Vault{RepoID: 100, Name: "ours/gated", Config: vault.Config{ReadRole: gh.RoleTriage}}
+	open := vault.Vault{RepoID: 101, Name: "ours/open"}
+	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{gated, open} }, nil)
+	tests := []struct {
+		token    string
+		readable []string
+		writable bool // ours/gated
+	}{
+		{token: "reader", readable: []string{"ours/open"}},
+		{token: "triager", readable: []string{"ours/gated", "ours/open"}},
+		{token: "maintainer", readable: []string{"ours/gated", "ours/open"}, writable: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.token, func(t *testing.T) {
+			g, err := r.Resolve(t.Context(), User{Token: tt.token, Write: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, v := range g.Readable() {
+				names = append(names, v.Name)
+			}
+			if diff := cmp.Diff(tt.readable, names); diff != "" {
+				t.Errorf("readable (-want +got):\n%s", diff)
+			}
+			if g.CanWrite(100) != tt.writable {
+				t.Errorf("CanWrite(ours/gated) = %v", g.CanWrite(100))
+			}
+		})
 	}
 }
 

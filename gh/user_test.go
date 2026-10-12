@@ -56,9 +56,11 @@ func fakeUserGitHub(t *testing.T) *httptest.Server {
 		case "/user/installations":
 			write(http.StatusOK, map[string]any{"total_count": 1, "installations": []any{map[string]any{"id": 1}}})
 		case "/user/installations/1/repositories":
-			write(http.StatusOK, map[string]any{"total_count": 2, "repositories": []any{
-				map[string]any{"id": 100, "permissions": map[string]any{"pull": true, "push": true}},
+			write(http.StatusOK, map[string]any{"total_count": 4, "repositories": []any{
+				map[string]any{"id": 100, "permissions": map[string]any{"pull": true, "triage": true, "push": true}},
 				map[string]any{"id": 101, "permissions": map[string]any{"pull": true}},
+				map[string]any{"id": 102, "permissions": map[string]any{"pull": true, "triage": true}},
+				map[string]any{"id": 103, "permissions": map[string]any{"admin": true, "maintain": true, "push": true, "triage": true, "pull": true}},
 			}})
 		case "/repos/ours/kb/commits":
 			q := r.URL.Query()
@@ -163,7 +165,12 @@ func TestUserLookups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []RepoAccess{{RepoID: 100, Pull: true, Push: true}, {RepoID: 101, Pull: true}}
+	want := []RepoAccess{
+		{RepoID: 100, Role: RoleWrite},
+		{RepoID: 101, Role: RoleRead},
+		{RepoID: 102, Role: RoleTriage},
+		{RepoID: 103, Role: RoleAdmin},
+	}
 	if diff := cmp.Diff(want, repos); diff != "" {
 		t.Errorf("repositories (-want +got):\n%s", diff)
 	}
@@ -185,5 +192,23 @@ func TestCommits(t *testing.T) {
 	_, err = c.Commits(t.Context(), "ghu_revoked", "ours/kb", "main", "", 2)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("revoked token: %v", err)
+	}
+}
+
+func TestRoleText(t *testing.T) {
+	for r := RoleNone; r <= RoleAdmin; r++ {
+		raw, err := r.MarshalText()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got Role
+		err = got.UnmarshalText(raw)
+		if err != nil || got != r {
+			t.Errorf("%s round-tripped to %s, %v", r, got, err)
+		}
+	}
+	var r Role
+	if err := r.UnmarshalText([]byte("owner")); err == nil {
+		t.Error("unknown role accepted")
 	}
 }
