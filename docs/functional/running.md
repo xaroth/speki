@@ -94,7 +94,7 @@ variables win over the YAML file, including over a secret file it names, which t
 Speki refuses to start when something required is missing or a value is invalid, and lists every such
 key at once.
 
-Settings you can leave out:
+Common settings you can leave out:
 
 | Key | Default |
 |---|---|

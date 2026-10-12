@@ -6,8 +6,8 @@
    repositories" and select it.
 2. Add a `speki.yaml` file to the root of the default branch.
 
-Speki checks for new vaults every 5 minutes (`sync.discovery_interval`). A new vault becomes searchable once speki has cloned and
-indexed it, usually within a minute after that.
+Speki checks for new vaults every 5 minutes (`sync.discovery_interval`). A new vault becomes searchable
+once speki has cloned and indexed it, usually within a minute after that.
 
 Both steps are needed. Installing the app on "all repositories" doesn't turn every repository into a vault.
 Adding `speki.yaml` to a repository without the app does nothing either.

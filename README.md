@@ -16,7 +16,12 @@ it over MCP (Model Context Protocol). GitHub decides who can see and change what
 Speki is a single Go binary. Building it needs Go and a C compiler (the search index uses SQLite):
 
 ```sh
-task build                       # or:
+task build
+```
+
+Without [Task](https://taskfile.dev):
+
+```sh
 CGO_ENABLED=1 go build -tags 'sqlite_fts5,sqlite_omit_load_extension' -o bin/speki ./cmd/speki
 ```
 
@@ -30,7 +35,8 @@ To run it you need a GitHub App, a configuration file and a secret key.
 [docs/functional/running.md](docs/functional/running.md) walks through all three.
 [config.example.yaml](config.example.yaml) is a starting point for the configuration.
 
-Then turn a repository into a vault ([vaults.md](docs/functional/vaults.md)) and connect a client:
+Once speki is running at its public URL, turn a repository into a vault
+([vaults.md](docs/functional/vaults.md)) and connect a client:
 
 ```sh
 claude mcp add --transport http speki https://speki.example.com/mcp
