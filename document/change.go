@@ -36,8 +36,8 @@ func Check(current, next *Document) error {
 }
 
 // Touch sets updated to now in the frontmatter, and created to created unless that's zero. It returns the
-// new file and leaves d unchanged. Only the frontmatter block is rewritten: the
-// body is kept byte for byte, and the frontmatter keeps its line endings.
+// new file and leaves d unchanged. Only the frontmatter block is rewritten: the body is kept byte for
+// byte, and the frontmatter keeps its line endings.
 func (d *Document) Touch(now, created time.Time) ([]byte, error) {
 	f := d.front
 	body := []byte(d.Body)
