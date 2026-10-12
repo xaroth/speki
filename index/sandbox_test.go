@@ -383,6 +383,70 @@ func TestQueryMemoryLimit(t *testing.T) {
 	}
 }
 
+// A heavy query is stopped at the sandbox budget, below the hard limit, so searches keep getting memory.
+func TestQueryMemoryBudget(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	setQueryMemoryBudget(32 << 20)
+	defer setQueryMemoryBudget(queryMemoryBudget)
+	done := make(chan error, 1)
+	go func() {
+		_, err := runQuery(t, sb, sources, "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 5000) SELECT x, printf('%.*c', 90000, 'a') AS s FROM c ORDER BY s, x DESC")
+		done <- err
+	}()
+	for {
+		_, err := Search(t.Context(), sources, "cache", Options{})
+		if err != nil {
+			t.Errorf("search during the query: %v", err)
+		}
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrQueryTooLarge) || !strings.Contains(err.Error(), "memory") {
+				t.Errorf("error = %v", err)
+			}
+			return
+		default:
+		}
+	}
+}
+
+// A query doesn't start while SQLite is already past the budget.
+func TestQueryShortOfMemory(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	setQueryMemoryBudget(1)
+	defer setQueryMemoryBudget(queryMemoryBudget)
+	_, err := runQuery(t, sb, sources, "SELECT 1")
+	if !errors.Is(err, ErrQueryBusy) {
+		t.Errorf("error = %v", err)
+	}
+}
+
+// Past sandboxConns running queries, the next one waits briefly, then gives up as busy.
+func TestQueryBusy(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	sb.wait = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), QueryTimeout)
+	defer cancel()
+	var wg sync.WaitGroup
+	for range sandboxConns {
+		wg.Go(func() {
+			_, _ = sb.Query(ctx, sources, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n")
+		})
+	}
+	for len(sb.slots) < sandboxConns {
+		time.Sleep(time.Millisecond)
+	}
+	_, err := runQuery(t, sb, sources, "SELECT 1")
+	if !errors.Is(err, ErrQueryBusy) {
+		t.Errorf("error = %v", err)
+	}
+	cancel()
+	wg.Wait()
+	_, err = runQuery(t, sb, sources, "SELECT 1")
+	if err != nil {
+		t.Errorf("after the others ended: %v", err)
+	}
+}
+
 func TestQueryErrorNamesVaults(t *testing.T) {
 	sb, sources, _ := sandboxFixture(t)
 	_, err := runQuery(t, sb, sources, "SELECT * FROM v0.nosuch")

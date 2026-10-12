@@ -151,6 +151,9 @@ ORDER BY d.updated DESC LIMIT 20;
 - No `PRAGMA`, `ATTACH`, writes, or temporary tables.
 - 500 rows, 1 MiB of results, 3 seconds, one query per user at a time. `truncated` tells you when rows
   were cut.
+- A memory budget shared by all queries. A query that needs more fails with `too_large`; narrow it down.
+- Two queries running at once across all users. Past that, a query waits up to a second, then fails with
+  `unavailable`; try again in a few seconds.
 - At most 10 vaults per query.
 
 Bad SQL returns `invalid` with SQLite's message about the syntax. Speki strips names of internal tables
