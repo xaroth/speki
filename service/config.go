@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/telemetry"
 )
@@ -34,6 +35,7 @@ type Config struct {
 	Redis         Redis     `yaml:"redis"`
 	Telemetry     Telemetry `yaml:"telemetry"`
 	Instance      Instance  `yaml:"instance"`
+	SQLite        SQLite    `yaml:"sqlite"`
 
 	// Version is speki's version, shown to MCP clients. Not configuration: cmd/speki sets it.
 	Version string `yaml:"-"`
@@ -90,6 +92,15 @@ type Sync struct {
 	DataDir           string        `yaml:"data_dir"`
 	PollInterval      time.Duration `yaml:"poll_interval"`
 	DiscoveryInterval time.Duration `yaml:"discovery_interval"`
+}
+
+// SQLite sets the memory limits of the SQLite in speki, for the whole process, in MiB.
+type SQLite struct {
+	// MemoryLimit is where SQLite's allocations fail. Searches and index builds fail past it too.
+	MemoryLimit int64 `yaml:"memory_limit_mib"`
+	// QueryMemory is where agents' SQL queries are stopped, below MemoryLimit so searches and index
+	// builds keep the rest.
+	QueryMemory int64 `yaml:"query_memory_mib"`
 }
 
 // Redis is the shared store that lets several instances run side by side. Without it, speki runs as a
@@ -160,6 +171,12 @@ func (c Config) withDefaults() Config {
 	if c.Sync.DiscoveryInterval == 0 {
 		c.Sync.DiscoveryInterval = 5 * time.Minute
 	}
+	if c.SQLite.MemoryLimit == 0 {
+		c.SQLite.MemoryLimit = index.DefaultMemoryLimit
+	}
+	if c.SQLite.QueryMemory == 0 {
+		c.SQLite.QueryMemory = index.DefaultQueryMemory
+	}
 	if c.Telemetry.LogLevel == "" {
 		c.Telemetry.LogLevel = "info"
 	}
@@ -208,6 +225,12 @@ func (c Config) validate() error {
 	}
 	if c.Sync.DiscoveryInterval < 0 {
 		errs = append(errs, errors.New("sync.discovery_interval must be positive"))
+	}
+	if c.SQLite.MemoryLimit < 128 {
+		errs = append(errs, errors.New("sqlite.memory_limit_mib must be at least 128"))
+	}
+	if c.SQLite.QueryMemory <= 0 || c.SQLite.QueryMemory > c.SQLite.MemoryLimit*3/4 {
+		errs = append(errs, errors.New("sqlite.query_memory_mib must be positive and at most 3/4 of sqlite.memory_limit_mib, so searches and index builds keep some"))
 	}
 	if c.Instance.Name != "" && !instanceName.MatchString(c.Instance.Name) {
 		errs = append(errs, fmt.Errorf("instance.name: %q must be lower-case letters, digits and dashes, at most 32", c.Instance.Name))

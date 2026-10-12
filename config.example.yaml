@@ -45,6 +45,13 @@ telemetry:
   # OpenTelemetry traces, sent where the standard OTEL_EXPORTER_OTLP_* variables say.
   # tracing: false
 
+# SQLite's memory limits for the whole process, in MiB. Agents' SQL queries are stopped at
+# query_memory_mib (at most 3/4 of the limit), so searches and index builds keep the rest.
+# Keep memory_limit_mib well under the container's memory limit.
+# sqlite:
+#   memory_limit_mib: 1024
+#   query_memory_mib: 384
+
 # Optional: what this speki is, for people who connect to more than one.
 # instance:
 #   name: work                       # the server is called speki-work

@@ -107,6 +107,12 @@ Common settings you can leave out:
 | `sync.poll_interval` | `1m` |
 | `sync.discovery_interval` | `5m` |
 | `telemetry.log_level` | `info` (also `debug`, `warn`, `error`) |
+| `sqlite.memory_limit_mib` | `1024`: SQLite's memory limit for the whole process. Searches, index builds and queries fail past it. At least 128 |
+| `sqlite.query_memory_mib` | `384`: where agents' SQL queries are stopped with `too_large`. At most 3/4 of `sqlite.memory_limit_mib` |
+
+Size `sqlite.memory_limit_mib` to fit well under the container's memory limit, next to git and Go's own
+memory. Raise `sqlite.query_memory_mib` if agents' queries often fail with `too_large`, and lower it if
+searches or syncs fail with out-of-memory errors while queries run.
 
 `public_url` must be https, except for `http://localhost` or `http://127.0.0.1` during development, and
 has no path.

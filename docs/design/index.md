@@ -293,14 +293,16 @@ query's own reads of `v0.documents` from FTS5's reads of the same table, since g
 the view a read comes from. That's no leak, since only the user's own vaults are attached. `schema.md`
 tells agents the views are the interface and the tables behind them may change.
 
-Memory: `index` sets `sqlite3_soft_heap_limit64` (512 MiB), so SQLite releases cache memory under
-pressure, and `sqlite3_hard_heap_limit64` (1 GiB), so an allocation past that fails with `SQLITE_NOMEM`.
-The hard limit is what stops one query from growing the process: in-memory sorts and recursive queries
-don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes within the time limit.
-Both limits are for the whole process, so queries are stopped well before the hard limit: the hardening
-hook below also sets a progress handler on sandbox connections that, every 1,000 instructions, interrupts
-the query once SQLite's memory passes 384 MiB. That leaves the rest for searches and index builds. A query
-interrupted while its context is still live was stopped by the budget and fails with `too_large`. The
+Memory: `index.SetMemoryLimits`, called by `service.New` from `sqlite.memory_limit_mib` (default 1 GiB)
+and `sqlite.query_memory_mib` (default 384 MiB), sets `sqlite3_hard_heap_limit64`, so an allocation past
+the limit fails with `SQLITE_NOMEM`, and `sqlite3_soft_heap_limit64` at half of it, so SQLite releases
+cache memory under pressure. The hard limit is what stops one query from growing the process: in-memory
+sorts and recursive queries don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes
+within the time limit. Both limits are for the whole process, so queries are stopped well before the hard
+limit: the hardening hook below also sets a progress handler on sandbox connections that, every 1,000
+instructions, interrupts the query once SQLite's memory passes the query budget. That leaves the rest for
+searches and index builds. A query interrupted while its context is still live was stopped by the budget
+and fails with `too_large`. The
 check counts all of SQLite's memory, so a query can be stopped for another's usage; the 2 slots keep that
 rare.
 

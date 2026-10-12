@@ -73,6 +73,16 @@ func TestNewRejectsBadConfig(t *testing.T) {
 			want: []string{"metrics_listen", "log_level", "app_id", "private_key", "client_id", "public_url", "auth.keys"},
 		},
 		{
+			name: "query memory over 3/4 of the limit",
+			cfg:  with(func(c *Config) { c.SQLite.MemoryLimit, c.SQLite.QueryMemory = 512, 400 }),
+			want: []string{"sqlite.query_memory_mib"},
+		},
+		{
+			name: "tiny memory limit",
+			cfg:  with(func(c *Config) { c.SQLite.MemoryLimit = 64 }),
+			want: []string{"sqlite.memory_limit_mib"},
+		},
+		{
 			name: "bad private key",
 			cfg:  with(func(c *Config) { c.GitHub.PrivateKey = "not a key" }),
 			want: []string{"github.private_key"},
@@ -165,7 +175,8 @@ func TestNewDefaults(t *testing.T) {
 	if c.Listen != ":8080" || c.MetricsListen != ":9090" || c.Telemetry.LogLevel != "info" ||
 		c.GitHub.GitURL != "https://github.com" || c.Sync.DataDir != "data" ||
 		c.Sync.PollInterval != time.Minute || c.Sync.DiscoveryInterval != 5*time.Minute ||
-		c.GitHub.OAuthURL != "https://github.com" || c.Auth.ClientMetadataHosts[0] != "claude.ai" {
+		c.GitHub.OAuthURL != "https://github.com" || c.Auth.ClientMetadataHosts[0] != "claude.ai" ||
+		c.SQLite.MemoryLimit != 1024 || c.SQLite.QueryMemory != 384 {
 		t.Errorf("defaults not applied: %+v", c)
 	}
 }
