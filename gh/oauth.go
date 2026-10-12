@@ -166,7 +166,9 @@ func (c *Client) postToken(ctx context.Context, o OAuthConfig, form url.Values) 
 // postTokenOnce makes one token request. sent reports whether the transport began writing it: from then
 // on, GitHub may have it.
 func (c *Client) postTokenOnce(ctx context.Context, o OAuthConfig, form url.Values) (*http.Response, bool, error) {
-	var sent, handshakeFailed atomic.Bool // the transport may call the trace from its own goroutines
+	// The transport may call the trace from its own goroutines.
+	var sent atomic.Bool
+	var handshakeFailed atomic.Bool
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
 		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
 			if err != nil {

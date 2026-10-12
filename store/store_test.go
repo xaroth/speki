@@ -17,6 +17,7 @@ type kv interface {
 	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Get(ctx context.Context, key string) ([]byte, bool, error)
+	GetDel(ctx context.Context, key string) ([]byte, bool, error)
 	Release(ctx context.Context, key string, value []byte) error
 }
 
@@ -87,6 +88,25 @@ func testValues(t *testing.T, s kv, advance func(time.Duration)) {
 	must(err)
 	if found {
 		t.Error("the owner's release left the lock")
+	}
+
+	must(s.Set(ctx, "marker", []byte("m"), time.Minute))
+	v, found, err = s.GetDel(ctx, "marker")
+	must(err)
+	if !found || string(v) != "m" {
+		t.Errorf("GetDel = %q, %v", v, found)
+	}
+	_, found, err = s.GetDel(ctx, "marker")
+	must(err)
+	if found {
+		t.Error("second GetDel found the value")
+	}
+	must(s.Set(ctx, "marker", []byte("m"), time.Second))
+	advance(2 * time.Second)
+	_, found, err = s.GetDel(ctx, "marker")
+	must(err)
+	if found {
+		t.Error("GetDel found an expired value")
 	}
 }
 

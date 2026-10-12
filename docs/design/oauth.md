@@ -197,7 +197,8 @@ period for the old one, so the client's retry may get `invalid_grant` and the us
 Speki can't prevent that, only make it rare and visible: it remembers such a refresh for 10 minutes under
 the token's hash (no token material), and when GitHub then refuses the same token, it logs a warning,
 `refresh lost to GitHub timeout`, and counts it in `speki_refreshes_total{result="lost_to_timeout"}`
-instead of as an ordinary sign-out.
+instead of as an ordinary sign-out. The marker is taken atomically (`GETDEL`), so each lost token counts
+once, and a successful refresh with the token removes it: GitHub hadn't spent the token after all.
 
 The lock, the results and these markers are in the store. With the memory store each instance has its
 own, so two instances refreshing one token both ask GitHub, and the second signs the user out. Speki

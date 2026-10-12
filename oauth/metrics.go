@@ -13,6 +13,8 @@ var signIns = promauto.NewCounterVec(prometheus.CounterOpts{
 var refreshes = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "speki_refreshes_total",
 	Help: "Token refreshes, by result: ok, shared (another request's result for the same token), " +
-		"github_failed (no usable answer from GitHub), signed_out (GitHub refused the token) or " +
-		"lost_to_timeout (GitHub refused a token whose earlier refresh got no answer).",
+		"unreached (GitHub couldn't be reached), no_answer (the request may have reached GitHub, but no " +
+		"usable answer came back), app_config (GitHub refused the app's OAuth settings), signed_out " +
+		"(GitHub refused the token) or lost_to_timeout (GitHub refused a token whose earlier refresh got " +
+		"no answer).",
 }, []string{"result"})

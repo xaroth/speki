@@ -448,7 +448,7 @@ func TestRefreshWhileGitHubIsDownIsTemporary(t *testing.T) {
 // The GitHub call ends before the lock does, with time left to keep the result, and the result outlives
 // the lock, so a request waiting on the lock finds it.
 func TestRefreshTimings(t *testing.T) {
-	if githubRefreshTimeout+3*time.Second > refreshLockTime {
+	if githubRefreshTimeout+5*time.Second > refreshLockTime {
 		t.Errorf("GitHub timeout %v leaves too little of the %v lock", githubRefreshTimeout, refreshLockTime)
 	}
 	if refreshResultTime <= refreshLockTime {
@@ -534,9 +534,46 @@ func TestRefreshLostToGitHubTimeout(t *testing.T) {
 				if strings.Contains(logs.String(), rv.Refresh) {
 					t.Error("the GitHub refresh token was logged")
 				}
+
+				// Each lost token counts once: a client trying again is signed out as usual.
+				lost = refreshCount("lost_to_timeout")
+				_, _ = h.tokens(form)
+				if got := refreshCount("lost_to_timeout") - lost; got != 0 {
+					t.Errorf("a second refusal counted %v more lost", got)
+				}
 			})
 		})
 	}
+}
+
+// When GitHub hadn't spent the token after all and a retry refreshes it, a later refusal of that token
+// (a stale client, a replay) is an ordinary sign-out.
+func TestRefreshAfterNoAnswerClearsTheMarker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		clientID, first := h.signedIn()
+		form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
+		h.github.down = true // fails before GitHub spends the token
+		if _, rec := h.tokens(form); rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("first refresh: %d %s", rec.Code, rec.Body)
+		}
+		h.github.down = false
+		if _, rec := h.tokens(form); rec.Code != http.StatusOK {
+			t.Fatalf("retry: %d %s", rec.Code, rec.Body)
+		}
+		if _, found, _ := h.s.store.Get(t.Context(), unknownOutcomeKey(hash(first.RefreshToken))); found {
+			t.Error("the marker outlived the successful refresh")
+		}
+		time.Sleep(refreshResultTime + time.Second) // the stored result expires
+
+		lost, signedOut := refreshCount("lost_to_timeout"), refreshCount("signed_out")
+		if _, rec := h.tokens(form); rec.Code != http.StatusBadRequest {
+			t.Errorf("refresh with the spent token: %d %s", rec.Code, rec.Body)
+		}
+		if refreshCount("lost_to_timeout") != lost || refreshCount("signed_out") != signedOut+1 {
+			t.Error("not counted as an ordinary sign-out")
+		}
+	})
 }
 
 func TestRefreshRejects(t *testing.T) {

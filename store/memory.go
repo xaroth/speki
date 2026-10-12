@@ -61,6 +61,20 @@ func (m *Memory) Get(_ context.Context, key string) ([]byte, bool, error) {
 	return e.value, true, nil
 }
 
+// GetDel returns the value of key, and whether there is one, and removes it. Of several callers, one
+// gets the value.
+func (m *Memory) GetDel(_ context.Context, key string) ([]byte, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.cleanLocked()
+	e, ok := m.values[key]
+	delete(m.values, key)
+	if !ok || !now.Before(e.expires) {
+		return nil, false, nil
+	}
+	return e.value, true, nil
+}
+
 // Release removes key only while it still holds value.
 func (m *Memory) Release(_ context.Context, key string, value []byte) error {
 	m.mu.Lock()

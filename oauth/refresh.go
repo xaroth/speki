@@ -118,7 +118,7 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 	}
 	if errors.Is(err, gh.ErrAppConfig) {
 		s.logger.ErrorContext(ctx, "GitHub refresh failed", "err", err)
-		refreshes.WithLabelValues("github_failed").Inc()
+		refreshes.WithLabelValues("app_config").Inc()
 		return tokenResponse{}, &refreshError{
 			status:      http.StatusServiceUnavailable,
 			code:        "temporarily_unavailable",
@@ -127,13 +127,15 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 	}
 	if err != nil {
 		s.logger.WarnContext(ctx, "GitHub refresh failed", "err", err)
-		refreshes.WithLabelValues("github_failed").Inc()
-		if !errors.Is(err, gh.ErrUnreached) {
+		if errors.Is(err, gh.ErrUnreached) {
+			refreshes.WithLabelValues("unreached").Inc()
+		} else {
 			// GitHub may have spent the refresh token without speki hearing back. The retry will then
 			// be refused; the marker lets it tell that apart from an ordinary sign-out.
+			refreshes.WithLabelValues("no_answer").Inc()
 			mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			defer cancel()
-			_ = s.store.Set(mctx, "refresh-unknown:"+key, []byte(unknownOutcome), unknownOutcomeTime)
+			_ = s.store.Set(mctx, unknownOutcomeKey(key), []byte(unknownOutcome), unknownOutcomeTime)
 		}
 		return tokenResponse{}, &refreshError{
 			status:      http.StatusServiceUnavailable,
@@ -166,6 +168,11 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 			keepLock = true
 		}
 	}
+	// GitHub hadn't spent the token when an earlier refresh got no answer: a later refusal of it is an
+	// ordinary sign-out.
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	_, _, _ = s.store.GetDel(dctx, unknownOutcomeKey(key))
 	return resp, nil
 }
 
@@ -208,16 +215,16 @@ const unknownOutcome = "unknown"
 func (s *Server) signedOut(ctx context.Context, key, login string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
-	marker := "refresh-unknown:" + key
-	_, found, err := s.store.Get(ctx, marker)
+	_, found, err := s.store.GetDel(ctx, unknownOutcomeKey(key)) // taken, so each lost token counts once
 	if err != nil || !found {
 		refreshes.WithLabelValues("signed_out").Inc()
 		return
 	}
 	s.logger.WarnContext(ctx, "refresh lost to GitHub timeout", "login", login)
 	refreshes.WithLabelValues("lost_to_timeout").Inc()
-	_ = s.store.Release(ctx, marker, []byte(unknownOutcome)) // count each lost token once
 }
+
+func unknownOutcomeKey(key string) string { return "refresh-unknown:" + key }
 
 // sameScopes reports whether a and b hold the same scopes, in any order.
 func sameScopes(a, b []string) bool {

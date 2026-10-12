@@ -85,6 +85,19 @@ func (r *Redis) Get(ctx context.Context, key string) ([]byte, bool, error) {
 	return v, true, nil
 }
 
+// GetDel returns the value of key, and whether there is one, and removes it. Of several callers, one
+// gets the value.
+func (r *Redis) GetDel(ctx context.Context, key string) ([]byte, bool, error) {
+	v, err := r.client.GetDel(ctx, keyPrefix+key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("redis getdel: %w", err)
+	}
+	return v, true, nil
+}
+
 // releaseScript deletes a key only while it holds the given value.
 var releaseScript = redis.NewScript(`if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0`)
 

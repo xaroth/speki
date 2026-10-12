@@ -98,7 +98,7 @@ Names:
 | `speki_vault_fresh_timestamp_seconds` | gauge | `vault`. Unix time when speki last confirmed the index matches GitHub's head |
 | `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, deferred, failed) |
 | `speki_signins_total` | counter | `result` |
-| `speki_refreshes_total` | counter | `result` (ok, shared, github_failed, signed_out, lost_to_timeout). `lost_to_timeout` is a sign-out caused by an earlier GitHub refresh that got no answer ([oauth.md](oauth.md#refreshing)) |
+| `speki_refreshes_total` | counter | `result` (ok, shared, unreached, no_answer, app_config, signed_out, lost_to_timeout). `lost_to_timeout` is a sign-out caused by an earlier GitHub refresh that got no answer ([oauth.md](oauth.md#refreshing)) |
 
 The vault gauges are written from the library's status at startup, after every poll round and
 discovery update, and on shutdown, so they lag by a poll round at most. Alert on
@@ -115,7 +115,8 @@ building, failed), index commit, document count and size, a warning when it's la
 for, last successful sync, when the index was last confirmed current, and last error. `problems` lists
 the repositories whose `speki.yaml` couldn't be used, with the reason. `warnings` lists configuration
 warnings: today only the memory store, which allows one instance. It's the first place to look when
-someone says "my vault isn't showing up". Like `/metrics`, it's for operators only and shouldn't be exposed publicly.
+someone says "my vault isn't showing up". Like `/metrics`, it's for operators only and shouldn't be
+exposed publicly.
 
 ## Tracing
 

@@ -480,6 +480,7 @@ type sharedStore interface {
 	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Get(ctx context.Context, key string) ([]byte, bool, error)
+	GetDel(ctx context.Context, key string) ([]byte, bool, error)
 	Release(ctx context.Context, key string, value []byte) error
 	Publish(ctx context.Context, repoID int64, commit string) error
 	Subscribe(ctx context.Context, f func(repoID int64, commit string)) error
