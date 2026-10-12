@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in to speki</title>
+<style>
+@font-face { font-family: "Alegreya"; font-weight: 400 700; font-display: swap; src: url(/oauth/fonts/alegreya.woff2) format("woff2"); }
+@font-face { font-family: "Alegreya Sans"; font-weight: 400; font-display: swap; src: url(/oauth/fonts/alegreya-sans.woff2) format("woff2"); }
+@font-face { font-family: "Alegreya Sans"; font-weight: 400; font-style: italic; font-display: swap; src: url(/oauth/fonts/alegreya-sans-italic.woff2) format("woff2"); }
+@font-face { font-family: "Alegreya Sans"; font-weight: 700; font-display: swap; src: url(/oauth/fonts/alegreya-sans-bold.woff2) format("woff2"); }
+:root { --paper: #fffefa; --ink: #22252e; --muted: #61646f; --indigo: #34407a; --red: #9b3b2e; --line: #e3e1da; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.55 "Alegreya Sans", system-ui, sans-serif; }
+.page { display: grid; grid-template-columns: 9rem minmax(0, 34rem); max-width: 45rem; min-height: 100vh; margin: 0 auto; }
+.margin { padding: 3rem 1.25rem 0 0; border-right: 1px solid var(--line); color: var(--muted); font-size: .9rem; line-height: 1.45; }
+.mark { margin: 0 0 2.75rem; color: var(--ink); font: 700 1.2rem/1.2 "Alegreya", Georgia, serif; overflow-wrap: anywhere; }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.steps li { margin-bottom: .9rem; font-style: italic; counter-increment: step; }
+.steps li::before { content: counter(step, lower-roman) ". "; font-style: normal; }
+.steps li[aria-current] { color: var(--indigo); font-style: normal; font-weight: 700; }
+.failed li[aria-current] { color: var(--red); }
+main { padding: 3rem 0 3rem 2.25rem; }
+h1 { margin: 2rem 0 1.1rem; font: 700 2rem/1.15 "Alegreya", Georgia, serif; }
+p { margin: 0 0 .9rem; }
+.big { font-size: 1.1rem; }
+.note { color: var(--muted); font-size: .95rem; }
+.aside { margin: 1.1rem 0 1.4rem; padding-left: .8rem; border-left: 2px solid var(--indigo); color: var(--muted); font-style: italic; }
+.aside strong { font-style: normal; }
+.warn, .failed ~ main .aside { border-color: var(--red); }
+fieldset { margin: 1.4rem 0 0; padding: 0; border: 0; border-bottom: 1px solid var(--line); }
+legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+label { display: flex; gap: .75rem; padding: .7rem 0; border-top: 1px solid var(--line); cursor: pointer; }
+label span { color: var(--muted); font-size: .93rem; }
+label strong { display: block; color: var(--ink); font-size: 1.075em; }
+input[type=radio] { width: 1.05rem; height: 1.05rem; margin: .25rem 0 0; flex: none; accent-color: var(--indigo); }
+.actions { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: center; margin-top: 1.6rem; }
+button { font: inherit; cursor: pointer; }
+.continue { padding: .6rem 1.15rem; border: 0; border-radius: 3px; background: var(--indigo); color: #fff; font-weight: 700; }
+.cancel { padding: 0; border: 0; background: none; color: var(--indigo); text-decoration: underline; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--indigo); outline-offset: 3px; }
+@media (max-width: 40rem) {
+  .page { display: block; padding: 0 1.25rem; }
+  .margin { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: 1.25rem 0 .9rem; border-right: 0; border-bottom: 1px solid var(--line); }
+  .mark { margin: 0; }
+  .steps li { margin: 0; }
+  .steps li:not([aria-current]) { display: none; }
+  main { padding: 1.75rem 0 2.5rem; }
+  h1 { margin-top: 0; font-size: 1.75rem; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+<aside class="margin">
+<p class="mark">speki</p>
+<ol class="steps" aria-label="Signing in">
+<li aria-current="step">Choose access</li>
+<li>Sign in with GitHub</li>
+<li>Back to your program</li>
+</ol>
+</aside>
+<main>
+<h1>Sign in to speki</h1>
+
+<p class="big">A program on this computer wants access to speki. It calls itself <strong>Claude Code</strong>,
+but programs can call themselves anything.</p>
+<p class="aside warn">Only continue if you just started signing in from your own tool, like Claude Code.</p>
+
+<p class="note">After signing in with GitHub, you'll be sent back to <strong>127.0.0.1:6000</strong>.</p>
+<form method="post" action="/oauth/authorize">
+<input type="hidden" name="consent" value="SEALED">
+<fieldset>
+<legend>Access</legend>
+<label><input type="radio" name="access" value="write" checked> <span><strong>Read and write</strong>
+Search, read and change knowledge in the vaults you can push to</span></label>
+<label><input type="radio" name="access" value="read"> <span><strong>Read only</strong>
+Search and read, never change anything</span></label>
+</fieldset>
+<p class="actions">
+<button class="continue" type="submit" name="decision" value="allow">Continue to GitHub</button>
+<button class="cancel" type="submit" name="decision" value="deny">Cancel</button>
+</p>
+</form>
+</main>
+</div>
+</body>
+</html>
