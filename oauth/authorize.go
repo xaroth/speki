@@ -203,8 +203,8 @@ type Refusal struct{ Reason string }
 
 func (r *Refusal) Error() string { return r.Reason }
 
-// callback is where GitHub sends the user back. It exchanges GitHub's code for the user's tokens and
-// returns speki's own code to the client.
+// callback is where GitHub sends the user back. It exchanges GitHub's code, checks the user may get in,
+// and sends the user back to the client with speki's own code.
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	nonce := q.Get("state")

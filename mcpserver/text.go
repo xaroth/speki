@@ -88,7 +88,7 @@ func ignorable(r rune) bool {
 	return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Mn, unicode.Me, unicode.Z)
 }
 
-// lookAlikes covers homoglyphs of the fence names' letters that NFKC doesn't fold.
+// lookAlikes maps homoglyphs of the fence names' letters to the letters.
 var lookAlikes = map[rune]rune{
 	'а': 'a', 'с': 'c', 'ԁ': 'd', 'е': 'e', 'ё': 'e', 'ɡ': 'g', 'һ': 'h', 'і': 'i', 'ӏ': 'l', 'ⅼ': 'l',
 	'м': 'm', 'п': 'n', 'о': 'o', 'ο': 'o', 'ѕ': 's', 'т': 't', 'υ': 'u', 'ս': 'u', 'ı': 'i', 'ℓ': 'l',
