@@ -584,6 +584,16 @@ func TestClosedIndex(t *testing.T) {
 	wantCode(t, err, CodeUnavailable)
 	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb"})
 	wantCode(t, err, CodeUnavailable)
+	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}})
+	wantCode(t, err, CodeUnavailable)
+	if !strings.Contains(err.Error(), "just removed or is reopening") {
+		t.Errorf("error = %v", err)
+	}
+	_, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/kb"}})
+	wantCode(t, err, CodeUnavailable)
+	if !strings.Contains(err.Error(), "just removed or is reopening") {
+		t.Errorf("error = %v", err)
+	}
 	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: "README.md", Version: "x"})
 	wantCode(t, err, CodeUnavailable)
 	if len(f.github.requests) != 0 {

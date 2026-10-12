@@ -55,7 +55,7 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (Qu
 	case errors.Is(err, index.ErrQueryBusy):
 		return QueryResult{}, errorf(CodeUnavailable, "%s. Try again in a few seconds", strings.TrimPrefix(err.Error(), index.ErrQueryBusy.Error()+": "))
 	case errors.Is(err, index.ErrClosed):
-		return QueryResult{}, errorf(CodeNotFound, "a vault was removed during the query. Run it again")
+		return QueryResult{}, errorf(CodeUnavailable, "a vault was just removed or is reopening. Run the query again")
 	}
 	return QueryResult{}, err
 }
