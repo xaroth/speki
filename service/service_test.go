@@ -86,6 +86,16 @@ func TestNewRejectsBadConfig(t *testing.T) {
 			want: []string{"auth.keys"},
 		},
 		{
+			name: "bad single key",
+			cfg:  with(func(c *Config) { c.Auth.Keys, c.Auth.Key = "", "c2hvcnQ=" }),
+			want: []string{"auth.key:", "at least 32"},
+		},
+		{
+			name: "single key and key file",
+			cfg:  with(func(c *Config) { c.Auth.Key = testSecret() }),
+			want: []string{"auth.key and auth.keys are both set"},
+		},
+		{
 			name: "bad keys reported together",
 			cfg: with(func(c *Config) {
 				c.GitHub.PrivateKey, c.Auth.Keys, c.Telemetry.LogLevel = "not a key", "keys: []", "loud"
@@ -132,6 +142,15 @@ func TestNewRejectsBadConfig(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNewWithSingleKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Auth = Auth{Key: testSecret()}
+	_, err := New(cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
 	}
 }
 

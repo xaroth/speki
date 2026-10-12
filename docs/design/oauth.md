@@ -212,6 +212,10 @@ handler, and few clients handle it today.
 without exactly one primary key, with keys shorter than 32 bytes, or with duplicate IDs. Every instance in
 a cluster must have the same key file. A token sealed by one instance opens on any other.
 
+`auth.key` is the alternative to a key file: `seal.SingleKey` makes a keyring of that one key, with the
+ID `default`. Since every sealed value names its key's ID, a key file that lists the same secret as
+`default` opens everything the single key sealed, which is how an operator moves to a key file to rotate.
+
 ## Revocation
 
 Speki can't revoke a single one of its own tokens before it expires, because it keeps no list of them. What

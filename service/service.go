@@ -26,7 +26,6 @@ import (
 	"github.com/eve-online-tools/speki/library"
 	"github.com/eve-online-tools/speki/mcpserver"
 	"github.com/eve-online-tools/speki/oauth"
-	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/store"
 	"github.com/eve-online-tools/speki/telemetry"
 	"github.com/eve-online-tools/speki/vault"
@@ -114,9 +113,9 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		logger,
 	)
 
-	keys, err := seal.ParseKeyring([]byte(cfg.Auth.Keys))
+	keys, err := cfg.Auth.keyring()
 	if err != nil {
-		return nil, fmt.Errorf("configuration: auth.keys: %w", err)
+		return nil, fmt.Errorf("configuration: %w", err)
 	}
 	shared, err := newStore(cfg.Redis, logger)
 	if err != nil {

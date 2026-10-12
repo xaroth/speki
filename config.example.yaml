@@ -25,6 +25,8 @@ access:
 auth:
   # The keys speki seals its tokens with. See the docs for the format and how to rotate them.
   keys_file: /run/secrets/speki-keys.yaml
+  # Or a single key, base64 of at least 32 random bytes. Rotating it means moving to keys_file first.
+  # key_file: /run/secrets/speki-key
   # Hosts whose client metadata documents are accepted (web clients like claude.ai).
   # client_metadata_hosts: [claude.ai]
 
