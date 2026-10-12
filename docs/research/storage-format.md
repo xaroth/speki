@@ -94,13 +94,13 @@ People can still put images in a vault by hand. Speki leaves them alone, and lin
 - Files tracked by git LFS. A clone only has the pointer file.
 - Files larger than 1 MiB.
 
-## Gotchas found along the way
+## Filesystem gotchas
 
 - Git paths are case-sensitive, but macOS and Windows checkouts are not. `Note.md` and `note.md` in one
   vault break Obsidian users. Speki refuses a write that would create a case-only collision.
 - macOS produces NFD Unicode in filenames. Speki normalises paths to NFC.
-- Keep a file's existing line endings when rewriting it. API writes are raw bytes, and flipping CRLF to LF
-  produces a diff of the whole file.
+- Speki keeps a file's existing line endings when rewriting it. API writes are raw bytes, and flipping CRLF
+  to LF produces a diff of the whole file.
 
 ## Go libraries
 

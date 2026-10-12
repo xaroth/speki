@@ -158,9 +158,9 @@ reproduces them (`SPEKI_MEASURE=1`). Limited to 4 cores:
 | Search one vault of 50,000, p50 / p95 | 26 ms / 56 ms | |
 | Search 10 vaults of 10,000, p50 / p95 | 16 ms / 27 ms | p95 under 100 ms |
 
-A second run on 2026-10-10, again on 4 cores, after milestone 7, added memory. The process's resident
-memory, from `/proc/self/status`: `VmHWM` after resetting it just before the build, and `VmRSS` once
-after `runtime.GC()` at the end, one sample each. To repeat:
+Memory, measured on 2026-10-10, again on 4 cores. The process's resident memory, from `/proc/self/status`:
+`VmHWM` after resetting it just before the build, and `VmRSS` once after `runtime.GC()` at the end, one
+sample each. To repeat:
 `SPEKI_MEASURE=1 GOMAXPROCS=4 go test -tags sqlite_fts5,sqlite_omit_load_extension -run TestMeasure -v ./index`.
 
 | What | Result |
@@ -173,19 +173,19 @@ after `runtime.GC()` at the end, one sample each. To repeat:
 Builds stream documents into SQLite, so their memory doesn't grow with the vault. What a serving instance
 holds is mostly SQLite's page caches and the in-memory vocabularies for typo correction, one per vault.
 
-Two things got it there. The first version joined every matching document before ranking, which read
-each document's body from disk: 135 ms p95 across 10 vaults. Ranking inside the full-text table and
-joining only the best candidates cut that by five. And building the full-text tables with one `rebuild` at
-the end, instead of row by row through triggers, nearly halved build time.
+Two choices drive these numbers. Ranking inside the full-text table and joining only the best candidates
+is about five times faster than joining every matching document first, which reads each body from disk
+(135 ms p95 across 10 vaults). Building the full-text tables with one `rebuild` at the end, instead of row
+by row through triggers, nearly halves build time.
 
 The generated text is harsher than real text: common words show up in most documents, so most queries
 match thousands of them. Real vaults should do better.
 
 ## Query sandbox checks
 
-Milestone 0, check 3, answered while building the sandbox in milestone 7, with go-sqlite3 1.14.52 and
-the `sqlite_fts5,sqlite_omit_load_extension` build tags. The tests in `index/sandbox_test.go` repeat
-each of these.
+Checks of the sandbox's assumptions, with go-sqlite3 1.14.52 and the
+`sqlite_fts5,sqlite_omit_load_extension` build tags. The tests in `index/sandbox_test.go` repeat each of
+these.
 
 - `ATTACH 'file:<path>?mode=ro'` works: go-sqlite3 opens connections with `SQLITE_OPEN_URI`. It works
   on an index in WAL mode while `Apply` writes to it from another connection, and each query sees a
