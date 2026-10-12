@@ -30,7 +30,7 @@ type fakeCopy struct {
 	info  vault.Vault
 	idx   *index.Index
 	blobs map[string][]byte
-	tree  map[string][]byte // at the index's commit
+	trees map[string]map[string][]byte // commit -> path -> content
 
 	blobFailures int
 }
@@ -64,27 +64,61 @@ func (c *fakeCopy) Blob(sha string) ([]byte, error) {
 	return b, nil
 }
 
-func (c *fakeCopy) Paths(string) ([]string, error) {
+func (c *fakeCopy) Paths(commit string) ([]string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return slices.Sorted(maps.Keys(c.tree)), nil
+	tree, ok := c.trees[commit]
+	if !ok {
+		return nil, fmt.Errorf("commit %s not in the copy", commit)
+	}
+	return slices.Sorted(maps.Keys(tree)), nil
 }
 
-func (c *fakeCopy) Version(_, path string) (string, error) {
+func (c *fakeCopy) Version(commit, path string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	content, ok := c.tree[path]
+	tree, ok := c.trees[commit]
+	if !ok {
+		return "", fmt.Errorf("commit %s not in the copy", commit)
+	}
+	content, ok := tree[path]
 	if !ok {
 		return "", nil
 	}
 	return blobID(content), nil
 }
 
+// tree returns the files at the index's commit.
+func (c *fakeCopy) tree() map[string][]byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.trees[c.idx.Commit()]
+}
+
+// setFile changes one file in the tree at commit without touching the index; nil content deletes it.
+// The commit starts from the tree at the index's commit when the copy doesn't have it yet.
+func (c *fakeCopy) setFile(commit, path string, content []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	tree, ok := c.trees[commit]
+	if !ok {
+		tree = c.trees[c.idx.Commit()]
+	}
+	tree = maps.Clone(tree)
+	if content == nil {
+		delete(tree, path)
+	} else {
+		tree[path] = content
+		c.blobs[blobID(content)] = content
+	}
+	c.trees[commit] = tree
+}
+
 // load rebuilds the copy at commit with files. Files that aren't markdown are in the tree but not indexed.
 func (c *fakeCopy) load(t *testing.T, commit string, files map[string][]byte) {
 	t.Helper()
 	c.mu.Lock()
-	c.tree = maps.Clone(files)
+	c.trees[commit] = maps.Clone(files)
 	for _, content := range files {
 		c.blobs[blobID(content)] = content
 	}
@@ -112,7 +146,7 @@ func newCopy(t *testing.T, files map[string]string) *fakeCopy {
 		t.Fatal(err)
 	}
 	t.Cleanup(idx.Close)
-	c := &fakeCopy{idx: idx, blobs: map[string][]byte{}}
+	c := &fakeCopy{idx: idx, blobs: map[string][]byte{}, trees: map[string]map[string][]byte{}}
 	raw := map[string][]byte{}
 	for p, content := range files {
 		raw[p] = []byte(content)
@@ -168,7 +202,7 @@ func (f *fakeGitHub) repoOf(name string) *fakeRepo {
 	for _, v := range []vault.Vault{ours, shared, secret} {
 		if v.Name == name {
 			c := f.f.copies[v.RepoID]
-			r = &fakeRepo{head: c.idx.Commit(), files: maps.Clone(c.tree)}
+			r = &fakeRepo{head: c.idx.Commit(), files: maps.Clone(c.tree())}
 		}
 	}
 	f.repos[name] = r

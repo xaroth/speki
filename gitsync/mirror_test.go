@@ -410,6 +410,30 @@ func TestBlobAt(t *testing.T) {
 	}
 }
 
+// BlobAt finds names go-git's own lookup rejects, and tells an NFC name from its NFD twin: git compares bytes.
+func TestBlobAtOddNames(t *testing.T) {
+	nfc, nfd := norm.NFC.String("café.md"), norm.NFD.String("café.md")
+	files := map[string]string{
+		"a\tb.md":   "# Tab\n",
+		"d\tx/a.md": "# In a tab folder\n",
+		nfc:         "# NFC\n",
+		nfd:         "# NFD\n",
+	}
+	src := newSource(t)
+	head := src.rawCommit(files)
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p, content := range files {
+		want := plumbing.ComputeHash(plumbing.BlobObject, []byte(content)).String()
+		got, err := m.BlobAt(head, p)
+		if err != nil || got != want {
+			t.Errorf("BlobAt(%q) = %q, %v; want %q", p, got, err, want)
+		}
+	}
+}
+
 // copyDir copies a directory tree, for breaking a copy of a repository without touching the original.
 func copyDir(t *testing.T, from, to string) {
 	t.Helper()

@@ -212,7 +212,9 @@ agent may have read a version GitHub has and the index doesn't yet. Before commi
 existing document (replace, `edit`, `move`, `delete`), `knowledge` also looks up the path's blob in the
 mirror's tree at the expected head (`Version`, one lookup per folder on the way) and treats a mismatch with
 the index's version as a stale version: sync once, then `conflict`. The index and git should never
-disagree there; this check keeps a bug in the index from turning into an overwritten change.
+disagree there; this check keeps a bug in the index from turning into an overwritten change. A mismatch
+that survives the sync is logged as a warning with the vault, path, commit and both blob SHAs, and counted
+in `speki_write_guard_mismatches_total`.
 
 A broken document (see [index.md](index.md)) can't be read through speki, so no agent can have seen its
 content: `read`, `write` (creating or replacing), `edit` and `move` on it answer `broken`. `delete` with

@@ -503,6 +503,9 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		p, err := prepare(ctx, st)
 		if err == nil {
 			err = st.unchanged(p.base)
+			if se, ok := errors.AsType[*staleError](err); ok {
+				b.guardMismatch(ctx, st, p.base, se, synced)
+			}
 		}
 		if err != nil {
 			var se *staleError
@@ -582,6 +585,18 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 
 		return b.afterCommit(ctx, v, p, sha), nil
 	}
+}
+
+// guardMismatch logs the index and git disagreeing on base at the change's head. Before a sync it can be
+// the index applying a newer commit under the change; after one, it's an index bug the operator must see.
+func (b *Base) guardMismatch(ctx context.Context, st state, base index.Document, se *staleError, synced bool) {
+	args := []any{"vault", st.vault.Name, "path", base.Path, "commit", st.head, "index_version", base.Version, "git_version", se.conflict.Version}
+	if !synced {
+		b.logger.InfoContext(ctx, "index and git disagree on a document; syncing", args...)
+		return
+	}
+	guardMismatches.Inc()
+	b.logger.WarnContext(ctx, "index and git still disagree on a document after a sync", args...)
 }
 
 // syncNow syncs a vault for a change, within syncWait.

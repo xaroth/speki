@@ -1,15 +1,17 @@
 package knowledge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"maps"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/eve-online-tools/speki/access"
@@ -75,7 +77,7 @@ func TestWriteCreates(t *testing.T) {
 
 func TestWriteRefusesTakenPaths(t *testing.T) {
 	f := newFixture(t)
-	f.copies[1].tree["huge.md"] = []byte("too large to index")
+	f.copies[1].setFile("c1", "huge.md", []byte("too large to index"))
 	ctx := t.Context()
 	content := "# New\n"
 
@@ -668,11 +670,7 @@ func TestLongTitles(t *testing.T) {
 // apply changes one file in the copy and applies it to the index, as a sync of a push would.
 func (c *fakeCopy) apply(t *testing.T, commit, path string, content []byte) {
 	t.Helper()
-	c.mu.Lock()
-	c.tree = maps.Clone(c.tree)
-	c.tree[path] = content
-	c.blobs[blobID(content)] = content
-	c.mu.Unlock()
+	c.setFile(commit, path, content)
 	err := c.idx.Apply(t.Context(), commit, []index.Change{{Path: path, Version: blobID(content), Content: content}})
 	if err != nil {
 		t.Fatal(err)
@@ -753,29 +751,69 @@ func TestChangeRefusesWhenTheIndexDisagreesWithGit(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
+			var logs bytes.Buffer
+			f.base.logger = slog.New(slog.NewTextHandler(&logs, nil))
 			ctx := t.Context()
 			v := f.version(t, path)
-			c := f.copies[1]
-			c.mu.Lock()
-			c.tree = maps.Clone(c.tree)
-			if tt.drift == nil {
-				delete(c.tree, path)
-			} else {
-				c.tree[path] = tt.drift
-			}
-			c.mu.Unlock()
+			f.copies[1].setFile("c1", path, tt.drift)
+			before := testutil.ToFloat64(guardMismatches)
 
-			_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v})
-			wantCode(t, err, CodeConflict)
-			var kerr *Error
-			if errors.As(err, &kerr); kerr.Version != tt.version {
-				t.Errorf("conflict version = %q, want %q", kerr.Version, tt.version)
+			changes := map[string]func() error{
+				"edit": func() error {
+					_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v})
+					return err
+				},
+				"replace": func() error {
+					_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: path, Content: "# ESI proxy\n\nReplaced.\n", Version: v})
+					return err
+				},
+				"move": func() error {
+					_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: path, To: "services/proxy.md", Version: v})
+					return err
+				},
+				"delete": func() error {
+					_, err := f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: v})
+					return err
+				},
 			}
-			_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: v})
-			wantCode(t, err, CodeConflict)
+			for name, change := range changes {
+				err := change()
+				wantCode(t, err, CodeConflict)
+				var kerr *Error
+				if errors.As(err, &kerr); kerr.Version != tt.version {
+					t.Errorf("%s: conflict version = %q, want %q", name, kerr.Version, tt.version)
+				}
+			}
 			if len(f.github.requests) != 0 {
 				t.Errorf("committed %d times", len(f.github.requests))
 			}
+			if got := testutil.ToFloat64(guardMismatches) - before; got != float64(len(changes)) {
+				t.Errorf("guard mismatches counted %v, want %d", got, len(changes))
+			}
+			want := fmt.Sprintf("level=WARN msg=\"index and git still disagree on a document after a sync\" vault=ours/kb path=%s commit=c1 index_version=%s git_version=%s", path, v, tt.version)
+			if n := strings.Count(logs.String(), want); n != len(changes) {
+				t.Errorf("%d warnings like %q in:\n%s", n, want, logs.String())
+			}
 		})
+	}
+}
+
+// The guard checks the document at the index's commit, not at a newer one the mirror already fetched.
+func TestChangeChecksTheIndexHead(t *testing.T) {
+	const path = "services/esi-proxy.md"
+	f := newFixture(t)
+	v := f.version(t, path)
+	f.copies[1].setFile("c2", path, []byte("# ESI proxy\n\nFetched, not indexed yet.\n"))
+	before := testutil.ToFloat64(guardMismatches)
+
+	_, err := f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.lastCommit(t).ExpectedHead; got != "c1" {
+		t.Errorf("expected head = %q, want c1", got)
+	}
+	if got := testutil.ToFloat64(guardMismatches) - before; got != 0 {
+		t.Errorf("guard mismatches counted %v", got)
 	}
 }

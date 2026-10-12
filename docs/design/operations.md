@@ -97,6 +97,7 @@ Names:
 | `speki_vault_bytes` | gauge | `vault`. Markdown bytes indexed |
 | `speki_vault_fresh_timestamp_seconds` | gauge | `vault`. Unix time when speki last confirmed the index matches GitHub's head |
 | `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, deferred, failed) |
+| `speki_write_guard_mismatches_total` | counter | none. Changes refused because the index and git still disagreed on a document after a sync: an index bug ([sync.md](sync.md)) |
 | `speki_signins_total` | counter | `result` |
 | `speki_refreshes_total` | counter | `result` (ok, shared, unreached, no_answer, app_config, signed_out, lost_to_timeout). `lost_to_timeout` is a sign-out caused by an earlier GitHub refresh that got no answer ([oauth.md](oauth.md#refreshing)) |
 
