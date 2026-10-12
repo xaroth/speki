@@ -177,16 +177,32 @@ Details per step:
 2. Look in the store for a recent result for this token (keyed by the token's hash). If there is one,
    return it. This covers two windows of one client refreshing at once, and a client retrying after a lost
    response.
-3. Take a lock in the store on the token's hash (10 seconds). If another request holds it, wait for its
-   result (step 2) for up to 10 seconds.
-4. Refresh with GitHub. A `bad_refresh_token` becomes `invalid_grant`, which sends the user to sign in again.
-5. Seal the new pair. Store it for 30 seconds under the old token's hash, encrypted with a key derived
+3. Take a lock in the store on the token's hash (25 seconds). If another request holds it, wait for its
+   result (step 2) for up to 25 seconds.
+4. Refresh with GitHub, within 20 seconds of taking the lock. A request that fails looking GitHub up,
+   connecting or in the TLS handshake is tried up to three times in all, a moment apart: nothing of it
+   was sent, so the token is still good. One that may have been sent is never tried again. A
+   `bad_refresh_token` becomes `invalid_grant`, which sends the user to sign in again.
+5. Seal the new pair. Store it for a minute under the old token's hash, encrypted with a key derived
    from the old refresh token itself, so the store (Redis, in a cluster) never holds a usable token.
    Return it. Storing should finish before the lock runs out. If it fails twice, speki stores a marker
    instead, and a request waiting with the same token gets `temporarily_unavailable`: the client may
    already hold the new pair from the first request (another window of it, say). Once the marker expires,
    the old token fails with `invalid_grant`, since the GitHub token inside it is spent. If even the marker
    can't be stored, the store is down, and the waiting request most likely fails with `server_error`.
+
+When GitHub doesn't answer in time, or the connection drops after the request may have been sent, the
+client gets `temporarily_unavailable`. GitHub may have spent the refresh token anyway, and it has no grace
+period for the old one, so the client's retry may get `invalid_grant` and the user has to sign in again.
+Speki can't prevent that, only make it rare and visible: it remembers such a refresh for 10 minutes under
+the token's hash (no token material), and when GitHub then refuses the same token, it logs a warning,
+`refresh lost to GitHub timeout`, and counts it in `speki_refreshes_total{result="lost_to_timeout"}`
+instead of as an ordinary sign-out. The marker is taken atomically (`GETDEL`), so each lost token counts
+once, and a successful refresh with the token removes it: GitHub hadn't spent the token after all.
+
+The lock, the results and these markers are in the store. With the memory store each instance has its
+own, so two instances refreshing one token both ask GitHub, and the second signs the user out. Speki
+warns about the memory store at startup and on the status page.
 
 Every speki refresh is a GitHub refresh. GitHub's single-use refresh tokens give us rotation and replay
 detection: after the real client has refreshed, an old refresh token is dead, because the GitHub token

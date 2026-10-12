@@ -2,13 +2,17 @@ package gh
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,6 +22,17 @@ var ErrBadGrant = errors.New("GitHub refused the code or refresh token")
 // ErrAppConfig means GitHub refused the app's own OAuth settings: the client ID or secret, or the
 // callback URL. Every sign-in and refresh fails until the operator fixes them.
 var ErrAppConfig = errors.New("GitHub refused the app's OAuth settings: check github.client_id, github.client_secret and the app's callback URL")
+
+// ErrUnreached means a token request failed before any of it was sent. GitHub didn't see the code or
+// refresh token, so it's still good.
+var ErrUnreached = errors.New("couldn't reach GitHub")
+
+// A token request that failed looking GitHub up, connecting or in the TLS handshake is tried this often
+// in all, with pauses growing by tokenTryPause, within the caller's deadline.
+const (
+	tokenTries    = 3
+	tokenTryPause = 250 * time.Millisecond
+)
 
 // DefaultOAuthURL is where GitHub's OAuth endpoints live.
 const DefaultOAuthURL = "https://github.com"
@@ -82,15 +97,9 @@ func (c *Client) Refresh(ctx context.Context, o OAuthConfig, refreshToken string
 }
 
 func (c *Client) tokenRequest(ctx context.Context, o OAuthConfig, form url.Values) (UserTokens, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base()+"/login/oauth/access_token", strings.NewReader(form.Encode()))
+	resp, err := c.postToken(ctx, o, form)
 	if err != nil {
 		return UserTokens{}, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.web.Do(req)
-	if err != nil {
-		return UserTokens{}, fmt.Errorf("GitHub token request: %w", err)
 	}
 	defer resp.Body.Close()
 	var body struct {
@@ -129,4 +138,73 @@ func (c *Client) tokenRequest(ctx context.Context, o OAuthConfig, form url.Value
 		t.RefreshExpires = now.Add(time.Duration(body.RefreshTokenExpiresIn) * time.Second)
 	}
 	return t, nil
+}
+
+// postToken posts form to GitHub's token endpoint. Codes and refresh tokens work once, so a request is
+// only tried again when it certainly never reached GitHub. One that may have been sent never is: GitHub
+// may have spent the token.
+func (c *Client) postToken(ctx context.Context, o OAuthConfig, form url.Values) (*http.Response, error) {
+	for try := 1; ; try++ {
+		resp, sent, err := c.postTokenOnce(ctx, o, form)
+		if err == nil {
+			return resp, nil
+		}
+		if sent {
+			return nil, fmt.Errorf("GitHub token request: %w", err)
+		}
+		if !unreached(err) || try == tokenTries {
+			return nil, fmt.Errorf("%w: %w", ErrUnreached, err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", ErrUnreached, err)
+		case <-time.After(time.Duration(try) * tokenTryPause):
+		}
+	}
+}
+
+// postTokenOnce makes one token request. sent reports whether the transport began writing it: from then
+// on, GitHub may have it.
+func (c *Client) postTokenOnce(ctx context.Context, o OAuthConfig, form url.Values) (*http.Response, bool, error) {
+	// The transport may call the trace from its own goroutines.
+	var sent atomic.Bool
+	var handshakeFailed atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			if err != nil {
+				handshakeFailed.Store(true)
+			}
+		},
+		WroteHeaderField: func(string, []string) { sent.Store(true) },
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base()+"/login/oauth/access_token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.web.Do(req)
+	if err != nil && !sent.Load() && handshakeFailed.Load() {
+		err = &handshakeError{err: err}
+	}
+	return resp, sent.Load(), err
+}
+
+// handshakeError is a request that failed in the TLS handshake, before any of it was written.
+type handshakeError struct{ err error }
+
+func (e *handshakeError) Error() string { return "TLS handshake: " + e.err.Error() }
+func (e *handshakeError) Unwrap() error { return e.err }
+
+// unreached reports whether err is a failed name lookup, connection or TLS handshake, which may go
+// better on another try. The caller checks that nothing was sent: these can't come after that anyway.
+func unreached(err error) bool {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
+		return true
+	}
+	if oerr, ok := errors.AsType[*net.OpError](err); ok && oerr.Op == "dial" {
+		return true
+	}
+	_, ok := errors.AsType[*handshakeError](err)
+	return ok
 }

@@ -204,6 +204,11 @@ used authorization codes, refresh locks, refresh results and the access cache (w
 user may see, kept for 5 minutes). A restart loses that state, which only means a few users get checked
 against GitHub again.
 
+Run exactly one instance without Redis. Several instances with memory stores don't share refresh locks
+and results: when a client's refreshes land on two of them, both use the same single-use GitHub refresh
+token, and the user is signed out. Speki logs a warning at startup when it uses the memory store, and the
+status page shows `"store": "memory"` with the same warning.
+
 With `redis` configured, any number of instances can run behind a load balancer without sticky sessions.
 They share that state through Redis, and when one instance writes to a vault, it tells the others, so
 they pick up the change within seconds instead of at the next poll. Every instance needs the same
@@ -256,7 +261,7 @@ for. Below about 1.2 GiB, the kernel can kill the process before SQLite's own li
 | `/healthz` | `listen` | 200 while the process runs |
 | `/readyz` | `listen` | 200 once the first round of vault discovery is done, whether or not it succeeded, or once looking up the app's owner has failed. 503 while starting and stopping. `/mcp` answers 503 at the same times, and to a user whose vaults are all still being cloned or indexed, or failed to open ([access.md](access.md#who-gets-in)) |
 | `/metrics` | `metrics_listen` | Prometheus metrics |
-| `/status` | `metrics_listen` | Readiness, every vault's state, commit, last sync and last error, and any `speki.yaml` that couldn't be used, as JSON |
+| `/status` | `metrics_listen` | Readiness, the store in use (memory or redis), every vault's state, commit, last sync and last error, any `speki.yaml` that couldn't be used, and configuration warnings, as JSON |
 
 Speki runs two separate HTTP servers. The public one (`listen`, default `:8080`) serves only what MCP
 clients and browsers need. The internal one (`metrics_listen`, default `:9090`) serves only metrics and the

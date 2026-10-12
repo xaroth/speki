@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
 )
 
 func discardLogger() *slog.Logger {
@@ -420,5 +422,48 @@ func TestRunFailsOnBusyAddress(t *testing.T) {
 	err = s.Run(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "listen") {
 		t.Errorf("Run = %v, want a listen error", err)
+	}
+}
+
+// Instances with a memory store don't share refresh locks and results, so a second one signs users out.
+// Speki says so at startup and on the status page; with Redis, it says nothing.
+func TestMemoryStoreWarning(t *testing.T) {
+	tests := []struct {
+		name      string
+		redis     bool
+		wantStore string
+		wantWarn  bool
+	}{
+		{"memory", false, "memory", true},
+		{"redis", true, "redis", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig(t, newFakeGitHub(t, map[string]string{"a.md": "# A\n"}))
+			if tt.redis {
+				cfg.Redis.URL = "redis://" + miniredis.RunT(t).Addr()
+			}
+			var logs strings.Builder
+			s, err := New(cfg, slog.New(slog.NewTextHandler(&logs, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.closeComponents() })
+			if logged := strings.Contains(logs.String(), "run exactly one instance"); logged != tt.wantWarn {
+				t.Errorf("startup warning logged %v, want %v:\n%s", logged, tt.wantWarn, logs.String())
+			}
+
+			rec := httptest.NewRecorder()
+			s.internalHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+			var page statusPage
+			err = json.Unmarshal(rec.Body.Bytes(), &page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			warned := len(page.Warnings) == 1 && strings.Contains(page.Warnings[0], "redis.url")
+			if page.Store != tt.wantStore || warned != tt.wantWarn || (!tt.wantWarn && len(page.Warnings) != 0) {
+				t.Errorf("status store %q, warnings %q", page.Store, page.Warnings)
+			}
+		})
 	}
 }
