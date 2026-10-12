@@ -13,7 +13,6 @@ import (
 	"github.com/alicebob/miniredis/v2"
 )
 
-// kv is what both stores offer for values.
 type kv interface {
 	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error

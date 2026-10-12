@@ -8,7 +8,6 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// markdownLink resolves a markdown link destination relative to the document it appears in.
 func markdownLink(dest, text, docPath string) Link {
 	return Link{
 		Target:    dest,

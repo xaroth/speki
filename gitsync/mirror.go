@@ -123,7 +123,6 @@ func Usable(dir, branch string) bool {
 	return err == nil && healthy(repo, plumbing.NewBranchReferenceName(branch))
 }
 
-// healthy reports whether the copy has the branch and every object of its tree.
 func healthy(repo *git.Repository, branch plumbing.ReferenceName) bool {
 	ref, err := repo.Reference(branch, true)
 	if err != nil {
@@ -264,7 +263,7 @@ func (m *Mirror) Head() (string, error) {
 	return ref.Hash().String(), nil
 }
 
-// Fetch updates the branch from the remote, depth 1, and returns the commit it's at now. progress, which
+// Fetch updates the branch from the remote, depth 1, and returns the commit it is at. progress, which
 // may be nil, receives git's progress messages.
 func (m *Mirror) Fetch(ctx context.Context, progress io.Writer) (string, error) {
 	httpAuth, err := m.basicAuth(ctx)

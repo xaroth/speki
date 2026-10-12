@@ -46,13 +46,11 @@ func TestSealAndOpen(t *testing.T) {
 		t.Errorf("Open = %+v, %v", got, err)
 	}
 
-	// Another purpose can't open it.
 	err = k.Open(PurposeRefresh, s, &got)
 	if !errors.Is(err, ErrInvalid) {
 		t.Errorf("open as refresh: %v", err)
 	}
 
-	// Tampering is detected.
 	raw := []byte(s)
 	raw[len(raw)-3] ^= 1
 	err = k.Open(PurposeAccess, string(raw), &got)

@@ -59,7 +59,6 @@ func parseMarkdown(body string, bodyLine int, docPath string) ([]Heading, []Link
 	return headings, links
 }
 
-// inlineText returns the plain text inside an inline container, without markup.
 func inlineText(n ast.Node, src []byte) string {
 	var b strings.Builder
 	_ = ast.Walk(n, func(c ast.Node, entering bool) (ast.WalkStatus, error) {
