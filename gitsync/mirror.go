@@ -56,13 +56,6 @@ type File struct {
 	Blob string // SHA
 }
 
-// Change is a markdown file that changed between two commits. Blob is empty when it was deleted, or
-// stopped being a file speki reads.
-type Change struct {
-	Path string
-	Blob string
-}
-
 // Source says where a copy comes from.
 type Source struct {
 	URL    string // a URL git understands
@@ -326,8 +319,9 @@ func (m *Mirror) Paths(commit string) ([]string, error) {
 	return paths, nil
 }
 
-// Diff returns the markdown files that changed between two commits. Both must be in the copy.
-func (m *Mirror) Diff(from, to string) ([]Change, error) {
+// Diff returns the markdown files that changed between two commits. Both must be in the copy. A file
+// with an empty Blob was deleted, or stopped being a file speki reads.
+func (m *Mirror) Diff(from, to string) ([]File, error) {
 	fromTree, err := commitTree(m.repo, plumbing.NewHash(from))
 	if err != nil {
 		return nil, err
@@ -336,7 +330,7 @@ func (m *Mirror) Diff(from, to string) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	var changes []Change
+	var changes []File
 	err = diffTrees(m.repo, fromTree, toTree, "", func(name string, before, after object.TreeEntry) error {
 		ok, err := m.eligible(name, after)
 		if err != nil {
@@ -346,7 +340,7 @@ func (m *Mirror) Diff(from, to string) ([]Change, error) {
 			if before.Hash == after.Hash && isFile(before.Mode) {
 				return nil // only the executable bit changed
 			}
-			changes = append(changes, Change{Path: name, Blob: after.Hash.String()})
+			changes = append(changes, File{Path: name, Blob: after.Hash.String()})
 			return nil
 		}
 		ok, err = m.eligible(name, before)
@@ -359,7 +353,7 @@ func (m *Mirror) Diff(from, to string) ([]Change, error) {
 			return err
 		}
 		if ok { // deleted, or no longer a file speki reads
-			changes = append(changes, Change{Path: name})
+			changes = append(changes, File{Path: name})
 		}
 		return nil
 	})

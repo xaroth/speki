@@ -46,7 +46,7 @@ vault running on its last good configuration, and the problem is logged and show
 func Open(ctx context.Context, dir string, src Source) (*Mirror, error) // clones when dir is empty or broken
 func (m *Mirror) SetSource(url string, auth TokenSource)              // where Fetch fetches from
 func (m *Mirror) Fetch(ctx context.Context, progress io.Writer) (head string, err error)
-func (m *Mirror) Diff(from, to string) ([]Change, error) // changed eligible files between two commits
+func (m *Mirror) Diff(from, to string) ([]File, error)   // changed eligible files; empty Blob when deleted
 func (m *Mirror) Files(at string) ([]File, error)        // every eligible file, for full builds
 func (m *Mirror) Blob(sha string) ([]byte, error)
 func (m *Mirror) Paths(at string) ([]string, error)      // every file, any type

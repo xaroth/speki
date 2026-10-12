@@ -532,7 +532,7 @@ func TestDiffNeedsOnlyWhatItReads(t *testing.T) {
 	removeObject(t, git, treeOf(t, src.repo, first, ".obsidian"))
 	removeObject(t, git, treeOf(t, src.repo, second, ".obsidian"))
 	changes, err := m.Diff(first, second)
-	if err != nil || len(changes) != 1 || changes[0] != (Change{Path: "gone.md"}) {
+	if err != nil || len(changes) != 1 || changes[0] != (File{Path: "gone.md"}) {
 		t.Errorf("Diff = %v, %v; want only the deletion of gone.md", changes, err)
 	}
 }
