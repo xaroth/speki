@@ -154,7 +154,8 @@ deadline isn't set on the request itself. A lock wait or GitHub call that runs o
    from `Library.Vaults`, reusing the read decisions they already made: no polling, no cache reads or
    GitHub calls for vaults already decided. `Resolver.Stop`, called when the service starts stopping,
    ends every wait. When the only readable vaults failed to open, the answer is 503 with
-   `Retry-After: 120` straight away: their retry is minutes off. After the grant, the middleware gives
+   `Retry-After: 120` straight away: their retry is minutes off. When the request's deadline passes
+   during `Resolve` (GitHub is slow), the answer is 503 with `Retry-After: 15`. After the grant, the middleware gives
    the body a fresh 30 second read deadline, so the server's 30 second `ReadTimeout` doesn't run out
    during a wait. Its 75 second `WriteTimeout` covers the 50 second deadline, and a change still looking
    for a commit whose answer was lost when the deadline came (see [sync.md](sync.md)).
@@ -260,7 +261,8 @@ dependency for a fake happens through `Config`, not through globals or build tag
 So an instance with a persistent data directory serves from disk within seconds, even if GitHub is down.
 An instance on an empty disk is ready quickly but has no vaults until the first ones finish indexing.
 
-When `Run`'s context ends, within 23 seconds in all:
+When `Run`'s context ends, within 25 seconds in all (2 of them to flush traces), under Kubernetes' default
+30-second grace period:
 
 1. Mark not ready, for good: `/readyz` and `/mcp` answer 503 from now on.
 2. Stop accepting requests and let running ones finish, for up to 15 seconds, while vaults stay open and
@@ -270,8 +272,12 @@ When `Run`'s context ends, within 23 seconds in all:
 4. Stop the background loops and the work after commits (`knowledge.Base.Stop`), and wait up to 5
    seconds for them. This budget is separate, so work that ignores stop takes no time from requests.
 5. Close indexes, the sandbox and the store, and return from `Run`. If a handler is still running after
-   step 3, the components are left open instead, and that's logged: closing them would fail its
-   request.
+   step 3, or background work after step 4, the components are left open instead, and that's logged:
+   closing them would fail that work. A request that starts after step 3 begins gets a 503.
+
+The drain is shorter than a request's 50-second deadline, so a change still running 15 seconds into a stop
+loses its connection. Its handler keeps going, so a commit that was sent lands, but the agent sees the
+connection drop and has to read the document to find out.
 
 `/mcp` also answers 503 with `Retry-After` before the first discovery round, like `/readyz`. Every
 goroutine is started from `service` or `library` with a context it watches, and its starter waits for

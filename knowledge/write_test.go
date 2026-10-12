@@ -566,7 +566,7 @@ func TestWriteLockWaitIsCapped(t *testing.T) {
 func TestCommitLandsWhileItsSyncIsSlow(t *testing.T) {
 	f := newFixture(t)
 	f.vaults.hold = make(chan struct{}) // a new document: the only sync is the one after the commit
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	res, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
 	if err != nil {

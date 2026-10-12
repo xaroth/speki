@@ -70,7 +70,9 @@ type Service struct {
 	// discovered is closed after the first discovery round, successful or not.
 	discovered chan struct{}
 	// handlers counts running HTTP handlers, which may outlive their connections.
-	handlers sync.WaitGroup
+	handlers       sync.WaitGroup
+	handlersMu     sync.Mutex
+	handlersClosed bool // set once shutdown waits for handlers
 	// background is the work Run starts besides serving: discovery, polling and notices.
 	background sync.WaitGroup
 	// Fields so tests can shorten them.
@@ -225,7 +227,7 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		err := stopTracing(flushCtx)
 		if err != nil {
@@ -289,22 +291,33 @@ func (s *Service) Run(ctx context.Context) error {
 		// Close doesn't wait for handlers, and closing components under one would fail its request.
 		hctx, cancel := context.WithTimeout(stopped, s.handlerWait)
 		defer cancel()
+		s.handlersMu.Lock()
+		s.handlersClosed = true // no Add after this, so Wait can't race one
+		s.handlersMu.Unlock()
 		handlersDone := waitFor(hctx, &s.handlers)
 
 		bgCtx, cancel := context.WithTimeout(stopped, s.backgroundTimeout)
 		defer cancel()
 		stopWork()
+		workDone := true
 		err := s.kb.Stop(bgCtx)
 		if err != nil {
 			s.logger.WarnContext(ctx, "work after commits didn't finish in time")
+			workDone = false
 		}
 		if !waitFor(bgCtx, &s.background) {
-			// The process is about to end; the rest of the work goes with it.
 			s.logger.WarnContext(ctx, "background work didn't stop in time")
+			workDone = false
 		}
 
+		// The process is about to end; whatever still runs goes with it, but not with components closed
+		// under it.
 		if !handlersDone {
 			s.logger.WarnContext(ctx, "requests still running after their connections were cut; leaving components open")
+			return nil
+		}
+		if !workDone {
+			s.logger.WarnContext(ctx, "leaving components open for the background work still running")
 			return nil
 		}
 		return s.closeComponents()
@@ -334,7 +347,14 @@ func waitFor(ctx context.Context, wg *sync.WaitGroup) bool {
 // tool calls have.
 func (s *Service) track(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handlersMu.Lock()
+		if s.handlersClosed {
+			s.handlersMu.Unlock()
+			http.Error(w, "speki is stopping", http.StatusServiceUnavailable)
+			return
+		}
 		s.handlers.Add(1)
+		s.handlersMu.Unlock()
 		defer s.handlers.Done()
 		h.ServeHTTP(w, r)
 	})

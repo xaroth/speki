@@ -199,6 +199,11 @@ func (s *Server) grant(next http.Handler) http.Handler {
 			w.Header().Set("Retry-After", failedRetry)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
+		case errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil:
+			s.logger.WarnContext(r.Context(), "resolving access ran out of time", "login", u.Login, "err", err)
+			w.Header().Set("Retry-After", notReadyRetry)
+			http.Error(w, "speki couldn't check your access in time; try again", http.StatusServiceUnavailable)
+			return
 		case err != nil:
 			s.logger.ErrorContext(r.Context(), "resolving access failed", "login", u.Login, "err", err)
 			http.Error(w, "speki couldn't check your access with GitHub; try again", http.StatusBadGateway)
