@@ -151,6 +151,9 @@ hears about the change. Writes through speki are applied to the local index befo
 (normally; at worst within the next poll) and announced to other instances through Redis. External
 changes wait for the next poll (default 60 seconds).
 
+Access answers are cached for 5 minutes per token, so someone removed from an organisation, repository or
+team keeps their access for up to 5 minutes, and so does a revoked GitHub token.
+
 One malformed file must not stop a vault from updating, or a deleted secret would stay searchable
 indefinitely. Applying changes skips and logs a file that fails instead of failing the whole update.
 
