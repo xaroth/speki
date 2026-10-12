@@ -141,7 +141,7 @@ status code, and clients only start a new sign-in on a 401.
 
 `search` for "esi cache":
 
-1. The `/mcp` stack above runs. `Resolve` finds the user's GitHub permissions in its 60-second cache, keyed
+1. The `/mcp` stack above runs. `Resolve` finds the user's GitHub permissions in its 5-minute cache, keyed
    by a hash of the GitHub token, and applies the token's scope.
 2. The `search` tool handler converts its input and calls `knowledge.Search(ctx, grant, request)`.
 3. `knowledge` picks the vaults: the requested ones, each looked up with `grant.Vault`, or all readable

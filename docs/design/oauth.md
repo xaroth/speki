@@ -201,7 +201,7 @@ Scopes on refresh can only shrink, never grow.
 
 The verifier opens the token as `access`, checks `aud` against the configured resource, and returns the
 `oauth.Identity`. It makes no GitHub call. GitHub is asked when the grant is resolved (see
-[architecture.md](architecture.md)), at most once a minute per GitHub token. A revoked GitHub authorization
+[architecture.md](architecture.md)), at most once every 5 minutes per GitHub token. A revoked GitHub authorization
 fails there, and speki answers 401 so the client refreshes, which fails and sends the user to sign in.
 
 Scopes: the `Grant` of a token without `speki:write` has no writable vaults. Write tools then return the
@@ -225,7 +225,7 @@ Speki can't revoke a single one of its own tokens before it expires, because it 
 it can do:
 
 - A user revokes the speki app in their GitHub settings. The GitHub token inside every speki token they
-  hold dies, and speki notices within a minute.
+  hold dies, and speki notices within 5 minutes.
 - An operator removes a key from the key file. Every token sealed with it stops working.
 - When a key may have leaked, the operator also revokes all user tokens of the GitHub App in GitHub's app
   settings, because whoever holds the key could open captured tokens and use the GitHub token inside
