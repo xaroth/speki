@@ -1,4 +1,4 @@
-package access
+package access_test
 
 import (
 	"context"
@@ -14,11 +14,13 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/store"
 	"github.com/eve-online-tools/speki/vault"
 )
 
+// fakeGitHub answers the GitHub calls the resolver makes, from maps keyed by token or login.
 type fakeGitHub struct {
 	mu      sync.Mutex
 	members map[string][]string // token -> orgs
@@ -51,10 +53,7 @@ func (f *fakeGitHub) ActiveMember(_ context.Context, token, org string) (bool, e
 	if f.revoked[token] {
 		return false, gh.ErrUnauthorized
 	}
-	if slices.Contains(f.members[token], org) {
-		return true, nil
-	}
-	return false, nil
+	return slices.Contains(f.members[token], org), nil
 }
 
 func (f *fakeGitHub) UserRepositories(_ context.Context, token string) ([]gh.RepoAccess, error) {
@@ -67,6 +66,12 @@ func (f *fakeGitHub) UserRepositories(_ context.Context, token string) ([]gh.Rep
 	return f.repos[token], nil
 }
 
+func (f *fakeGitHub) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 // fakeLibrary holds vaults in the states tests put them in.
 type fakeLibrary struct {
 	mu       sync.Mutex
@@ -76,8 +81,8 @@ type fakeLibrary struct {
 	changed  chan struct{}
 }
 
-func served(vs ...vault.Vault) *fakeLibrary {
-	return &fakeLibrary{serving: vs, changed: make(chan struct{})}
+func newLibrary(serving, building, failed []vault.Vault) *fakeLibrary {
+	return &fakeLibrary{serving: serving, building: building, failed: failed, changed: make(chan struct{})}
 }
 
 func (l *fakeLibrary) Vaults() (serving, building, failed []vault.Vault) {
@@ -108,10 +113,12 @@ func (l *fakeLibrary) setQuietly(serving, building, failed []vault.Vault) {
 	l.serving, l.building, l.failed = serving, building, failed
 }
 
-var kb = vault.Vault{RepoID: 100, Name: "ours/kb"}
-var infra = vault.Vault{RepoID: 101, Name: "ours/infra"}
-var other = vault.Vault{RepoID: 102, Name: "ours/other"}
-var docs = vault.Vault{RepoID: 999, Name: "ours/docs"}
+var (
+	kb    = vault.Vault{RepoID: 100, Name: "ours/kb"}
+	infra = vault.Vault{RepoID: 101, Name: "ours/infra"}
+	other = vault.Vault{RepoID: 102, Name: "ours/other"}
+	docs  = vault.Vault{RepoID: 999, Name: "ours/docs"}
+)
 
 // configured returns v with c as its speki.yaml settings.
 func configured(v vault.Vault, c vault.Config) vault.Vault {
@@ -121,8 +128,11 @@ func configured(v vault.Vault, c vault.Config) vault.Vault {
 
 func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
-func setup() (*fakeGitHub, *Resolver) {
-	f := &fakeGitHub{
+// newGitHub returns a fake where alice reads kb, infra and docs and pushes to kb, alice2 pushes to kb, bob
+// reads docs, and eve reads kb but is in no required organisation.
+func newGitHub(tb testing.TB) *fakeGitHub {
+	tb.Helper()
+	return &fakeGitHub{
 		members: map[string][]string{"alice": {"ours"}, "alice2": {"ours"}, "bob": {"ours"}, "eve": {"elsewhere"}},
 		repos: map[string][]gh.RepoAccess{
 			"alice":  {{RepoID: 100, Role: gh.RoleWrite}, {RepoID: 101, Role: gh.RoleRead}, {RepoID: 999, Role: gh.RoleRead}},
@@ -132,36 +142,102 @@ func setup() (*fakeGitHub, *Resolver) {
 		},
 		revoked: map[string]bool{},
 	}
-	r := NewResolver(f, served(kb, infra, other), []string{"ours", "partners"}, store.NewMemory(), discard())
+}
+
+// setup returns the fake GitHub and a resolver serving kb, infra and other, requiring ours or partners.
+func setup(tb testing.TB) (*fakeGitHub, *access.Resolver) {
+	tb.Helper()
+	f := newGitHub(tb)
+	r := access.NewResolver(f, newLibrary([]vault.Vault{kb, infra, other}, nil, nil), []string{"ours", "partners"}, store.NewMemory(), discard())
 	return f, r
 }
 
-func TestResolve(t *testing.T) {
-	_, r := setup()
+func names(vs []vault.Vault) []string {
+	var out []string
+	for _, v := range vs {
+		out = append(out, v.Name)
+	}
+	return out
+}
 
-	g, err := r.Resolve(t.Context(), User{ID: 1, Login: "alice", Token: "alice", Write: true})
+func TestResolve(t *testing.T) {
+	t.Parallel()
+	_, r := setup(t)
+	u := access.User{ID: 1, Login: "alice", Token: "alice", Write: true}
+
+	g, err := r.Resolve(t.Context(), u)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("got err %v, want nil", err)
 	}
-	names := []string{}
-	for _, v := range g.Readable() {
-		names = append(names, v.Name)
+	if diff := cmp.Diff([]string{"ours/infra", "ours/kb"}, names(g.Readable())); diff != "" {
+		t.Errorf("readable (-want +got):\n%s", diff)
 	}
-	if len(names) != 2 || names[0] != "ours/infra" || names[1] != "ours/kb" {
-		t.Errorf("readable = %v", names)
+	for _, id := range []int64{100, 101, 102} {
+		if got, want := g.CanWrite(id), id == 100; got != want {
+			t.Errorf("CanWrite(%d): got %v, want %v", id, got, want)
+		}
 	}
-	if !g.CanWrite(100) || g.CanWrite(101) || g.CanWrite(102) {
-		t.Error("write access doesn't follow push permission")
+	if diff := cmp.Diff(u, g.User()); diff != "" {
+		t.Errorf("user (-want +got):\n%s", diff)
 	}
-	if _, ok := g.Vault("ours/other"); ok {
-		t.Error("a vault the user can't read is in the grant")
+	if g.ReadOnlySession() {
+		t.Errorf("ReadOnlySession: got true, want false")
 	}
-	if g.User().Token != "alice" || g.ReadOnlySession() {
-		t.Errorf("user = %+v", g.User())
+	if len(g.Unavailable()) != 0 {
+		t.Errorf("unavailable: got %v, want none", g.Unavailable())
+	}
+}
+
+func TestResolveTurnedAway(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name  string
+		token string
+		orgs  []string
+		want  error
+	}{
+		{name: "not a member", token: "eve", orgs: []string{"ours", "partners"}, want: access.ErrNotMember},
+		{name: "no required orgs", token: "eve", want: nil},
+		{name: "no readable vault", token: "bob", orgs: []string{"ours"}, want: access.ErrNoVaults},
+		{name: "revoked token", token: "gone", orgs: []string{"ours"}, want: access.ErrUnauthorized},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newGitHub(t)
+			f.revoked["gone"] = true
+			r := access.NewResolver(f, newLibrary([]vault.Vault{kb}, nil, nil), testCase.orgs, store.NewMemory(), discard())
+			_, err := r.Resolve(t.Context(), access.User{Token: testCase.token})
+			if !errors.Is(err, testCase.want) {
+				t.Errorf("got err %v, want %v", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestCheckMember(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name  string
+		token string
+		want  error
+	}{
+		{name: "member", token: "alice"},
+		{name: "not a member", token: "eve", want: access.ErrNotMember},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, r := setup(t)
+			if err := r.CheckMember(t.Context(), testCase.token); !errors.Is(err, testCase.want) {
+				t.Errorf("got err %v, want %v", err, testCase.want)
+			}
+		})
 	}
 }
 
 func TestReadRole(t *testing.T) {
+	t.Parallel()
 	f := &fakeGitHub{repos: map[string][]gh.RepoAccess{
 		"reader":     {{RepoID: 100, Role: gh.RoleRead}, {RepoID: 101, Role: gh.RoleRead}},
 		"triager":    {{RepoID: 100, Role: gh.RoleTriage}, {RepoID: 101, Role: gh.RoleTriage}},
@@ -169,154 +245,128 @@ func TestReadRole(t *testing.T) {
 	}}
 	gated := vault.Vault{RepoID: 100, Name: "ours/gated", Config: vault.Config{ReadRole: gh.RoleTriage}}
 	open := vault.Vault{RepoID: 101, Name: "ours/open"}
-	r := NewResolver(f, served(gated, open), nil, store.NewMemory(), discard())
-	tests := []struct {
-		token    string
+	r := access.NewResolver(f, newLibrary([]vault.Vault{gated, open}, nil, nil), nil, store.NewMemory(), discard())
+	testCases := []struct {
+		name     string
 		readable []string
 		writable bool // ours/gated
 	}{
-		{token: "reader", readable: []string{"ours/open"}},
-		{token: "triager", readable: []string{"ours/gated", "ours/open"}},
-		{token: "maintainer", readable: []string{"ours/gated", "ours/open"}, writable: true},
+		{name: "reader", readable: []string{"ours/open"}},
+		{name: "triager", readable: []string{"ours/gated", "ours/open"}},
+		{name: "maintainer", readable: []string{"ours/gated", "ours/open"}, writable: true},
 	}
-	for _, tt := range tests {
-		t.Run(tt.token, func(t *testing.T) {
-			g, err := r.Resolve(t.Context(), User{Token: tt.token, Write: true})
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			g, err := r.Resolve(t.Context(), access.User{Token: testCase.name, Write: true})
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("got err %v, want nil", err)
 			}
-			var names []string
-			for _, v := range g.Readable() {
-				names = append(names, v.Name)
-			}
-			if diff := cmp.Diff(tt.readable, names); diff != "" {
+			if diff := cmp.Diff(testCase.readable, names(g.Readable())); diff != "" {
 				t.Errorf("readable (-want +got):\n%s", diff)
 			}
-			if g.CanWrite(100) != tt.writable {
-				t.Errorf("CanWrite(ours/gated) = %v", g.CanWrite(100))
+			if got := g.CanWrite(100); got != testCase.writable {
+				t.Errorf("CanWrite(ours/gated): got %v, want %v", got, testCase.writable)
 			}
 		})
 	}
 }
 
 func TestReadersAndWriters(t *testing.T) {
+	t.Parallel()
 	rw := []gh.RepoAccess{{RepoID: 100, Role: gh.RoleWrite}, {RepoID: 101, Role: gh.RoleWrite}}
-	f := &fakeGitHub{
-		repos: map[string][]gh.RepoAccess{
-			"alice": rw,
-			"carol": rw,
-			"dave":  rw,
-			"erin":  {{RepoID: 100, Role: gh.RoleRead}, {RepoID: 101, Role: gh.RoleRead}},
-			"frank": rw,
-		},
-		teams: map[string][]string{
-			"alice": {"ours/editors"},
-			"dave":  {"ours/editors", "ours/leads"},
-			"erin":  {"ours/editors", "ours/leads"},
-			"frank": {"ours/leads"},
-		},
-	}
 	gated := vault.Vault{RepoID: 100, Name: "ours/gated", Config: vault.Config{
 		Readers: []vault.Principal{{Org: "ours", Team: "editors"}, {Login: "Carol"}},
 		Writers: []vault.Principal{{Org: "ours", Team: "leads"}},
 	}}
 	open := vault.Vault{RepoID: 101, Name: "ours/open"}
-	r := NewResolver(f, served(gated, open), nil, store.NewMemory(), discard())
-	tests := []struct {
-		login    string
-		readable []string
-		writable bool // ours/gated
+	testCases := []struct {
+		name      string
+		login     string
+		repos     []gh.RepoAccess
+		teams     []string
+		readOnly  bool
+		readable  []string
+		writeGate bool // ours/gated
+		writeOpen bool // ours/open
+		asked     []string
 	}{
-		{login: "alice", readable: []string{"ours/gated", "ours/open"}},                // reader, not a writer
-		{login: "carol", readable: []string{"ours/gated", "ours/open"}},                // listed by login
-		{login: "dave", readable: []string{"ours/gated", "ours/open"}, writable: true}, // reader, writer, push
-		{login: "erin", readable: []string{"ours/gated", "ours/open"}},                 // writer without push
-		{login: "frank", readable: []string{"ours/open"}},                              // writer who isn't a reader
+		{
+			name: "reader, not a writer", login: "alice", repos: rw, teams: []string{"ours/editors"},
+			readable: []string{"ours/gated", "ours/open"}, writeOpen: true, asked: []string{"ours/editors", "ours/leads"},
+		},
+		{
+			name: "listed by login", login: "carol", repos: rw,
+			readable: []string{"ours/gated", "ours/open"}, writeOpen: true, asked: []string{"ours/leads"},
+		},
+		{
+			name: "reader, writer, push", login: "dave", repos: rw, teams: []string{"ours/editors", "ours/leads"},
+			readable: []string{"ours/gated", "ours/open"}, writeGate: true, writeOpen: true, asked: []string{"ours/editors", "ours/leads"},
+		},
+		{
+			name: "writer without push", login: "erin", teams: []string{"ours/editors", "ours/leads"},
+			repos:    []gh.RepoAccess{{RepoID: 100, Role: gh.RoleRead}, {RepoID: 101, Role: gh.RoleRead}},
+			readable: []string{"ours/gated", "ours/open"}, asked: []string{"ours/editors"},
+		},
+		{
+			name: "writer who isn't a reader", login: "frank", repos: rw, teams: []string{"ours/leads"},
+			readable: []string{"ours/open"}, writeOpen: true, asked: []string{"ours/editors"},
+		},
+		{
+			name: "read-only session doesn't ask about writers", login: "dave", repos: rw, teams: []string{"ours/editors", "ours/leads"},
+			readOnly: true, readable: []string{"ours/gated", "ours/open"}, asked: []string{"ours/editors"},
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.login, func(t *testing.T) {
-			g, err := r.Resolve(t.Context(), User{Login: tt.login, Token: tt.login, Write: true})
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGitHub{
+				repos: map[string][]gh.RepoAccess{testCase.login: testCase.repos},
+				teams: map[string][]string{testCase.login: testCase.teams},
+			}
+			r := access.NewResolver(f, newLibrary([]vault.Vault{gated, open}, nil, nil), nil, store.NewMemory(), discard())
+			g, err := r.Resolve(t.Context(), access.User{Login: testCase.login, Token: testCase.login, Write: !testCase.readOnly})
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("got err %v, want nil", err)
 			}
-			var names []string
-			for _, v := range g.Readable() {
-				names = append(names, v.Name)
-			}
-			if diff := cmp.Diff(tt.readable, names); diff != "" {
+			if diff := cmp.Diff(testCase.readable, names(g.Readable())); diff != "" {
 				t.Errorf("readable (-want +got):\n%s", diff)
 			}
-			if g.CanWrite(100) != tt.writable {
-				t.Errorf("CanWrite(ours/gated) = %v", g.CanWrite(100))
+			if got := g.CanWrite(100); got != testCase.writeGate {
+				t.Errorf("CanWrite(ours/gated): got %v, want %v", got, testCase.writeGate)
 			}
-			if g.CanWrite(101) != (tt.login != "erin") {
-				t.Errorf("CanWrite(ours/open) = %v", g.CanWrite(101))
+			if got := g.CanWrite(101); got != testCase.writeOpen {
+				t.Errorf("CanWrite(ours/open): got %v, want %v", got, testCase.writeOpen)
+			}
+			if diff := cmp.Diff(testCase.asked, f.asked); diff != "" {
+				t.Errorf("teams asked about (-want +got):\n%s", diff)
 			}
 		})
-	}
-
-	// Team answers are cached with the rest.
-	calls := f.calls
-	_, err := r.Resolve(t.Context(), User{Login: "dave", Token: "dave", Write: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.calls != calls {
-		t.Error("second resolve asked GitHub about teams again")
-	}
-
-	// A read-only session doesn't ask about writers.
-	f.repos["dave-ro"] = rw
-	f.asked = nil
-	_, err = r.Resolve(t.Context(), User{Login: "dave", Token: "dave-ro"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]string{"ours/editors"}, f.asked); diff != "" {
-		t.Errorf("teams asked about (-want +got):\n%s", diff)
 	}
 }
 
 func TestReadOnlySessionNeverWrites(t *testing.T) {
-	_, r := setup()
+	t.Parallel()
+	_, r := setup(t)
 	// A read-write session fills the cache first; the read-only one must not inherit its write access.
-	_, err := r.Resolve(t.Context(), User{Token: "alice", Write: true})
+	if _, err := r.Resolve(t.Context(), access.User{Token: "alice", Write: true}); err != nil {
+		t.Fatalf("got err %v, want nil", err)
+	}
+	g, err := r.Resolve(t.Context(), access.User{Token: "alice"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("got err %v, want nil", err)
 	}
-	g, err := r.Resolve(t.Context(), User{Token: "alice", Write: false})
-	if err != nil {
-		t.Fatal(err)
+	if g.CanWrite(100) {
+		t.Errorf("CanWrite(ours/kb): got true, want false")
 	}
-	if g.CanWrite(100) || !g.ReadOnlySession() {
-		t.Error("read-only session can write")
-	}
-}
-
-func TestTurnedAway(t *testing.T) {
-	f, r := setup()
-	f.revoked["gone"] = true
-	tests := []struct {
-		token string
-		want  error
-	}{
-		{"eve", ErrNotMember},
-		{"bob", ErrNoVaults},
-		{"gone", ErrUnauthorized},
-	}
-	for _, tt := range tests {
-		_, err := r.Resolve(t.Context(), User{Token: tt.token})
-		if !errors.Is(err, tt.want) {
-			t.Errorf("%s: %v, want %v", tt.token, err, tt.want)
-		}
-	}
-	if err := r.CheckMember(t.Context(), "eve"); !errors.Is(err, ErrNotMember) {
-		t.Errorf("CheckMember(eve) = %v", err)
+	if !g.ReadOnlySession() {
+		t.Errorf("ReadOnlySession: got false, want true")
 	}
 }
 
 func TestUnservedVaultsNoWait(t *testing.T) {
-	tests := []struct {
+	t.Parallel()
+	testCases := []struct {
 		name        string
 		token       string
 		serving     []vault.Vault
@@ -326,14 +376,6 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 		unavailable []string // name:state
 		err         error
 	}{
-		{
-			name:        "one served, one building",
-			token:       "alice",
-			serving:     []vault.Vault{kb},
-			building:    []vault.Vault{infra},
-			readable:    []string{"ours/kb"},
-			unavailable: []string{"ours/infra:building"},
-		},
 		{
 			name:        "served, building and failed",
 			token:       "alice",
@@ -378,40 +420,36 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 			name:     "only others' vaults building",
 			token:    "bob",
 			building: []vault.Vault{kb, infra},
-			err:      ErrNoVaults,
+			err:      access.ErrNoVaults,
 		},
 		{
 			name:     "own vault failed, others' building",
 			token:    "alice",
 			building: []vault.Vault{other},
 			failed:   []vault.Vault{kb},
-			err:      ErrVaultsFailed,
+			err:      access.ErrVaultsFailed,
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				f, _ := setup()
+				f := newGitHub(t)
 				f.teams = map[string][]string{"alice": {"ours/editors"}}
-				lib := served(tt.serving...)
-				lib.building, lib.failed = tt.building, tt.failed
-				r := NewResolver(f, lib, nil, store.NewMemory(), discard())
+				lib := newLibrary(testCase.serving, testCase.building, testCase.failed)
+				r := access.NewResolver(f, lib, nil, store.NewMemory(), discard())
 				start := time.Now()
-				g, err := r.Resolve(t.Context(), User{Login: tt.token, Token: tt.token})
+				g, err := r.Resolve(t.Context(), access.User{Login: testCase.token, Token: testCase.token})
 				if waited := time.Since(start); waited != 0 {
-					t.Errorf("waited %v", waited)
+					t.Errorf("waited: got %v, want 0", waited)
 				}
-				if !errors.Is(err, tt.err) {
-					t.Fatalf("err = %v, want %v", err, tt.err)
+				if !errors.Is(err, testCase.err) {
+					t.Fatalf("got err %v, want %v", err, testCase.err)
 				}
 				if err != nil {
 					return
 				}
-				var names []string
-				for _, v := range g.Readable() {
-					names = append(names, v.Name)
-				}
-				if diff := cmp.Diff(tt.readable, names); diff != "" {
+				if diff := cmp.Diff(testCase.readable, names(g.Readable())); diff != "" {
 					t.Errorf("readable (-want +got):\n%s", diff)
 				}
 				var unavailable []string
@@ -421,13 +459,14 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 						t.Errorf("%s is both readable and unavailable", u.Vault.Name)
 					}
 				}
-				if diff := cmp.Diff(tt.unavailable, unavailable); diff != "" {
+				if diff := cmp.Diff(testCase.unavailable, unavailable); diff != "" {
 					t.Errorf("unavailable (-want +got):\n%s", diff)
 				}
-				for _, v := range append(tt.building, tt.failed...) {
-					_, ok := g.UnavailableVault(strings.ToUpper(v.Name))
-					if want := slices.Contains(unavailable, v.Name+":building") || slices.Contains(unavailable, v.Name+":failed"); ok != want {
-						t.Errorf("UnavailableVault(%s) = %v, want %v", v.Name, ok, want)
+				for _, v := range append(testCase.building, testCase.failed...) {
+					_, got := g.UnavailableVault(strings.ToUpper(v.Name))
+					want := slices.Contains(unavailable, v.Name+":building") || slices.Contains(unavailable, v.Name+":failed")
+					if got != want {
+						t.Errorf("UnavailableVault(%s): got %v, want %v", v.Name, got, want)
 					}
 				}
 			})
@@ -438,66 +477,71 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 // A failed read check on a vault that isn't served leaves that vault out, rather than turning away a user
 // who has served vaults. Without served vaults, the error stands.
 func TestUnavailableCheckFails(t *testing.T) {
-	f, _ := setup()
+	t.Parallel()
+	f := newGitHub(t)
 	f.teamErr = errors.New("GitHub is down")
 	gated := configured(docs, vault.Config{Readers: []vault.Principal{{Org: "ours", Team: "editors"}}})
-	lib := served(kb)
-	lib.building = []vault.Vault{gated}
+	lib := newLibrary([]vault.Vault{kb}, []vault.Vault{gated}, nil)
 	var logs strings.Builder
-	r := NewResolver(f, lib, nil, store.NewMemory(), slog.New(slog.NewTextHandler(&logs, nil)))
-	u := User{Login: "alice", Token: "alice"}
+	r := access.NewResolver(f, lib, nil, store.NewMemory(), slog.New(slog.NewTextHandler(&logs, nil)))
+	u := access.User{Login: "alice", Token: "alice"}
+
 	g, err := r.Resolve(t.Context(), u)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("got err %v, want nil", err)
 	}
-	if len(g.Unavailable()) != 0 || len(g.Readable()) != 1 {
-		t.Errorf("readable %v, unavailable %v", g.Readable(), g.Unavailable())
+	if diff := cmp.Diff([]string{"ours/kb"}, names(g.Readable())); diff != "" {
+		t.Errorf("readable (-want +got):\n%s", diff)
+	}
+	if len(g.Unavailable()) != 0 {
+		t.Errorf("unavailable: got %v, want none", g.Unavailable())
 	}
 	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "ours/docs") {
-		t.Errorf("logs = %s", logs.String())
+		t.Errorf("logs: got %q, want a warning naming ours/docs", logs.String())
 	}
 
 	lib.setQuietly(nil, []vault.Vault{gated}, nil)
 	if _, err := r.Resolve(t.Context(), u); !errors.Is(err, f.teamErr) {
-		t.Errorf("without served vaults: err = %v", err)
+		t.Errorf("without served vaults: got err %v, want %v", err, f.teamErr)
 	}
 
+	f.mu.Lock()
 	f.teamErr = nil
 	f.revoked["alice"] = true
+	f.mu.Unlock()
 	lib.setQuietly([]vault.Vault{kb}, []vault.Vault{gated}, nil) // repositories still cached: only the team check sees it
-	if _, err := r.Resolve(t.Context(), u); !errors.Is(err, ErrUnauthorized) {
-		t.Errorf("revoked token: err = %v", err)
+	if _, err := r.Resolve(t.Context(), u); !errors.Is(err, access.ErrUnauthorized) {
+		t.Errorf("revoked token: got err %v, want %v", err, access.ErrUnauthorized)
 	}
 }
 
 func TestUnavailableTeamChecksCached(t *testing.T) {
-	f, _ := setup()
+	t.Parallel()
+	f := newGitHub(t)
 	f.teams = map[string][]string{"alice": {"ours/editors"}}
 	gated := configured(docs, vault.Config{Readers: []vault.Principal{{Org: "ours", Team: "editors"}}})
-	lib := served(kb)
-	lib.building = []vault.Vault{gated}
-	r := NewResolver(f, lib, nil, store.NewMemory(), discard())
-	for range 3 {
-		g, err := r.Resolve(t.Context(), User{Login: "alice", Token: "alice"})
+	r := access.NewResolver(f, newLibrary([]vault.Vault{kb}, []vault.Vault{gated}, nil), nil, store.NewMemory(), discard())
+	for range 2 {
+		g, err := r.Resolve(t.Context(), access.User{Login: "alice", Token: "alice"})
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("got err %v, want nil", err)
 		}
 		if len(g.Unavailable()) != 1 {
-			t.Errorf("unavailable = %v", g.Unavailable())
+			t.Errorf("unavailable: got %v, want ours/docs", g.Unavailable())
 		}
 	}
-	if len(f.asked) != 1 {
-		t.Errorf("asked GitHub about teams %d times: %v", len(f.asked), f.asked)
+	if diff := cmp.Diff([]string{"ours/editors"}, f.asked); diff != "" {
+		t.Errorf("teams asked about (-want +got):\n%s", diff)
 	}
 }
 
 type resolved struct {
-	grant *Grant
+	grant *access.Grant
 	err   error
 }
 
 // resolveLater resolves u in a goroutine, for tests that move vaults meanwhile.
-func resolveLater(ctx context.Context, r *Resolver, u User) <-chan resolved {
+func resolveLater(ctx context.Context, r *access.Resolver, u access.User) <-chan resolved {
 	done := make(chan resolved, 1)
 	go func() {
 		g, err := r.Resolve(ctx, u)
@@ -507,151 +551,114 @@ func resolveLater(ctx context.Context, r *Resolver, u User) <-chan resolved {
 }
 
 func TestWaitForBuildingVault(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		f, _ := setup()
-		lib := served()
-		lib.building = []vault.Vault{kb, infra}
-		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
+		f := newGitHub(t)
+		lib := newLibrary(nil, []vault.Vault{kb, infra}, nil)
+		r := access.NewResolver(f, lib, nil, store.NewMemory(), discard())
 		start := time.Now()
-		done := resolveLater(t.Context(), r, User{Token: "alice"})
+		done := resolveLater(t.Context(), r, access.User{Token: "alice"})
 		synctest.Wait()
-		f.mu.Lock()
-		calls := f.calls
-		f.mu.Unlock()
+		calls := f.callCount()
 
 		lib.set(nil, []vault.Vault{kb, infra}, []vault.Vault{other}) // a change that serves nothing
 		synctest.Wait()
 		select {
 		case res := <-done:
-			t.Fatalf("stopped waiting before a vault was served: %v", res.err)
+			t.Fatalf("stopped waiting before a vault was served: got err %v", res.err)
 		default:
 		}
 
 		lib.set([]vault.Vault{kb}, []vault.Vault{infra}, nil)
 		res := <-done
 		if res.err != nil {
-			t.Fatal(res.err)
+			t.Fatalf("got err %v, want nil", res.err)
 		}
-		if _, ok := res.grant.Vault("ours/kb"); !ok || len(res.grant.Readable()) != 1 {
-			t.Errorf("readable = %v", res.grant.Readable())
-		}
-		if waited := time.Since(start); waited != 0 {
-			t.Errorf("waited %v after the vault was served", waited)
-		}
-		if f.calls != calls {
-			t.Error("waiting asked GitHub again")
-		}
-	})
-}
-
-func TestNotReadyAfterWait(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		f, _ := setup()
-		lib := served()
-		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
-		r.wait = time.Second
-		start := time.Now()
-		_, err := r.Resolve(t.Context(), User{Token: "alice"})
-		if !errors.Is(err, ErrNotReady) {
-			t.Errorf("err = %v, want ErrNotReady", err)
-		}
-		if waited := time.Since(start); waited != r.wait {
-			t.Errorf("waited %v, want %v", waited, r.wait)
-		}
-	})
-}
-
-func TestWaitEndsWithContext(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		f, _ := setup()
-		lib := served()
-		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
-		ctx, cancel := context.WithCancel(t.Context())
-		start := time.Now()
-		done := resolveLater(ctx, r, User{Token: "alice"})
-		synctest.Wait()
-		cancel()
-		res := <-done
-		if !errors.Is(res.err, ErrNotReady) || !errors.Is(res.err, context.Canceled) {
-			t.Errorf("err = %v, want ErrNotReady and context.Canceled", res.err)
+		if diff := cmp.Diff([]string{"ours/kb"}, names(res.grant.Readable())); diff != "" {
+			t.Errorf("readable (-want +got):\n%s", diff)
 		}
 		if waited := time.Since(start); waited != 0 {
-			t.Errorf("waited %v after ctx ended", waited)
+			t.Errorf("waited after the vault was served: got %v, want 0", waited)
+		}
+		if got := f.callCount(); got != calls {
+			t.Errorf("GitHub calls while waiting: got %d, want 0", got-calls)
 		}
 	})
 }
 
-func TestWaitEndsWhenBuildingStops(t *testing.T) {
-	tests := []struct {
-		name   string
-		failed []vault.Vault
-		err    error
+// The resolver waits 30 seconds by default for a vault being built.
+func TestWaitEnds(t *testing.T) {
+	t.Parallel()
+	const fullWait = 30 * time.Second
+	testCases := []struct {
+		name      string
+		stopFirst bool
+		act       func(lib *fakeLibrary, r *access.Resolver, cancel context.CancelFunc) // nil lets the wait run out
+		err       []error                                                               // nil means no error
+		waited    time.Duration
 	}{
-		{name: "vault failed", failed: []vault.Vault{kb}, err: ErrVaultsFailed},
-		{name: "vault removed", err: ErrNoVaults},
+		{name: "nothing served in time", err: []error{access.ErrNotReady}, waited: fullWait},
+		{
+			name: "served without a wake-up gets a last look",
+			act: func(lib *fakeLibrary, _ *access.Resolver, _ context.CancelFunc) {
+				lib.setQuietly([]vault.Vault{kb}, nil, nil)
+			},
+			waited: fullWait,
+		},
+		{
+			name: "vault failed",
+			act:  func(lib *fakeLibrary, _ *access.Resolver, _ context.CancelFunc) { lib.set(nil, nil, []vault.Vault{kb}) },
+			err:  []error{access.ErrVaultsFailed},
+		},
+		{
+			name: "vault removed",
+			act:  func(lib *fakeLibrary, _ *access.Resolver, _ context.CancelFunc) { lib.set(nil, nil, nil) },
+			err:  []error{access.ErrNoVaults},
+		},
+		{
+			name: "context ends",
+			act:  func(_ *fakeLibrary, _ *access.Resolver, cancel context.CancelFunc) { cancel() },
+			err:  []error{access.ErrNotReady, context.Canceled},
+		},
+		{
+			name: "resolver stops",
+			act:  func(_ *fakeLibrary, r *access.Resolver, _ context.CancelFunc) { r.Stop() },
+			err:  []error{access.ErrNotReady},
+		},
+		{name: "resolver already stopped", stopFirst: true, err: []error{access.ErrNotReady}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				f, _ := setup()
-				lib := served()
-				lib.building = []vault.Vault{kb}
-				r := NewResolver(f, lib, nil, store.NewMemory(), discard())
-				start := time.Now()
-				done := resolveLater(t.Context(), r, User{Token: "alice"})
-				synctest.Wait()
-				lib.set(nil, nil, tt.failed)
-				res := <-done
-				if !errors.Is(res.err, tt.err) {
-					t.Errorf("err = %v, want %v", res.err, tt.err)
+				lib := newLibrary(nil, []vault.Vault{kb}, nil)
+				r := access.NewResolver(newGitHub(t), lib, nil, store.NewMemory(), discard())
+				if testCase.stopFirst {
+					r.Stop()
 				}
-				if waited := time.Since(start); waited != 0 {
-					t.Errorf("waited %v", waited)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				start := time.Now()
+				done := resolveLater(ctx, r, access.User{Token: "alice"})
+				synctest.Wait()
+				if testCase.act != nil {
+					testCase.act(lib, r, cancel)
+				}
+				res := <-done
+				if testCase.err == nil && res.err != nil {
+					t.Errorf("got err %v, want nil", res.err)
+				}
+				for _, want := range testCase.err {
+					if !errors.Is(res.err, want) {
+						t.Errorf("got err %v, want %v", res.err, want)
+					}
+				}
+				if waited := time.Since(start); waited != testCase.waited {
+					t.Errorf("waited: got %v, want %v", waited, testCase.waited)
 				}
 			})
 		})
 	}
-}
-
-func TestLastLookWhenWaitEnds(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		f, _ := setup()
-		lib := served()
-		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
-		done := resolveLater(t.Context(), r, User{Token: "alice"})
-		synctest.Wait()
-		lib.setQuietly([]vault.Vault{kb}, nil, nil) // served, but the waiter isn't woken
-		res := <-done
-		if res.err != nil {
-			t.Fatalf("a vault served by the end of the wait gave %v", res.err)
-		}
-	})
-}
-
-func TestStopEndsWaits(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		f, _ := setup()
-		lib := served()
-		lib.building = []vault.Vault{kb}
-		r := NewResolver(f, lib, nil, store.NewMemory(), discard())
-		start := time.Now()
-		done := resolveLater(t.Context(), r, User{Token: "alice"})
-		synctest.Wait()
-		r.Stop()
-		if res := <-done; !errors.Is(res.err, ErrNotReady) {
-			t.Errorf("waiting: err = %v, want ErrNotReady", res.err)
-		}
-		_, err := r.Resolve(t.Context(), User{Token: "alice"})
-		if !errors.Is(err, ErrNotReady) {
-			t.Errorf("after Stop: err = %v, want ErrNotReady", err)
-		}
-		if waited := time.Since(start); waited != 0 {
-			t.Errorf("waited %v", waited)
-		}
-	})
 }
 
 // countingCache counts reads, which go to Redis when there are several instances.
@@ -675,106 +682,92 @@ func (c *countingCache) count() int {
 }
 
 func TestWakingDoesNotCheckReadersAgain(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		f, _ := setup()
+		f := newGitHub(t)
 		f.teams = map[string][]string{"alice": {"ours/editors"}}
-		gated := kb
-		gated.Config.Readers = []vault.Principal{{Org: "ours", Team: "editors"}}
-		lib := served()
-		lib.building = []vault.Vault{gated}
+		gated := configured(kb, vault.Config{Readers: []vault.Principal{{Org: "ours", Team: "editors"}}})
+		lib := newLibrary(nil, []vault.Vault{gated}, nil)
 		c := &countingCache{Memory: store.NewMemory()}
-		r := NewResolver(f, lib, nil, c, discard())
-		done := resolveLater(t.Context(), r, User{Login: "alice", Token: "alice"})
+		r := access.NewResolver(f, lib, nil, c, discard())
+		done := resolveLater(t.Context(), r, access.User{Login: "alice", Token: "alice"})
 		synctest.Wait()
 		gets := c.count()
-		for range 3 {
-			lib.set(nil, []vault.Vault{gated}, nil)
-			synctest.Wait()
-		}
-		if c.count() != gets {
-			t.Errorf("waking read the cache %d more times", c.count()-gets)
+		lib.set(nil, []vault.Vault{gated}, nil)
+		synctest.Wait()
+		if got := c.count() - gets; got != 0 {
+			t.Errorf("cache reads on waking: got %d, want 0", got)
 		}
 		lib.set([]vault.Vault{gated}, nil, nil)
 		if res := <-done; res.err != nil {
-			t.Fatal(res.err)
+			t.Fatalf("got err %v, want nil", res.err)
 		}
 	})
 }
 
 func TestCachePerToken(t *testing.T) {
-	f, r := setup()
-	now := time.Now()
-	r.now = func() time.Time { return now }
-	ctx := t.Context()
+	t.Parallel()
+	// The resolver and store.Memory read time.Now, which synctest's fake clock moves.
+	synctest.Test(t, func(t *testing.T) {
+		f, r := setup(t)
+		ctx := t.Context()
 
-	_, _ = r.Resolve(ctx, User{Token: "alice"})
-	calls := f.calls
-	_, _ = r.Resolve(ctx, User{Token: "alice"})
-	if f.calls != calls {
-		t.Error("second resolve within five minutes asked GitHub")
-	}
+		if _, err := r.Resolve(ctx, access.User{Token: "alice"}); err != nil {
+			t.Fatalf("got err %v, want nil", err)
+		}
+		calls := f.callCount()
+		if _, err := r.Resolve(ctx, access.User{Token: "alice"}); err != nil {
+			t.Fatalf("got err %v, want nil", err)
+		}
+		if got := f.callCount() - calls; got != 0 {
+			t.Errorf("GitHub calls within five minutes: got %d, want 0", got)
+		}
 
-	// Another token of the same user is checked on its own: a revoked one stays revoked.
-	f.revoked["alice2"] = true
-	_, err := r.Resolve(ctx, User{ID: 1, Token: "alice2"})
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Errorf("revoked second token: %v", err)
-	}
+		// Another token of the same user is checked on its own: a revoked one stays revoked.
+		f.mu.Lock()
+		f.revoked["alice2"] = true
+		f.mu.Unlock()
+		if _, err := r.Resolve(ctx, access.User{ID: 1, Token: "alice2"}); !errors.Is(err, access.ErrUnauthorized) {
+			t.Errorf("revoked second token: got err %v, want %v", err, access.ErrUnauthorized)
+		}
 
-	// After five minutes GitHub is asked again, and a removed permission takes effect.
-	f.repos["alice"] = nil
-	now = now.Add(5*time.Minute + time.Second)
-	_, err = r.Resolve(ctx, User{Token: "alice"})
-	if !errors.Is(err, ErrNoVaults) {
-		t.Errorf("after expiry: %v", err)
-	}
-}
-
-func TestNoRequiredOrgs(t *testing.T) {
-	f, _ := setup()
-	r := NewResolver(f, served(kb), nil, store.NewMemory(), discard())
-	_, err := r.Resolve(t.Context(), User{Token: "eve"})
-	if err != nil {
-		t.Errorf("without required orgs: %v", err)
-	}
-}
-
-func TestVaultNamesFoldASCIIOnly(t *testing.T) {
-	g := NewGrant(User{}, []vault.Vault{{RepoID: 1, Name: "ours/kb"}}, nil)
-	if v, ok := g.Vault("Ours/KB"); !ok || v.Name != "ours/kb" {
-		t.Errorf("Ours/KB = %+v, %v", v, ok)
-	}
-	if _, ok := g.Vault("ours/\u212ab"); ok { // a Kelvin sign
-		t.Error("a Kelvin sign matched a k")
-	}
+		// After five minutes GitHub is asked again, and a removed permission takes effect.
+		f.mu.Lock()
+		f.repos["alice"] = nil
+		f.mu.Unlock()
+		time.Sleep(5*time.Minute + time.Second)
+		if _, err := r.Resolve(ctx, access.User{Token: "alice"}); !errors.Is(err, access.ErrNoVaults) {
+			t.Errorf("after expiry: got err %v, want %v", err, access.ErrNoVaults)
+		}
+	})
 }
 
 func TestCacheShared(t *testing.T) {
+	t.Parallel()
 	mr := miniredis.RunT(t)
-	shared, err := store.NewRedis(t.Context(), "redis://"+mr.Addr(), slog.New(slog.DiscardHandler))
+	shared, err := store.NewRedis(t.Context(), "redis://"+mr.Addr(), discard())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("got err %v, want nil", err)
 	}
 	t.Cleanup(func() { _ = shared.Close() })
-	f, _ := setup()
-	vaults := served(kb)
-	one := NewResolver(f, vaults, []string{"ours"}, shared, discard())
-	two := NewResolver(f, vaults, []string{"ours"}, shared, discard())
+	f := newGitHub(t)
+	vaults := newLibrary([]vault.Vault{kb}, nil, nil)
+	one := access.NewResolver(f, vaults, []string{"ours"}, shared, discard())
+	two := access.NewResolver(f, vaults, []string{"ours"}, shared, discard())
 
-	_, err = one.Resolve(t.Context(), User{Token: "alice"})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := one.Resolve(t.Context(), access.User{Token: "alice"}); err != nil {
+		t.Fatalf("got err %v, want nil", err)
 	}
-	calls := f.calls
-	g, err := two.Resolve(t.Context(), User{Token: "alice", Write: true})
+	calls := f.callCount()
+	g, err := two.Resolve(t.Context(), access.User{Token: "alice", Write: true})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("got err %v, want nil", err)
 	}
-	if f.calls != calls {
-		t.Error("second instance asked GitHub again")
+	if got := f.callCount() - calls; got != 0 {
+		t.Errorf("GitHub calls from the second instance: got %d, want 0", got)
 	}
 	if !g.CanWrite(kb.RepoID) {
-		t.Error("cached role lost write access")
+		t.Errorf("CanWrite(ours/kb) from the cached role: got false, want true")
 	}
 	for _, k := range mr.Keys() {
 		if strings.Contains(k, "alice") {
@@ -794,11 +787,10 @@ func (failingCache) Set(context.Context, string, []byte, time.Duration) error {
 }
 
 func TestCacheDownAsksGitHub(t *testing.T) {
-	f, _ := setup()
-	r := NewResolver(f, served(kb), nil, failingCache{}, discard())
-	_, err := r.Resolve(t.Context(), User{Token: "alice"})
-	if err != nil {
-		t.Errorf("with the cache down: %v", err)
+	t.Parallel()
+	r := access.NewResolver(newGitHub(t), newLibrary([]vault.Vault{kb}, nil, nil), nil, failingCache{}, discard())
+	if _, err := r.Resolve(t.Context(), access.User{Token: "alice"}); err != nil {
+		t.Errorf("got err %v, want nil", err)
 	}
 }
 
@@ -814,39 +806,58 @@ func (b blockingGitHub) UserRepositories(ctx context.Context, token string) ([]g
 }
 
 func TestConcurrentMissesShareOneLookup(t *testing.T) {
-	f, _ := setup()
-	b := blockingGitHub{fakeGitHub: f, release: make(chan struct{})}
-	r := NewResolver(b, served(kb), nil, store.NewMemory(), discard())
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newGitHub(t)
+		b := blockingGitHub{fakeGitHub: f, release: make(chan struct{})}
+		r := access.NewResolver(b, newLibrary([]vault.Vault{kb}, nil, nil), nil, store.NewMemory(), discard())
 
-	// A caller that leaves doesn't fail the lookup for the others.
-	gone, cancel := context.WithCancel(t.Context())
-	left := make(chan error)
-	go func() {
-		_, err := r.Resolve(gone, User{Token: "alice"})
-		left <- err
-	}()
-	var wg sync.WaitGroup
-	errs := make(chan error, 10)
-	for range 10 {
-		wg.Go(func() {
-			_, err := r.Resolve(t.Context(), User{Token: "alice"})
-			errs <- err
-		})
-	}
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-	if err := <-left; !errors.Is(err, context.Canceled) {
-		t.Errorf("caller that left: %v", err)
-	}
-	close(b.release)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Error(err)
+		// A caller that leaves doesn't fail the lookup for the others.
+		gone, cancel := context.WithCancel(t.Context())
+		left := resolveLater(gone, r, access.User{Token: "alice"})
+		var stayed []<-chan resolved
+		for range 3 {
+			stayed = append(stayed, resolveLater(t.Context(), r, access.User{Token: "alice"}))
 		}
+		synctest.Wait()
+		cancel()
+		if res := <-left; !errors.Is(res.err, context.Canceled) {
+			t.Errorf("caller that left: got err %v, want %v", res.err, context.Canceled)
+		}
+		close(b.release)
+		for _, done := range stayed {
+			if res := <-done; res.err != nil {
+				t.Errorf("got err %v, want nil", res.err)
+			}
+		}
+		if got := f.callCount(); got != 1 {
+			t.Errorf("GitHub calls: got %d, want 1", got)
+		}
+	})
+}
+
+func TestGrantVaultNames(t *testing.T) {
+	t.Parallel()
+	g := access.NewGrant(access.User{}, []vault.Vault{{RepoID: 1, Name: "ours/kb"}}, nil)
+	testCases := []struct {
+		name   string
+		lookup string
+		found  bool
+	}{
+		{name: "ASCII case folds", lookup: "Ours/KB", found: true},
+		{name: "Kelvin sign is not a k", lookup: "ours/Kb"},
+		{name: "same length, different name", lookup: "ours/kc"},
 	}
-	if f.calls != 1 {
-		t.Errorf("GitHub asked %d times, want 1", f.calls)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			v, ok := g.Vault(testCase.lookup)
+			if ok != testCase.found {
+				t.Fatalf("Vault(%q) found: got %v, want %v", testCase.lookup, ok, testCase.found)
+			}
+			if ok && v.Name != "ours/kb" {
+				t.Errorf("Vault(%q): got %q, want %q", testCase.lookup, v.Name, "ours/kb")
+			}
+		})
 	}
 }
