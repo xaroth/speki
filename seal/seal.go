@@ -76,12 +76,9 @@ func ParseKeyring(raw []byte) (*Keyring, error) {
 		if _, dup := k.keys[entry.ID]; dup {
 			return nil, fmt.Errorf("key file: duplicate key id %q", entry.ID)
 		}
-		secret, err := base64.StdEncoding.DecodeString(entry.Secret)
+		secret, err := decodeSecret(entry.Secret)
 		if err != nil {
-			return nil, fmt.Errorf("key file: key %q: secret isn't base64", entry.ID)
-		}
-		if len(secret) < 32 {
-			return nil, fmt.Errorf("key file: key %q is %d bytes, at least 32 needed", entry.ID, len(secret))
+			return nil, fmt.Errorf("key file: key %q: %w", entry.ID, err)
 		}
 		k.keys[entry.ID] = secret
 		if entry.Primary {
@@ -95,6 +92,30 @@ func ParseKeyring(raw []byte) (*Keyring, error) {
 		return nil, errors.New("key file: no primary key")
 	}
 	return k, nil
+}
+
+// SingleKeyID is the ID of the key in a keyring made by SingleKey. A key file that replaces a single key
+// must list that key under this ID, or the values sealed with it stop opening.
+const SingleKeyID = "default"
+
+// SingleKey makes a keyring of one key, the primary, from base64 of at least 32 random bytes.
+func SingleKey(secret string) (*Keyring, error) {
+	key, err := decodeSecret(secret)
+	if err != nil {
+		return nil, fmt.Errorf("key: %w", err)
+	}
+	return &Keyring{primary: SingleKeyID, keys: map[string][]byte{SingleKeyID: key}, now: time.Now}, nil
+}
+
+func decodeSecret(s string) ([]byte, error) {
+	secret, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, errors.New("secret isn't base64")
+	}
+	if len(secret) < 32 {
+		return nil, fmt.Errorf("secret is %d bytes, at least 32 needed", len(secret))
+	}
+	return secret, nil
 }
 
 type envelope struct {

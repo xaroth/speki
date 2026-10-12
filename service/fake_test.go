@@ -245,9 +245,13 @@ func testConfig(t *testing.T, fake *fakeGitHub) Config {
 }
 
 func testKeys() string {
+	return "keys:\n  - id: test\n    secret: " + testSecret() + "\n    primary: true\n"
+}
+
+func testSecret() string {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
-	return "keys:\n  - id: test\n    secret: " + base64.StdEncoding.EncodeToString(b) + "\n    primary: true\n"
+	return base64.StdEncoding.EncodeToString(b)
 }
 
 // commit answers GraphQL createCommitOnBranch by committing to the repository on disk.

@@ -121,6 +121,42 @@ func TestRotation(t *testing.T) {
 	}
 }
 
+func TestSingleKeyMovesToKeyFile(t *testing.T) {
+	old := secret()
+	single, err := SingleKey(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := single.Seal(PurposeRefresh, "token", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(s, "v1.default.") {
+		t.Errorf("single key seals as %q", s[:11])
+	}
+	moved := keyring(t, fmt.Sprintf("keys:\n  - id: new\n    secret: %s\n    primary: true\n  - id: default\n    secret: %s\n", secret(), old))
+	var v string
+	if err := moved.Open(PurposeRefresh, s, &v); err != nil || v != "token" {
+		t.Errorf("key file with the single key as default: %q, %v", v, err)
+	}
+}
+
+func TestSingleKeyRejects(t *testing.T) {
+	tests := []struct{ name, secret, want string }{
+		{"short key", base64.StdEncoding.EncodeToString([]byte("too short")), "at least 32"},
+		{"not base64", "!!", "isn't base64"},
+		{"empty", "", "at least 32"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SingleKey(tt.secret)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseKeyringRejects(t *testing.T) {
 	good := secret()
 	short := base64.StdEncoding.EncodeToString([]byte("too short"))

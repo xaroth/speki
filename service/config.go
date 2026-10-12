@@ -47,10 +47,29 @@ type Access struct {
 
 // Auth configures sign-in.
 type Auth struct {
+	// Key is a single key speki seals its tokens with: base64 of at least 32 random bytes. It can't be
+	// rotated; Keys can. Set one of Key and Keys.
+	Key string `yaml:"key"`
 	// Keys is the key file speki seals its tokens with.
 	Keys string `yaml:"keys"`
 	// ClientMetadataHosts are the hosts whose client metadata documents are accepted. Default claude.ai.
 	ClientMetadataHosts []string `yaml:"client_metadata_hosts"`
+}
+
+// keyring loads whichever of Key and Keys is set.
+func (a Auth) keyring() (*seal.Keyring, error) {
+	if a.Key != "" {
+		k, err := seal.SingleKey(a.Key)
+		if err != nil {
+			return nil, fmt.Errorf("auth.key: %w", err)
+		}
+		return k, nil
+	}
+	k, err := seal.ParseKeyring([]byte(a.Keys))
+	if err != nil {
+		return nil, fmt.Errorf("auth.keys: %w", err)
+	}
+	return k, nil
 }
 
 // GitHub identifies the GitHub App and where to reach GitHub.
@@ -172,10 +191,14 @@ func (c Config) validate() error {
 		errs = append(errs, errors.New("github.client_id and github.client_secret are required"))
 	}
 	errs = append(errs, checkPublicURL(c.PublicURL))
-	if c.Auth.Keys == "" {
-		errs = append(errs, errors.New("auth.keys (or auth.keys_file) is required"))
-	} else if _, err := seal.ParseKeyring([]byte(c.Auth.Keys)); err != nil {
-		errs = append(errs, fmt.Errorf("auth.keys: %w", err))
+	switch {
+	case c.Auth.Key == "" && c.Auth.Keys == "":
+		errs = append(errs, errors.New("auth.key or auth.keys (or auth.key_file or auth.keys_file) is required"))
+	case c.Auth.Key != "" && c.Auth.Keys != "":
+		errs = append(errs, errors.New("auth.key and auth.keys are both set: use one"))
+	default:
+		_, err := c.Auth.keyring()
+		errs = append(errs, err)
 	}
 	for _, h := range c.Auth.ClientMetadataHosts {
 		if h == "" || strings.ContainsAny(h, ":/@ ") || h != strings.ToLower(h) || strings.HasSuffix(h, ".") {

@@ -87,9 +87,17 @@ variables win over the YAML file, including over a secret file it names, which t
 Speki refuses to start when something required is missing or a value is invalid, and lists every such
 key at once.
 
-### The key file
+### Keys
 
-Speki seals its tokens with keys from this file:
+Speki seals its tokens with a key. Set exactly one of:
+
+- `auth.key`: a single key, base64 of at least 32 random bytes. Easiest to set from a secret store:
+  `SPEKI_AUTH_KEY_FILE=/run/secrets/speki-key`. It can't be rotated without first moving to a key file.
+- `auth.keys`: a key file, which can hold several keys and supports rotation.
+
+`openssl rand -base64 32` makes a good secret.
+
+The key file looks like this:
 
 ```yaml
 keys:
@@ -110,7 +118,18 @@ Removing a key early signs everyone out who still holds tokens sealed with it. I
 remove it and also revoke all user tokens in the GitHub App's settings: someone with the key could open
 captured tokens and use the GitHub token inside directly.
 
-`openssl rand -base64 32` makes a good secret.
+To rotate away from `auth.key`, first move it into a key file under the ID `default`, which is the ID
+speki gives the single key, so existing tokens keep opening:
+
+```yaml
+keys:
+  - id: default
+    secret: "the auth.key value"
+    primary: true
+```
+
+Replace `auth.key` with `auth.keys` on every instance and restart. Then rotate as above, starting by
+adding the replacement key. Listing the old key under any other ID signs everyone out.
 
 ## One instance or several
 
@@ -122,7 +141,7 @@ means a few users get checked against GitHub again.
 With `redis` configured, any number of instances can run behind a load balancer without sticky sessions.
 They share that state through Redis, and when one instance writes to a vault, it tells the others, so
 they pick up the change within seconds instead of at the next poll. Every instance needs the same
-configuration: the same `public_url`, GitHub App and key file, and the same Redis. An instance that can't
+configuration: the same `public_url`, GitHub App and keys, and the same Redis. An instance that can't
 reach Redis at startup refuses to start. If Redis goes away later, sign-in and refresh fail until it's
 back, and changes reach the other instances at their next poll.
 
