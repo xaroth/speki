@@ -40,11 +40,10 @@ func (c *Client) AppOwner(ctx context.Context) (int64, error) {
 // Installations lists every installation of the app.
 func (c *Client) Installations(ctx context.Context) ([]Installation, error) {
 	var out []Installation
-	opt := &github.ListOptions{PerPage: 100}
-	for {
+	err := listAll(func(opt *github.ListOptions) (*github.Response, error) {
 		page, resp, err := c.app.Apps.ListInstallations(ctx, opt)
 		if err != nil {
-			return nil, fmt.Errorf("list installations: %w", err)
+			return nil, err
 		}
 		for _, in := range page {
 			out = append(out, Installation{
@@ -53,11 +52,12 @@ func (c *Client) Installations(ctx context.Context) ([]Installation, error) {
 				Suspended: in.SuspendedAt != nil,
 			})
 		}
-		if resp.NextPage == 0 {
-			return out, nil
-		}
-		opt.Page = resp.NextPage
+		return resp, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list installations: %w", err)
 	}
+	return out, nil
 }
 
 // Repositories lists the repositories an installation can see. ErrNotFound means the installation is
@@ -68,11 +68,10 @@ func (c *Client) Repositories(ctx context.Context, installationID int64) ([]Repo
 		return nil, err
 	}
 	var out []Repository
-	opt := &github.ListOptions{PerPage: 100}
-	for {
+	err = listAll(func(opt *github.ListOptions) (*github.Response, error) {
 		page, resp, err := client.Apps.ListRepos(ctx, opt)
 		if err != nil {
-			return nil, fmt.Errorf("list repositories of installation %d: %w", installationID, notFound(err))
+			return nil, err
 		}
 		for _, r := range page.Repositories {
 			out = append(out, Repository{
@@ -82,11 +81,12 @@ func (c *Client) Repositories(ctx context.Context, installationID int64) ([]Repo
 				PushedAt:      r.GetPushedAt().Time,
 			})
 		}
-		if resp.NextPage == 0 {
-			return out, nil
-		}
-		opt.Page = resp.NextPage
+		return resp, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list repositories of installation %d: %w", installationID, notFound(err))
 	}
+	return out, nil
 }
 
 // maxFileSize is the largest file File reads: it's for small configuration files.
