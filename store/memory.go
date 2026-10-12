@@ -61,14 +61,6 @@ func (m *Memory) Get(_ context.Context, key string) ([]byte, bool, error) {
 	return e.value, true, nil
 }
 
-// Delete removes key.
-func (m *Memory) Delete(_ context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.values, key)
-	return nil
-}
-
 // Release removes key only while it still holds value.
 func (m *Memory) Release(_ context.Context, key string, value []byte) error {
 	m.mu.Lock()

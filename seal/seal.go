@@ -30,7 +30,6 @@ const (
 	PurposeCode        Purpose = "code"
 	PurposeAccess      Purpose = "access"
 	PurposeRefresh     Purpose = "refresh"
-	PurposeCache       Purpose = "cache" // values parked in a shared store
 )
 
 // ErrInvalid is returned by Open for a value that isn't a sealed value of that purpose from this keyring.
