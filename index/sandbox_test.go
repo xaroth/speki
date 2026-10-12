@@ -375,8 +375,8 @@ func TestQueryBrokenDocuments(t *testing.T) {
 // A query that needs more memory than SQLite may take fails as too large instead of growing the process.
 func TestQueryMemoryLimit(t *testing.T) {
 	sb, sources, _ := sandboxFixture(t)
-	setHardHeapLimit(64 << 20)
-	defer setHardHeapLimit(hardHeapLimit)
+	setHardHeapLimit(64 << 20) // lowers the soft limit with it
+	defer SetMemoryLimits(DefaultMemoryLimit, DefaultQueryMemory)
 	_, err := runQuery(t, sb, sources, "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 5000) SELECT x, printf('%.*c', 90000, 'a') AS s FROM c ORDER BY s, x DESC")
 	if !errors.Is(err, ErrQueryTooLarge) {
 		t.Errorf("error = %v", err)
@@ -405,6 +405,17 @@ func TestQueryMemoryBudget(t *testing.T) {
 			}
 			return
 		default:
+		}
+	}
+}
+
+// Raising the limit raises the soft limit with it, though SQLite caps it at the hard limit in force.
+func TestSetMemoryLimits(t *testing.T) {
+	defer SetMemoryLimits(DefaultMemoryLimit, DefaultQueryMemory)
+	for _, limit := range []int64{4096, 256} {
+		SetMemoryLimits(limit, 64)
+		if got := softHeapLimit(); got != limit<<19 {
+			t.Errorf("limit %d MiB: soft limit %d MiB", limit, got>>20)
 		}
 	}
 }

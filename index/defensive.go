@@ -52,29 +52,40 @@ import (
 	"github.com/mattn/go-sqlite3"
 )
 
-// SQLite's memory limits, for the whole process. Above the soft limit SQLite frees cache; at the hard
-// limit an allocation fails with SQLITE_NOMEM. The hard limit is what stops one query from taking the
-// process down: in-memory sorts and recursive queries can't spill to disk. Index builds stay far below it.
-// Sandbox queries are interrupted at queryMemoryBudget, which leaves the rest for search and indexing.
+// The default memory limits, in MiB. See SetMemoryLimits.
 const (
-	softHeapLimit     = 512 << 20
-	hardHeapLimit     = 1 << 30
-	queryMemoryBudget = 384 << 20
+	DefaultMemoryLimit = 1024
+	DefaultQueryMemory = 384
 )
+
+var hardHeapLimit, queryMemoryBudget int64
+
+func init() { SetMemoryLimits(DefaultMemoryLimit, DefaultQueryMemory) }
+
+// SetMemoryLimits sets SQLite's memory limits for the whole process, in MiB. At limit an allocation fails
+// with SQLITE_NOMEM: that's what stops one query from taking the process down, since in-memory sorts and
+// recursive queries can't spill to disk. Above half of it, SQLite frees cache. Sandbox queries are
+// interrupted past query, which leaves the rest for search and indexing. Set them before using indexes.
+func SetMemoryLimits(limit, query int64) {
+	hardHeapLimit, queryMemoryBudget = limit<<20, query<<20
+	setHardHeapLimit(hardHeapLimit) // first: SQLite caps the soft limit at the hard limit in force
+	C.sqlite3_soft_heap_limit64(C.longlong(hardHeapLimit / 2))
+	setQueryMemoryBudget(queryMemoryBudget)
+}
 
 var harden = sync.OnceValue(func() error {
 	rc := C.spekiRegisterHarden()
 	if rc != 0 {
 		return fmt.Errorf("register the sandbox hardening hook: sqlite error %d", rc)
 	}
-	C.sqlite3_soft_heap_limit64(softHeapLimit)
-	setHardHeapLimit(hardHeapLimit)
-	setQueryMemoryBudget(queryMemoryBudget)
 	return nil
 })
 
 // setHardHeapLimit changes the hard limit. Tests lower it to try a query that runs into it.
 func setHardHeapLimit(n int64) { C.sqlite3_hard_heap_limit64(C.longlong(n)) }
+
+// softHeapLimit returns the soft limit in force.
+func softHeapLimit() int64 { return int64(C.sqlite3_soft_heap_limit64(-1)) }
 
 // setQueryMemoryBudget changes the sandbox budget. Tests lower it.
 func setQueryMemoryBudget(n int64) { C.spekiSetQueryBudget(C.longlong(n)) }

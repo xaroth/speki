@@ -92,6 +92,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configuration: %w", err)
 	}
+	index.SetMemoryLimits(cfg.SQLite.MemoryLimit, cfg.SQLite.QueryMemory)
 
 	github, err := gh.New(gh.Config{
 		AppID:      cfg.GitHub.AppID,
