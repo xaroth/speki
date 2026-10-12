@@ -4,34 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in to {{.Name}}</title>
-<style>
-body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; color: #222; }
-.who { padding: .75rem 1rem; background: #f3f3f3; border-radius: .5rem; }
-.warn { padding: .75rem 1rem; background: #fff4d6; border-radius: .5rem; }
-label { display: block; margin: .5rem 0; }
-button { font: inherit; padding: .5rem 1.25rem; margin-right: .5rem; }
-</style>
+{{template "style"}}
 </head>
 <body>
+<div class="page">
+{{template "margin" .}}
+<main>
 <h1>Sign in to {{.Name}}</h1>
 {{if .Local}}
-<p class="who">A program on this computer wants access to {{.Name}}. It calls itself <strong>{{.Client}}</strong>,
+<p class="big">A program on this computer wants access to {{.Name}}. It calls itself <strong>{{.Client}}</strong>,
 but programs can call themselves anything.</p>
-<p class="warn">Only continue if you just started signing in from your own tool, like Claude Code.</p>
+<p class="aside warn">Only continue if you just started signing in from your own tool, like Claude Code.</p>
 {{else}}
-<p class="who"><strong>{{.Host}}</strong> wants access to {{.Name}}{{if .Client}} ({{.Client}}){{end}}.</p>
+<p class="big"><strong>{{.Host}}</strong> wants access to {{.Name}}{{if .Client}} ({{.Client}}){{end}}.</p>
 {{end}}
-<p>After signing in with GitHub, you'll be sent back to <strong>{{.Redirect}}</strong>.</p>
+<p class="note">After signing in with GitHub, you'll be sent back to <strong>{{.Redirect}}</strong>.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="consent" value="{{.Consent}}">
-{{if .AllowWrite}}<label><input type="radio" name="access" value="write" checked> Read and write: search, read and change
-knowledge in the vaults you can push to</label>
-{{end}}<label><input type="radio" name="access" value="read"{{if not .AllowWrite}} checked{{end}}> Read only: search and read, never change anything</label>
-<p>
-<button type="submit" name="decision" value="allow">Continue to GitHub</button>
-<button type="submit" name="decision" value="deny">Cancel</button>
+<fieldset>
+<legend>Access</legend>
+{{if .AllowWrite}}<label><input type="radio" name="access" value="write" checked> <span><strong>Read and write</strong>
+Search, read and change knowledge in the vaults you can push to</span></label>
+{{end}}<label><input type="radio" name="access" value="read"{{if not .AllowWrite}} checked{{end}}> <span><strong>Read only</strong>
+Search and read, never change anything</span></label>
+</fieldset>
+<p class="actions">
+<button class="continue" type="submit" name="decision" value="allow">Continue to GitHub</button>
+<button class="cancel" type="submit" name="decision" value="deny">Cancel</button>
 </p>
 </form>
+</main>
+</div>
 </body>
 </html>
 {{end}}

@@ -93,7 +93,10 @@ func (s *Server) resourceMetadataURL() string {
 	return s.cfg.Issuer + "/.well-known/oauth-protected-resource/mcp"
 }
 
-func (s *Server) callbackURL() string { return s.cfg.Issuer + "/oauth/github/callback" }
+// callbackPath is where GitHub sends the user back after sign-in.
+const callbackPath = "/oauth/github/callback"
+
+func (s *Server) callbackURL() string { return s.cfg.Issuer + callbackPath }
 
 // Handler serves the metadata and OAuth endpoints. Mount it at the root: its paths are fixed.
 func (s *Server) Handler() http.Handler {
@@ -111,7 +114,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /oauth/register", s.register)
 	mux.HandleFunc("GET /oauth/authorize", s.authorize)
 	mux.HandleFunc("POST /oauth/authorize", s.consent)
-	mux.HandleFunc("GET /oauth/github/callback", s.callback)
+	mux.HandleFunc("GET "+callbackPath, s.callback)
+	mux.HandleFunc("GET /oauth/fonts/{name}", font)
 	mux.HandleFunc("POST /oauth/token", s.token)
 	return mux
 }

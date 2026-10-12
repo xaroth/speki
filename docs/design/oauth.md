@@ -17,6 +17,7 @@ All URLs are built from `public_url` in the configuration, never from request he
 | `GET /oauth/authorize` | Validates the request and shows the consent page |
 | `POST /oauth/authorize` | Consent given. Redirects to GitHub |
 | `GET /oauth/github/callback` | GitHub returns here. Redirects back to the client with a code |
+| `GET /oauth/fonts/{name}` | The fonts the consent and error pages use |
 | `POST /oauth/token` | Code and refresh grants |
 
 Resource metadata:
@@ -147,10 +148,13 @@ Details per step:
   hyphens) are kept: emoji and some scripts need them, and they can't reorder anything.
 - The consent page shows who is asking (host, or "a program on this computer"), the redirect target, a
   "read and write" / "read only" choice, and a continue button. It sends
-  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'` and loads
-  nothing from elsewhere. There's no `form-action`: Chromium applies it to the redirect that follows the
-  form, to GitHub or back to the client, and would block sign-in. The page is an `html/template` embedded
-  in the binary.
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; frame-ancestors 'none'`
+  and loads nothing from elsewhere. There's no `form-action`: Chromium applies it to the redirect that
+  follows the form, to GitHub or back to the client, and would block sign-in. The page is an
+  `html/template` embedded in the binary.
+- The consent and error pages use Alegreya and Alegreya Sans (SIL Open Font License), embedded in the
+  binary and served from `GET /oauth/fonts/{name}`. A margin lists the three steps of signing in and
+  marks the current one; an error page marks the step that failed.
 - The cookies are `__Host-`, `Secure`, `HttpOnly`, `SameSite=Lax`. The consent POST must carry a sealed
   consent value whose cookie hash matches, which stops cross-site form posts and replays from another
   browser. The transaction cookie's name includes its nonce, so two sign-ins in one browser don't
