@@ -11,7 +11,7 @@ using it:
 - [access.md](functional/access.md): signing in, who gets in, what they can do
 - [tools.md](functional/tools.md): every MCP tool, its input and output
 - [search-and-query.md](functional/search-and-query.md): how search ranks, what `query` can see
-- [running.md](functional/running.md): GitHub App setup, configuration, deployment
+- [running.md](functional/running.md): GitHub App setup, configuration, building, deployment
 
 Design documentation describes how it's built:
 

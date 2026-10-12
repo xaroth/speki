@@ -6,7 +6,7 @@
    repositories" and select it.
 2. Add a `speki.yaml` file to the root of the default branch.
 
-Speki checks for new vaults every 5 minutes. A new vault becomes searchable once speki has cloned and
+Speki checks for new vaults every 5 minutes (`sync.discovery_interval`). A new vault becomes searchable once speki has cloned and
 indexed it, usually within a minute after that.
 
 Both steps are needed. Installing the app on "all repositories" doesn't turn every repository into a vault.
@@ -32,19 +32,19 @@ guidelines: |
 
 | Field | Required | Used for |
 |---|---|---|
-| `title` | yes | Shown in `list` and `guide`. Keep it under 100 characters |
-| `description` | yes | Tells agents what belongs in this vault, so they search and write in the right place. Keep it under 300 characters |
-| `guidelines` | no | Writing rules for agents. Returned by `guide` and when listing the vault. Keep it under 2,000 characters |
+| `title` | yes | Shown in `list` and `guide`. At most 100 characters |
+| `description` | yes | Tells agents what belongs in this vault, so they search and write in the right place. At most 300 characters |
+| `guidelines` | no | Writing rules for agents. Returned by `guide` and when listing the vault's root. At most 2,000 characters |
 | `read_role` | no | The lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`, `maintain` or `admin` |
 | `readers` | no | Users and teams that may read the vault. Leave it out to let everyone with read access in |
 | `writers` | no | Users and teams that may write to the vault. Leave it out to let every reader with push access write |
 
 Speki ignores unknown keys, so a newer `speki.yaml` doesn't break an older speki.
 
-A `speki.yaml` that doesn't parse, misses a required field, goes over a length limit or is larger than 64
-KiB is rejected. A new
-vault with a bad file isn't added. An existing vault keeps running with its last good configuration. Either
-way the problem is logged and shown on speki's status page, so an operator can see what's wrong.
+A `speki.yaml` that doesn't parse, misses a required field, goes over a length limit or is larger than
+64 KiB is rejected. A new vault with a bad file isn't added. An existing vault keeps running with its last
+good configuration. Either way the problem is logged and shown on speki's status page, so an operator can
+see what's wrong.
 
 ## Limiting who reads and writes a vault
 

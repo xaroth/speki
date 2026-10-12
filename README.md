@@ -1,7 +1,45 @@
 # speki
 
-Speki is a knowledge base for AI agents. Teams keep what they know as markdown in GitHub repositories, and
-agents search, read and update it over MCP. GitHub decides who can see and change what.
+Speki is a knowledge base for AI agents. Teams keep what they know about their systems and decisions as
+markdown in GitHub repositories, and agents such as Claude Code or the Claude app search, read and update
+it over MCP (Model Context Protocol). GitHub decides who can see and change what.
 
-Nothing is built yet. The [documentation](docs/README.md) describes what speki does and how it will be
-built, and [docs/PLAN.md](docs/PLAN.md) is the plan for building it.
+- Knowledge lives in git. Every change an agent makes is a commit authored by the user it acts for.
+- Users sign in with their GitHub account. They see the vaults (repositories) they can read on GitHub,
+  and write where they can push.
+- Search is full-text with stemming and typo tolerance. Read-only SQL covers what search can't, such as
+  "runbooks not updated this year" or "what links here".
+- Speki keeps no data of its own. Its search index is rebuilt from git, so an instance can be thrown away.
+
+## Getting started
+
+Speki is a single Go binary. Building it needs Go and a C compiler (the search index uses SQLite):
+
+```sh
+task build                       # or:
+CGO_ENABLED=1 go build -tags 'sqlite_fts5,sqlite_omit_load_extension' -o bin/speki ./cmd/speki
+```
+
+Or build the container image:
+
+```sh
+docker build -t speki .
+```
+
+To run it you need a GitHub App, a configuration file and a secret key.
+[docs/functional/running.md](docs/functional/running.md) walks through all three.
+[config.example.yaml](config.example.yaml) is a starting point for the configuration.
+
+Then turn a repository into a vault ([vaults.md](docs/functional/vaults.md)) and connect a client:
+
+```sh
+claude mcp add --transport http speki https://speki.example.com/mcp
+```
+
+## Documentation
+
+[docs/README.md](docs/README.md) lists everything. Good places to start:
+
+- [What speki is](docs/functional/overview.md)
+- [Running speki](docs/functional/running.md)
+- [The tools agents use](docs/functional/tools.md)
