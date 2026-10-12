@@ -1,5 +1,6 @@
 // Package access decides what a signed-in user may do: whether they get in at all, and which vaults they
-// may read and write. GitHub is the source of truth; answers are cached for a minute.
+// may read and write. GitHub is the source of truth, narrowed by each vault's readers and writers; answers
+// are cached for a minute.
 package access
 
 import (
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +83,7 @@ func (g *Grant) ReadOnlySession() bool { return !g.user.Write }
 type githubAPI interface {
 	ActiveMember(ctx context.Context, token, org string) (bool, error)
 	UserRepositories(ctx context.Context, token string) ([]gh.RepoAccess, error)
+	TeamMember(ctx context.Context, token, org, slug, login string) (bool, error)
 }
 
 // Resolver turns users into grants.
@@ -98,6 +101,7 @@ type Resolver struct {
 // answer is what GitHub said about one token.
 type answer struct {
 	repos   map[int64]gh.RepoAccess
+	teams   map[string]bool // by lower-case org/slug, filled in as vaults ask
 	expires time.Time
 }
 
@@ -128,8 +132,22 @@ func (r *Resolver) Resolve(ctx context.Context, u User) (*Grant, error) {
 		if !ok || a.Role < max(v.Config.ReadRole, gh.RoleRead) {
 			continue
 		}
+		reader, err := r.listed(ctx, u, v.Config.Readers)
+		if err != nil {
+			return nil, err
+		}
+		if !reader {
+			continue
+		}
 		readable = append(readable, v)
-		if a.Role >= gh.RoleWrite {
+		if a.Role < gh.RoleWrite || !u.Write {
+			continue
+		}
+		writer, err := r.listed(ctx, u, v.Config.Writers)
+		if err != nil {
+			return nil, err
+		}
+		if writer {
 			writable = append(writable, v.RepoID)
 		}
 	}
@@ -177,8 +195,53 @@ func (r *Resolver) lookup(ctx context.Context, token string) (map[int64]gh.RepoA
 			delete(r.cache, k)
 		}
 	}
-	r.cache[key] = answer{repos: repos, expires: now.Add(r.ttl)}
+	r.cache[key] = answer{repos: repos, teams: make(map[string]bool), expires: now.Add(r.ttl)}
 	return repos, nil
+}
+
+// listed reports whether u is one of ps, directly or through a team. A nil list lists everyone.
+func (r *Resolver) listed(ctx context.Context, u User, ps []vault.Principal) (bool, error) {
+	if ps == nil {
+		return true, nil
+	}
+	for _, p := range ps {
+		if p.Team == "" && asciiEqualFold(p.Login, u.Login) {
+			return true, nil
+		}
+	}
+	for _, p := range ps {
+		if p.Team == "" {
+			continue
+		}
+		member, err := r.teamMember(ctx, u, p)
+		if err != nil || member {
+			return member, err
+		}
+	}
+	return false, nil
+}
+
+// teamMember asks GitHub whether u is in team, once per token until the cached answer expires.
+func (r *Resolver) teamMember(ctx context.Context, u User, team vault.Principal) (bool, error) {
+	key := sha256.Sum256([]byte(u.Token))
+	name := strings.ToLower(team.String())
+	r.mu.Lock()
+	member, known := r.cache[key].teams[name]
+	r.mu.Unlock()
+	if known {
+		return member, nil
+	}
+
+	member, err := r.github.TeamMember(ctx, u.Token, team.Org, team.Team, u.Login)
+	if err != nil {
+		return false, githubError(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if a, ok := r.cache[key]; ok {
+		a.teams[name] = member
+	}
+	return member, nil
 }
 
 func (r *Resolver) checkOrgs(ctx context.Context, token string) error {

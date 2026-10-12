@@ -259,6 +259,23 @@ func (c *Client) ActiveMember(ctx context.Context, token, org string) (bool, err
 	return m.GetState() == "active", nil
 }
 
+// TeamMember reports whether login is an active member of the team org/slug, directly or through a child
+// team, as the token's user sees it. Teams the user can't see count as not a member.
+func (c *Client) TeamMember(ctx context.Context, token, org, slug, login string) (bool, error) {
+	client, err := c.userClient(token)
+	if err != nil {
+		return false, err
+	}
+	m, _, err := client.Teams.GetTeamMembershipBySlug(ctx, org, slug, login)
+	if errors.Is(notFound(err), ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("membership of %s/%s: %w", org, slug, userError(err))
+	}
+	return m.GetState() == "active", nil
+}
+
 // UserRepositories returns what the token's user may do in each repository the app's installations can
 // see, keyed by installation.
 func (c *Client) UserRepositories(ctx context.Context, token string) ([]RepoAccess, error) {

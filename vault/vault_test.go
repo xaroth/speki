@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +36,19 @@ func TestParseConfig(t *testing.T) {
 			want: Config{Title: "Infra", Description: "How we run things.", ReadRole: gh.RoleTriage},
 		},
 		{name: "unknown read role", raw: "title: T\ndescription: D\nread_role: owner\n", wantErr: []string{`unknown role "owner"`}},
+		{
+			name: "readers and writers",
+			raw:  "title: T\ndescription: D\nreaders: [ours/Editors, \"@alice\", \"@ours/leads\"]\nwriters:\n  - ours/leads\n",
+			want: Config{
+				Title:       "T",
+				Description: "D",
+				Readers:     []Principal{{Org: "ours", Team: "editors"}, {Login: "alice"}, {Org: "ours", Team: "leads"}},
+				Writers:     []Principal{{Org: "ours", Team: "leads"}},
+			},
+		},
+		{name: "empty readers", raw: "title: T\ndescription: D\nreaders: []\n", wantErr: []string{"readers is empty"}},
+		{name: "team elsewhere", raw: "title: T\ndescription: D\nwriters: [theirs/leads]\n", wantErr: []string{"team theirs/leads isn't in Ours"}},
+		{name: "bad principal", raw: "title: T\ndescription: D\nreaders: [a/b/c]\n", wantErr: []string{`"a/b/c" is neither`}},
 		{name: "missing fields", raw: "guidelines: x\n", wantErr: []string{"title is required", "description is required"}},
 		{name: "too long", raw: "title: T\ndescription: " + strings.Repeat("d", 301) + "\n", wantErr: []string{"description is 301 characters"}},
 		{name: "not yaml", raw: "title: [\n", wantErr: []string{"speki.yaml"}},
@@ -42,7 +56,7 @@ func TestParseConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseConfig([]byte(tt.raw))
+			got, err := ParseConfig([]byte(tt.raw), "Ours")
 			if len(tt.wantErr) > 0 {
 				if err == nil {
 					t.Fatal("ParseConfig succeeded")
@@ -388,5 +402,26 @@ func TestOversizedConfig(t *testing.T) {
 	mustDiscover(t, r)
 	if f.fileReads != reads {
 		t.Error("fetched the oversized file again without a push")
+	}
+}
+
+// Vault configurations are stored as JSON with the index, and must come back the same.
+func TestConfigJSON(t *testing.T) {
+	for _, c := range []Config{
+		{Title: "T"},
+		{Title: "T", Readers: []Principal{{Org: "ours", Team: "editors"}, {Login: "alice"}}, Writers: []Principal{{Login: "bob"}}},
+	} {
+		raw, err := json.Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got Config
+		err = json.Unmarshal(raw, &got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff(c, got); diff != "" {
+			t.Errorf("round trip (-want +got):\n%s", diff)
+		}
 	}
 }
