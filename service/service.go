@@ -44,6 +44,7 @@ type Service struct {
 	sandbox  *index.Sandbox
 	store    sharedStore
 	auth     *oauth.Server
+	resolver *access.Resolver
 	mcp      *mcpserver.Server
 	ready    atomic.Bool // read by /readyz; set through markReady and markStopping
 	readyMu  sync.Mutex
@@ -81,6 +82,7 @@ func (s *Service) markStopping() {
 	defer s.readyMu.Unlock()
 	s.stopping = true
 	s.ready.Store(false)
+	s.resolver.Stop() // requests waiting for vaults being built mustn't hold up the drain
 }
 
 // New checks cfg, fills in defaults and builds every component. Nothing runs yet.
@@ -182,6 +184,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		sandbox:    sandbox,
 		store:      shared,
 		auth:       auth,
+		resolver:   resolver,
 		mcp:        mcp,
 		started:    make(chan struct{}),
 		discovered: make(chan struct{}),
@@ -411,13 +414,13 @@ func serve(srv *http.Server, ln net.Listener) error {
 	return err
 }
 
-// newServer's read and write timeouts leave room for access.Resolver's 30 second wait for vaults being
-// built, which comes before the MCP handler reads the body.
+// newServer's WriteTimeout leaves room for access.Resolver's 30 second wait for vaults being built. The
+// /mcp stack gives the body its own read deadline after that wait.
 func newServer(h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      90 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

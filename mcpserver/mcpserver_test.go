@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/eve-online-tools/speki/access"
@@ -53,6 +54,8 @@ func (fakeResolver) Resolve(_ context.Context, u access.User) (*access.Grant, er
 		return nil, access.ErrNoVaults
 	case "early":
 		return nil, access.ErrNotReady
+	case "broken":
+		return nil, access.ErrVaultsFailed
 	}
 	return access.NewGrant(u, []vault.Vault{{RepoID: 1, Name: "ours/kb"}}, nil), nil
 }
@@ -93,6 +96,7 @@ func TestStack(t *testing.T) {
 		{name: "not in the organisation", token: "outsider", want: http.StatusForbidden, body: "organisation"},
 		{name: "no vaults", token: "nobody", want: http.StatusForbidden, body: "vault"},
 		{name: "vaults still loading", token: "early", want: http.StatusServiceUnavailable, body: "still loading"},
+		{name: "vaults failed to open", token: "broken", want: http.StatusServiceUnavailable, body: "couldn't open"},
 		{name: "cross-origin browser request", token: "alice", header: map[string]string{"Sec-Fetch-Site": "cross-site"}, want: http.StatusForbidden},
 	}
 	for _, tt := range tests {
@@ -111,6 +115,55 @@ func TestStack(t *testing.T) {
 				t.Error("503 without Retry-After")
 			}
 		})
+	}
+}
+
+// slowResolver takes wait to grant, as Resolve does while vaults are being built, then closes resolved.
+type slowResolver struct {
+	wait     time.Duration
+	resolved chan struct{}
+}
+
+func (s slowResolver) Resolve(_ context.Context, u access.User) (*access.Grant, error) {
+	<-time.After(s.wait)
+	close(s.resolved)
+	return access.NewGrant(u, []vault.Vault{{RepoID: 1, Name: "ours/kb"}}, nil), nil
+}
+
+func TestBodyReadAfterLongResolve(t *testing.T) {
+	const readTimeout = 100 * time.Millisecond
+	slow := slowResolver{wait: 3 * readTimeout, resolved: make(chan struct{})}
+	h := New(fakeAuth{}, slow, &fakeKB{}, Identity{}, "test", slog.New(slog.DiscardHandler)).Handler()
+	srv := httptest.NewUnstartedServer(h)
+	srv.Config.ReadTimeout = readTimeout
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	// The body arrives only after the server's ReadTimeout has run out, as it can after a wait.
+	body, send := io.Pipe()
+	go func() {
+		<-slow.resolved
+		_, _ = io.WriteString(send, initialize)
+		_ = send.Close()
+	}()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/mcp", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer alice")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(got), `"serverInfo"`) {
+		t.Errorf("status %d: %s", resp.StatusCode, got)
 	}
 }
 

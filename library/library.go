@@ -60,8 +60,10 @@ type Library struct {
 	closed     atomic.Bool
 	publishMu  sync.Mutex // one publish at a time
 
+	// changed is a broadcast: closing it wakes every waiter at once, which a sync.Cond can't do for
+	// waiters that also watch a context. changedMu guards the variable, not the waiting.
 	changedMu sync.Mutex
-	changed   chan struct{} // closed and replaced by notify
+	changed   chan struct{}
 }
 
 // New returns an empty library.
@@ -188,7 +190,9 @@ func (l *Library) Update(ctx context.Context, changes vault.Changes) {
 			l.background.Go(func() { l.remove(v) })
 		}
 	}
-	l.notify()
+	if !changes.Empty() {
+		l.notify()
+	}
 	l.publish()
 }
 

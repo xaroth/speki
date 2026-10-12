@@ -76,14 +76,10 @@ func served(vs ...vault.Vault) *fakeLibrary {
 	return &fakeLibrary{serving: vs, changed: make(chan struct{})}
 }
 
-func (l *fakeLibrary) Vaults() []vault.Vault   { return l.get(&l.serving) }
-func (l *fakeLibrary) Building() []vault.Vault { return l.get(&l.building) }
-func (l *fakeLibrary) Failed() []vault.Vault   { return l.get(&l.failed) }
-
-func (l *fakeLibrary) get(vs *[]vault.Vault) []vault.Vault {
+func (l *fakeLibrary) Vaults() (serving, building, failed []vault.Vault) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return slices.Clone(*vs)
+	return slices.Clone(l.serving), slices.Clone(l.building), slices.Clone(l.failed)
 }
 
 func (l *fakeLibrary) Changed() <-chan struct{} {
@@ -94,11 +90,18 @@ func (l *fakeLibrary) Changed() <-chan struct{} {
 
 // set moves the vaults to new states and wakes waiters.
 func (l *fakeLibrary) set(serving, building, failed []vault.Vault) {
+	l.setQuietly(serving, building, failed)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	close(l.changed)
+	l.changed = make(chan struct{})
+}
+
+// setQuietly moves the vaults to new states without waking waiters.
+func (l *fakeLibrary) setQuietly(serving, building, failed []vault.Vault) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.serving, l.building, l.failed = serving, building, failed
-	close(l.changed)
-	l.changed = make(chan struct{})
 }
 
 var kb = vault.Vault{RepoID: 100, Name: "ours/kb"}
@@ -311,7 +314,7 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 	}{
 		{name: "one served, one building", token: "alice", serving: []vault.Vault{kb}, building: []vault.Vault{infra}, readable: []string{"ours/kb"}},
 		{name: "only others' vaults building", token: "bob", building: []vault.Vault{kb, infra}, err: ErrNoVaults},
-		{name: "own vault failed, others' building", token: "alice", building: []vault.Vault{other}, failed: []vault.Vault{kb}, err: ErrNotReady},
+		{name: "own vault failed, others' building", token: "alice", building: []vault.Vault{other}, failed: []vault.Vault{kb}, err: ErrVaultsFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -431,6 +434,124 @@ func TestWaitEndsWithContext(t *testing.T) {
 		}
 		if waited := time.Since(start); waited != 0 {
 			t.Errorf("waited %v after ctx ended", waited)
+		}
+	})
+}
+
+func TestWaitEndsWhenBuildingStops(t *testing.T) {
+	tests := []struct {
+		name   string
+		failed []vault.Vault
+		err    error
+	}{
+		{name: "vault failed", failed: []vault.Vault{kb}, err: ErrVaultsFailed},
+		{name: "vault removed", err: ErrNoVaults},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f, _ := setup()
+				lib := served()
+				lib.building = []vault.Vault{kb}
+				r := NewResolver(f, lib, nil, store.NewMemory())
+				start := time.Now()
+				done := resolveLater(t.Context(), r, User{Token: "alice"})
+				synctest.Wait()
+				lib.set(nil, nil, tt.failed)
+				res := <-done
+				if !errors.Is(res.err, tt.err) {
+					t.Errorf("err = %v, want %v", res.err, tt.err)
+				}
+				if waited := time.Since(start); waited != 0 {
+					t.Errorf("waited %v", waited)
+				}
+			})
+		})
+	}
+}
+
+func TestLastLookWhenWaitEnds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f, _ := setup()
+		lib := served()
+		lib.building = []vault.Vault{kb}
+		r := NewResolver(f, lib, nil, store.NewMemory())
+		done := resolveLater(t.Context(), r, User{Token: "alice"})
+		synctest.Wait()
+		lib.setQuietly([]vault.Vault{kb}, nil, nil) // served, but the waiter isn't woken
+		res := <-done
+		if res.err != nil {
+			t.Fatalf("a vault served by the end of the wait gave %v", res.err)
+		}
+	})
+}
+
+func TestStopEndsWaits(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f, _ := setup()
+		lib := served()
+		lib.building = []vault.Vault{kb}
+		r := NewResolver(f, lib, nil, store.NewMemory())
+		start := time.Now()
+		done := resolveLater(t.Context(), r, User{Token: "alice"})
+		synctest.Wait()
+		r.Stop()
+		if res := <-done; !errors.Is(res.err, ErrNotReady) {
+			t.Errorf("waiting: err = %v, want ErrNotReady", res.err)
+		}
+		_, err := r.Resolve(t.Context(), User{Token: "alice"})
+		if !errors.Is(err, ErrNotReady) {
+			t.Errorf("after Stop: err = %v, want ErrNotReady", err)
+		}
+		if waited := time.Since(start); waited != 0 {
+			t.Errorf("waited %v", waited)
+		}
+	})
+}
+
+// countingCache counts reads, which go to Redis when there are several instances.
+type countingCache struct {
+	*store.Memory
+	mu   sync.Mutex
+	gets int
+}
+
+func (c *countingCache) Get(ctx context.Context, key string) ([]byte, bool, error) {
+	c.mu.Lock()
+	c.gets++
+	c.mu.Unlock()
+	return c.Memory.Get(ctx, key)
+}
+
+func (c *countingCache) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gets
+}
+
+func TestWakingDoesNotCheckReadersAgain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f, _ := setup()
+		f.teams = map[string][]string{"alice": {"ours/editors"}}
+		gated := kb
+		gated.Config.Readers = []vault.Principal{{Org: "ours", Team: "editors"}}
+		lib := served()
+		lib.building = []vault.Vault{gated}
+		c := &countingCache{Memory: store.NewMemory()}
+		r := NewResolver(f, lib, nil, c)
+		done := resolveLater(t.Context(), r, User{Login: "alice", Token: "alice"})
+		synctest.Wait()
+		gets := c.count()
+		for range 3 {
+			lib.set(nil, []vault.Vault{gated}, nil)
+			synctest.Wait()
+		}
+		if c.count() != gets {
+			t.Errorf("waking read the cache %d more times", c.count()-gets)
+		}
+		lib.set([]vault.Vault{gated}, nil, nil)
+		if res := <-done; res.err != nil {
+			t.Fatal(res.err)
 		}
 	})
 }
