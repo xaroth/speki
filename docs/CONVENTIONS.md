@@ -67,11 +67,68 @@ if err != nil {
 
 ## Tests
 
-- Table-driven with `t.Run`, helpers call `t.Helper()`.
-- Hand-written fakes for the interfaces a package declares. No mock generators.
-- Fixtures in `testdata/`. Compare with `go-cmp`.
-- No `time.Sleep` to wait for something. Use `testing/synctest`, channels, or a fake clock.
-- `t.Context()` for contexts.
+Tests need `-tags 'sqlite_fts5,sqlite_omit_load_extension'`, the same tags as the build. `task test` sets them.
+
+### Files and packages
+
+- Test files end in `_test.go` and use a `_test` package. Test only through the exported API.
+- Code that must reach unexported names goes in `<name>_internal_test.go`, keeps the package name, and
+  has a one-line comment saying why.
+- To expose one internal to black-box tests, use `export_test.go`, not a public API.
+
+### Fakes, mocks, helpers
+
+- Fakes go in `<name>_fake.go` next to the real code. An exported `NewFake(tb testing.TB, opts...)`
+  returns a started, ready instance, registers teardown with `tb.Cleanup`, and fails setup with
+  `tb.Fatal`.
+- A fake embeds the real type and swaps only the edges (I/O, remote calls). It doesn't reimplement the
+  logic.
+- Mocks are generated with `mockgen` into a `mock/` subpackage. The `//go:generate` line goes in the
+  test file that uses them.
+- Helpers another package needs go in a `test/` subfolder next to the code. Helpers for a whole library
+  go in a sibling `<pkg>test` package, like `httptest`.
+- Helpers take `testing.TB` and call `tb.Helper()` first.
+- Shared expectations are option funcs, `func(testing.TB, *SDK)`, named `Expect<Thing>` and
+  `Expect<Thing>_<Case>` (`ExpectUser_NotFound`). Tests combine them into a setup.
+
+### Test bodies
+
+- Table-driven: `testCases := []struct{ name string; ... }`, ranged with `t.Run(testCase.name, ...)`.
+- `t.Parallel()` at the top of every test and subtest.
+- `t.Context()`, not `context.Background()`.
+- Standard library plus `go-cmp`. No assertion libraries. `miniredis` is allowed as a Redis wire fake
+  and `prometheus/testutil` for reading metrics.
+- `t.Fatalf` when the test can't go on, `t.Errorf` otherwise. Messages read "got X, want Y". Structs
+  are compared with `cmp.Diff` and reported as "(-want +got)".
+- `httptest` for HTTP, `t.Setenv` for environment variables, `testdata/` for fixtures.
+- No `time.Sleep` to sync. Wait on a channel or condition, or inject a clock. `testing/synctest`
+  counts as an injected clock.
+
+### Benchmarks
+
+- `Benchmark<Name>` sits beside the test and uses the same fake setup.
+- Simulated delays in fakes are off. Loop with `b.Loop()`.
+
+### What to test
+
+- Behavior at the public boundary: the HTTP route, the exported func. Internal helpers are covered
+  through it, not tested one by one.
+- Everything outside the package's domain is faked at the wire: backend calls, message bus, k8s,
+  clocks. Assert on the request sent and the response returned, never on whether the other system works.
+- Not third-party or generated code (mocks, specs, protobuf), and not plain types or constants with no
+  logic.
+- Our own glue to outside systems is tested: mapping, error translation, retries, caching.
+
+### How much
+
+- Services: one route test per route and version. Library code: unit tests on the exported API.
+- Every route covers the happy path with the full output compared, each upstream failure the code
+  handles differently (not found, deleted, forbidden), and each input it rejects (invalid, empty,
+  missing, zero, negative).
+- A case is added only when it takes a different code path or gives a different result.
+- Shared library code gets more: edge cases, concurrency under `-race`, caching.
+- Benchmarks for hot paths and per-route handlers only.
+- No coverage target. A missing test file is fine when a higher-level test covers the code.
 
 ## Commits
 
