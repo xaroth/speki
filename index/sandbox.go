@@ -32,7 +32,10 @@ const (
 	maxQueryBytes   = 1 << 20
 	maxValueBytes   = 100_000 // one string or blob
 	maxQueryColumns = 50      // so a row is at most a few MB before the size check
-	sandboxConns    = 4
+	// sandboxConns caps queries running at once, for all users, so few queries share the memory budget.
+	sandboxConns = 2
+	// queueWait is how long a query waits for one of the others to finish before giving up as busy.
+	queueWait = time.Second
 )
 
 // ErrBadQuery means the query isn't valid or isn't allowed. Like the other query errors, it wraps a
@@ -45,6 +48,9 @@ var ErrQueryTimeout = errors.New("query timed out")
 // ErrQueryTooLarge means the query needed more memory or produced more than allowed.
 var ErrQueryTooLarge = errors.New("query needs too much")
 
+// ErrQueryBusy means too many queries are running, or SQLite is short of memory. Trying again later works.
+var ErrQueryBusy = errors.New("too busy for the query")
+
 // Rows is a query's result.
 type Rows struct {
 	Columns   []string
@@ -55,7 +61,9 @@ type Rows struct {
 // Sandbox runs SQL written by agents against read-only copies of indexes. Each query gets a fresh
 // in-memory connection with only the user's vaults attached, read-only, behind an authorizer.
 type Sandbox struct {
-	db *sql.DB
+	db    *sql.DB
+	slots chan struct{}
+	wait  time.Duration
 }
 
 // NewSandbox returns a sandbox. Close it when done.
@@ -70,7 +78,7 @@ func NewSandbox() (*Sandbox, error) {
 	}
 	db.SetMaxOpenConns(sandboxConns)
 	db.SetMaxIdleConns(0) // a connection is never reused (see Query): its attachments and views go with it
-	return &Sandbox{db: db}, nil
+	return &Sandbox{db: db, slots: make(chan struct{}, sandboxConns), wait: queueWait}, nil
 }
 
 // Close closes the sandbox.
@@ -87,6 +95,15 @@ func (s *Sandbox) Query(ctx context.Context, sources []Source, query string) (Ro
 	err := singleStatement(query)
 	if err != nil {
 		return Rows{}, err
+	}
+
+	err = s.take(ctx)
+	if err != nil {
+		return Rows{}, err
+	}
+	defer func() { <-s.slots }()
+	if overQueryBudget() {
+		return Rows{}, fmt.Errorf("%w: speki is short of memory", ErrQueryBusy)
 	}
 
 	gens, release, err := acquireAll(sources)
@@ -108,6 +125,10 @@ func (s *Sandbox) Query(ctx context.Context, sources []Source, query string) (Ro
 	err = conn.Raw(func(dc any) error {
 		return setUp(dc.(*sqlite3.SQLiteConn), sources, gens)
 	})
+	var serr sqlite3.Error
+	if errors.As(err, &serr) && serr.Code == sqlite3.ErrInterrupt && ctx.Err() == nil {
+		return Rows{}, fmt.Errorf("%w: speki is short of memory", ErrQueryBusy)
+	}
 	if err != nil {
 		return Rows{}, fmt.Errorf("set up the query sandbox: %w", err)
 	}
@@ -118,6 +139,20 @@ func (s *Sandbox) Query(ctx context.Context, sources []Source, query string) (Ro
 	}
 	defer func() { _ = rows.Close() }()
 	return readRows(ctx, rows, sources)
+}
+
+// take waits a little for a free query slot.
+func (s *Sandbox) take(ctx context.Context) error {
+	timer := time.NewTimer(s.wait)
+	defer timer.Stop()
+	select {
+	case s.slots <- struct{}{}:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("%w: %d queries are running", ErrQueryBusy, cap(s.slots))
+	case <-ctx.Done():
+		return queryError(ctx, ctx.Err(), nil)
+	}
 }
 
 // setUp attaches the sources read-only, creates the views and locks the connection down. It runs before
@@ -458,8 +493,8 @@ func queryError(ctx context.Context, err error, sources []Source) error {
 		return sources[n].Name + "."
 	})
 	switch serr.Code {
-	case sqlite3.ErrInterrupt:
-		return fmt.Errorf("%w: it ran longer than allowed", ErrQueryTimeout)
+	case sqlite3.ErrInterrupt: // with the context still live, only the memory budget interrupts
+		return fmt.Errorf("%w: it needs more memory than queries may use", ErrQueryTooLarge)
 	case sqlite3.ErrTooBig, sqlite3.ErrNomem, sqlite3.ErrFull:
 		return fmt.Errorf("%w: %s", ErrQueryTooLarge, msg)
 	case sqlite3.ErrAuth:

@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/mattn/go-sqlite3"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/eve-online-tools/speki/gh"
@@ -649,6 +651,29 @@ func TestFailedVaultBacksOffMore(t *testing.T) {
 		if !v.due() {
 			t.Fatalf("not due %v after failure %d", backoff, i+1)
 		}
+	}
+}
+
+// Running into SQLite's memory limit, which other work can cause, shows on the status page but doesn't
+// back off: the next poll syncs.
+func TestOutOfMemoryDoesntBackOff(t *testing.T) {
+	r := newRemote(t)
+	r.push(map[string]string{"a.md": "# A\n"})
+	l := newLibrary(t, r, t.TempDir())
+	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
+	v := serving(t, l)
+	r.push(map[string]string{"a.md": "# A\n\nchanged\n"})
+
+	v.recordFailure(fmt.Errorf("apply: %w", sqlite3.Error{Code: sqlite3.ErrNomem}))
+	if st := v.Status(); st.Error == "" || !v.due() {
+		t.Fatalf("status %+v, due %v", st, v.due())
+	}
+	l.Poll(t.Context())
+	if got := search(t, v, "changed"); len(got) != 1 {
+		t.Errorf("after the poll: %v", got)
+	}
+	if st := v.Status(); st.Error != "" {
+		t.Errorf("error after the poll: %s", st.Error)
 	}
 }
 

@@ -52,6 +52,8 @@ func (b *Base) Query(ctx context.Context, g *access.Grant, req QueryRequest) (Qu
 		return QueryResult{}, errorf(CodeTimeout, "the query ran longer than %s. Narrow it down, or use search", index.QueryTimeout)
 	case errors.Is(err, index.ErrQueryTooLarge):
 		return QueryResult{}, errorf(CodeTooLarge, "%s. Select fewer or shorter values", strings.TrimPrefix(err.Error(), index.ErrQueryTooLarge.Error()+": "))
+	case errors.Is(err, index.ErrQueryBusy):
+		return QueryResult{}, errorf(CodeUnavailable, "%s. Try again in a few seconds", strings.TrimPrefix(err.Error(), index.ErrQueryBusy.Error()+": "))
 	case errors.Is(err, index.ErrClosed):
 		return QueryResult{}, errorf(CodeNotFound, "a vault was removed during the query. Run it again")
 	}

@@ -54,7 +54,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | `too_large` | Over a limit. Says which one and how to stay under it |
 | `timeout` | A query ran longer than 3 seconds |
 | `rate_limited` | GitHub asked speki to slow down during a write. Says how long to wait. Speki's own per-user limit answers with HTTP 429 instead, before any tool runs |
-| `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, the vault is rebuilding its index, or the named vault is still building its first index or failed to open. Says which, with a request ID for the operator |
+| `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, the vault is rebuilding its index, the named vault is still building its first index or failed to open, or too many queries are running. Says which, with a request ID for the operator |
 
 A `broken` error and the `broken` column (see [search-and-query.md](search-and-query.md)) give one of
 these reasons. Their text is stable, so a client may match on it:
@@ -176,7 +176,9 @@ A user who can read more than 10 vaults has to name the ones to query.
 ```
 
 Limits: 500 rows, 1 MiB of result, 3 seconds, one query per user at a time. Hitting the row or size limit
-sets `truncated`. Hitting the time limit is a `timeout` error.
+sets `truncated`. Hitting the time limit is a `timeout` error, and needing more memory than queries may
+use is `too_large`. When two queries are already running, across all users, a query waits up to a second,
+then fails with `unavailable`.
 
 Like `search`, a query without `vaults` lists the readable vaults it didn't cover in `skipped_vaults`.
 Only served vaults count toward the 10.

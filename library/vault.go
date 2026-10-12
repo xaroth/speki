@@ -230,6 +230,9 @@ func (v *Vault) recordLocked(err error) {
 		return
 	}
 	v.status.Error = err.Error()
+	if index.OutOfMemory(err) {
+		return // other work, such as a heavy query, used the memory: the next poll tries again
+	}
 	v.failures++
 	backoff := min(time.Minute<<min(v.failures, 5), 30*time.Minute)
 	v.retryAt = v.now().Add(backoff)

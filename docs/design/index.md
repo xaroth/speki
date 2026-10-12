@@ -253,7 +253,9 @@ and passes at most 10 sources (more is `invalid`, with a message saying to pass 
 holds a reference on each index's current generation until the query ends, and attaches that
 generation's file.
 
-1. Wait for a connection from the sandbox pool: a dedicated `*sql.DB` on `:memory:` with 4 open
+1. Take one of 2 query slots, shared by all users, waiting at most 1 second; after that the query fails
+   as busy. Then refuse to start, also as busy, if SQLite's memory is already past the query budget
+   (below). Then take a connection from the sandbox pool: a dedicated `*sql.DB` on `:memory:` with 2 open
    connections and `SetMaxIdleConns(0)`, so a connection is never reused. Each user has at most one query
    running. Waiting counts against the 3-second limit.
 2. Through `sql.Conn.Raw`, on the `*sqlite3.SQLiteConn` (the setup runs before the authorizer exists):
@@ -283,8 +285,8 @@ generation's file.
 6. Close the connection, marked bad (`driver.ErrBadConn` from `Raw`) so the pool discards it. The idle
    limit alone isn't enough: `database/sql` hands a released connection straight to a waiting caller.
 
-The four connections are shared by all users. With one query per user and 3 seconds each, four people
-running slow queries hold up everyone else's queries for those seconds, which is fine at this team size.
+The two slots are shared by all users. Two people running slow queries hold up everyone else's queries
+for those seconds, which is fine at this team size. Few slots keep few queries sharing the memory budget.
 
 The attached index tables can be read directly, not only through the views: the authorizer can't tell a
 query's own reads of `v0.documents` from FTS5's reads of the same table, since go-sqlite3 doesn't pass
@@ -294,13 +296,20 @@ tells agents the views are the interface and the tables behind them may change.
 Memory: `index` sets `sqlite3_soft_heap_limit64` (512 MiB), so SQLite releases cache memory under
 pressure, and `sqlite3_hard_heap_limit64` (1 GiB), so an allocation past that fails with `SQLITE_NOMEM`.
 The hard limit is what stops one query from growing the process: in-memory sorts and recursive queries
-don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes within the time limit. A
-query that hits it fails with `too_large`. Both limits are for the whole process. Index builds stay far
-below them on their own (about 40 MB at 50,000 documents), but a build that allocates while a query has
-just used up the shared budget fails with `SQLITE_NOMEM`. The build or apply then fails as a whole, the
-index stays at its commit, and the vault is synced again at the next poll: only a file that's unusable
-in itself is indexed as broken instead. The 100 KB value and 50 column limits bound how much one row can
-hold before the 1 MiB result check sees it.
+don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes within the time limit.
+Both limits are for the whole process, so queries are stopped well before the hard limit: the hardening
+hook below also sets a progress handler on sandbox connections that, every 1,000 instructions, interrupts
+the query once SQLite's memory passes 384 MiB. That leaves the rest for searches and index builds. A query
+interrupted while its context is still live was stopped by the budget and fails with `too_large`. The
+check counts all of SQLite's memory, so a query can be stopped for another's usage; the 2 slots keep that
+rare.
+
+Index builds stay far below the limits on their own (about 40 MB at 50,000 documents), but a build that
+allocates while something else holds the memory can still fail with `SQLITE_NOMEM`. The build or apply
+then fails as a whole and the index stays at its commit. The error shows on the status page, but the
+vault doesn't back off: the next poll syncs it again. Only a file that's unusable in itself is indexed as
+broken instead. The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
+result check sees it.
 
 Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,
 `fts_config` and the content table `documents`, and run `PRAGMA data_version`. Those are on the lists
@@ -310,7 +319,7 @@ table, so `fts MATCH 'x'` is a "no such column" error.
 `DEFENSIVE` mode and `trusted_schema` can't be set through mattn's Go API. The cgo preamble of
 `index/defensive.go` registers an `sqlite3_auto_extension` hook that, only for connections whose main
 database is `:memory:`, calls `sqlite3_db_config` with `SQLITE_DBCONFIG_DEFENSIVE` on and
-`SQLITE_DBCONFIG_TRUSTED_SCHEMA` off. Index writers aren't affected, because `DEFENSIVE` would block the
+`SQLITE_DBCONFIG_TRUSTED_SCHEMA` off, and sets the memory budget's progress handler. Index writers aren't affected, because `DEFENSIVE` would block the
 `journal_mode=OFF` builds use. The preamble declares the few SQLite prototypes it needs itself. The symbols
 come from the SQLite that mattn compiles into the binary.
 
@@ -351,6 +360,7 @@ the authorizer allowed it.
 |---|---|
 | syntax error | `invalid`, with SQLite's message after replacing `v0`..`v9` with vault names and removing file paths |
 | authorization denied | `invalid`: "not allowed in queries: <action>" |
-| interrupted | `timeout` |
-| string or blob too big, out of memory, other limits | `too_large` |
+| interrupted at the time limit | `timeout` |
+| interrupted at the memory budget, string or blob too big, out of memory, other limits | `too_large` |
+| no free query slot, or SQLite's memory already past the budget | `unavailable`: try again in a few seconds |
 | anything else | `unavailable`, logged |
