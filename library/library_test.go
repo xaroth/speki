@@ -655,18 +655,25 @@ func TestFailedVaultBacksOffMore(t *testing.T) {
 }
 
 // Running into SQLite's memory limit, which other work can cause, shows on the status page but doesn't
-// back off: the next poll syncs.
+// back off more with every failure: the vault is synced again a minute later.
 func TestOutOfMemoryDoesntBackOff(t *testing.T) {
 	r := newRemote(t)
 	r.push(map[string]string{"a.md": "# A\n"})
 	l := newLibrary(t, r, t.TempDir())
+	clock := fakeClock(l)
 	l.Update(t.Context(), vault.Changes{Added: []vault.Vault{kb}})
 	v := serving(t, l)
 	r.push(map[string]string{"a.md": "# A\n\nchanged\n"})
 
-	v.recordFailure(fmt.Errorf("apply: %w", sqlite3.Error{Code: sqlite3.ErrNomem}))
-	if st := v.Status(); st.Error == "" || !v.due() {
+	for range 5 {
+		v.recordFailure(fmt.Errorf("apply: %w", sqlite3.Error{Code: sqlite3.ErrNomem}))
+	}
+	if st := v.Status(); st.Error == "" || v.due() {
 		t.Fatalf("status %+v, due %v", st, v.due())
+	}
+	clock.advance(time.Minute + time.Second)
+	if !v.due() {
+		t.Fatal("not due a minute later")
 	}
 	l.Poll(t.Context())
 	if got := search(t, v, "changed"); len(got) != 1 {

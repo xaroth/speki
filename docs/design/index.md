@@ -307,7 +307,7 @@ rare.
 Index builds stay far below the limits on their own (about 40 MB at 50,000 documents), but a build that
 allocates while something else holds the memory can still fail with `SQLITE_NOMEM`. The build or apply
 then fails as a whole and the index stays at its commit. The error shows on the status page, but the
-vault doesn't back off: the next poll syncs it again. Only a file that's unusable in itself is indexed as
+vault doesn't back off more with each failure: it's synced again after a fixed minute. Only a file that's unusable in itself is indexed as
 broken instead. The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
 result check sees it.
 
@@ -362,5 +362,5 @@ the authorizer allowed it.
 | authorization denied | `invalid`: "not allowed in queries: <action>" |
 | interrupted at the time limit | `timeout` |
 | interrupted at the memory budget, string or blob too big, out of memory, other limits | `too_large` |
-| no free query slot, or SQLite's memory already past the budget | `unavailable`: try again in a few seconds |
+| no free query slot, or SQLite's memory past the budget before the query starts (setup included) | `unavailable`: try again in a few seconds |
 | anything else | `unavailable`, logged |
