@@ -18,7 +18,8 @@ tasks:
   test:
     summary: Run all tests with the race detector
     cmds:
-      - CGO_ENABLED=1 go test -race -tags '{{.TAGS}}' ./...
+      # Skip the 1s race-detector exit sleep per test binary; a caller's GORACE comes later and wins.
+      - CGO_ENABLED=1 GORACE="atexit_sleep_ms=0 $GORACE" go test -race -tags '{{.TAGS}}' ./...
 
   lint:
     summary: Run golangci-lint
