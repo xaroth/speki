@@ -1,4 +1,4 @@
-package knowledge
+package knowledge_test
 
 import (
 	"bytes"
@@ -9,381 +9,537 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/google/go-cmp/cmp"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/index"
+	"github.com/eve-online-tools/speki/knowledge"
 	"github.com/eve-online-tools/speki/vault"
 )
 
-func (f *fixture) read(t *testing.T, path string) Page {
-	t.Helper()
-	p, err := f.base.Read(t.Context(), f.grant, ReadRequest{Vault: "ours/kb", Path: path})
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+func TestChanges(t *testing.T) {
+	t.Parallel()
+	const dated = "created: " + nowStamp + "\nupdated: " + nowStamp + "\n"
+	longTitle := strings.Repeat("t", document.MaxTitle+1)
+	nfd := norm.NFD.String
+	moving := map[string]string{
+		"a.md":     "# A\n",
+		"b.md":     "# B\n\nSee [A](a.md).\n",
+		"c.md":     "# C\n\nSee [[a]].\n",
+		"taken.md": "# Taken\n",
+		"empty.md": "",
 	}
-	return p
-}
-
-func (f *fixture) version(t *testing.T, path string) string {
-	t.Helper()
-	return f.read(t, path).Document.Version
-}
-
-func (f *fixture) lastCommit(t *testing.T) gh.CommitRequest {
-	t.Helper()
-	if len(f.github.requests) == 0 {
-		t.Fatal("no commit")
-	}
-	return f.github.requests[len(f.github.requests)-1]
-}
-
-func TestWriteCreates(t *testing.T) {
-	f := newFixture(t)
-	res, err := f.base.Write(t.Context(), f.grant, WriteRequest{
-		Vault:   "ours/kb",
-		Path:    "/runbooks/deploy.md",
-		Content: "---\ntitle: Deploying\n---\n# Deploying\n\nRun the zeppelin job.\n",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "---\ntitle: Deploying\ncreated: 2026-10-09T14:02:11Z\nupdated: 2026-10-09T14:02:11Z\n---\n# Deploying\n\nRun the zeppelin job.\n"
-	c := f.lastCommit(t)
-	if len(c.Changes) != 1 || c.Changes[0].Path != "runbooks/deploy.md" || string(c.Changes[0].Content) != want {
-		t.Errorf("commit changes = %+v", c.Changes)
-	}
-	if !strings.HasPrefix(c.Message, "Create runbooks/deploy.md\n\nSpeki-Client: Claude Code\nSpeki-Request: ") || c.Repo != "ours/kb" || c.Branch != "main" || c.ExpectedHead != "c1" {
-		t.Errorf("commit = %+v", c)
-	}
-	if res.Version != blobID([]byte(want)) || res.Commit == "" || res.IndexPending {
-		t.Errorf("result = %+v", res)
-	}
-	if len(f.notices.sent) != 1 || f.notices.sent[0] != "1:"+res.Commit {
-		t.Errorf("notices = %v", f.notices.sent)
-	}
-
-	// The change is searchable right after.
-	found, err := f.base.Search(t.Context(), f.grant, SearchRequest{Query: "deploying zeppelin"})
-	if err != nil || len(found.Hits) == 0 || found.Hits[0].Path != "runbooks/deploy.md" || found.Hits[0].Version != res.Version {
-		t.Errorf("search after write: %+v, %v", found.Hits, err)
-	}
-}
-
-func TestWriteRefusesTakenPaths(t *testing.T) {
-	f := newFixture(t)
-	f.copies[1].setFile("c1", "huge.md", []byte("too large to index"))
-	ctx := t.Context()
-	content := "# New\n"
-
-	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Content: content})
-	wantCode(t, err, CodeAlreadyExists)
-	var kerr *Error
-	if errors.As(err, &kerr); kerr.Version != f.version(t, "README.md") {
-		t.Errorf("already_exists without the current version: %+v", kerr)
-	}
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "huge.md", Content: content})
-	wantCode(t, err, CodeAlreadyExists)
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "readme.md", Content: content})
-	wantCode(t, err, CodeInvalid)
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "Services/new.md", Content: content})
-	wantCode(t, err, CodeInvalid)
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "notes.txt", Content: content})
-	wantCode(t, err, CodeInvalid)
-	if len(f.github.requests) != 0 {
-		t.Errorf("committed %d times", len(f.github.requests))
-	}
-}
-
-func TestWriteReplaces(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	v := f.version(t, "README.md")
-
-	res, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "---\ntitle: About\n---\nNew text.\n", Message: "Rewrite the intro"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := f.read(t, "README.md"); got.Content != "---\ntitle: About\nupdated: 2026-10-09T14:02:11Z\n---\nNew text.\n" || got.Document.Version != res.Version {
-		t.Errorf("after replace: %q", got.Content)
-	}
-	if m := f.lastCommit(t).Message; !strings.HasPrefix(m, "Rewrite the intro\n\nSpeki-Client: Claude Code\n") {
-		t.Errorf("message = %q", m)
-	}
-
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "# Stale\n"})
-	wantCode(t, err, CodeConflict)
-	var kerr *Error
-	if errors.As(err, &kerr); kerr.Version != res.Version {
-		t.Errorf("conflict without the current version: %+v", kerr)
-	}
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "gone.md", Version: v, Content: "# Gone\n"})
-	wantCode(t, err, CodeNotFound)
-}
-
-func TestWriteChecksContent(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	for name, tt := range map[string]struct {
-		content string
-		code    Code
+	created := map[string]string{"a.md": "---\ntitle: A\ncreated: 2020-01-02T03:04:05Z\n---\nBody.\n"}
+	testCases := []struct {
+		name        string
+		files       map[string]string // of ours/kb; the defaults when nil
+		req         any
+		wantChanges []gh.FileChange
+		wantMessage string
+		wantResult  knowledge.Result
 	}{
-		"bad status":       {"---\ntitle: A\nstatus: wip\n---\n", CodeInvalid},
-		"no title":         {"just text\n", CodeInvalid},
-		"broken yaml":      {"---\ntitle: [\n---\n# A\n", CodeInvalid},
-		"too large":        {"# A\n" + strings.Repeat("x", 1<<20), CodeTooLarge},
-		"not UTF-8":        {"# A\n\xff\n", CodeInvalid},
-		"tags as a string": {"---\ntitle: A\ntags: a, b\n---\n", CodeInvalid},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: tt.content})
-			wantCode(t, err, tt.code)
+		{
+			name:        "create",
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "/runbooks/deploy.md", Content: "---\ntitle: Deploying\n---\n# Deploying\n\nRun the zeppelin job.\n"},
+			wantChanges: []gh.FileChange{{Path: "runbooks/deploy.md", Content: []byte("---\ntitle: Deploying\n" + dated + "---\n# Deploying\n\nRun the zeppelin job.\n")}},
+			wantMessage: "Create runbooks/deploy.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: Deploying\n" + dated + "---\n# Deploying\n\nRun the zeppelin job.\n")},
+		},
+		{
+			name:        "create ignores the agent's created",
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "---\ntitle: New\ncreated: 1999-01-01T00:00:00Z\n---\n"},
+			wantChanges: []gh.FileChange{{Path: "new.md", Content: []byte("---\ntitle: New\n" + dated + "---\n")}},
+			wantMessage: "Create new.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: New\n" + dated + "---\n")},
+		},
+		{
+			name:        "create in a folder git stores in NFD",
+			files:       map[string]string{nfd("menü/brötchen.md"): "# Brötchen\n"},
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "menü/käse.md", Content: "# Käse\n"},
+			wantChanges: []gh.FileChange{{Path: nfd("menü") + "/käse.md", Content: []byte("---\n" + dated + "---\n# Käse\n")}},
+			wantMessage: "Create " + nfd("menü") + "/käse.md",
+			wantResult:  knowledge.Result{Version: blobID("---\n" + dated + "---\n# Käse\n")},
+		},
+		{
+			name:        "create with a title of the longest length",
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "ok.md", Content: "---\ntitle: " + longTitle[1:] + "\n---\n"},
+			wantChanges: []gh.FileChange{{Path: "ok.md", Content: []byte("---\ntitle: " + longTitle[1:] + "\n" + dated + "---\n")}},
+			wantMessage: "Create ok.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: " + longTitle[1:] + "\n" + dated + "---\n")},
+		},
+		{
+			name:        "replace",
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "README.md", Version: blobID(readme), Content: "---\ntitle: About\n---\nNew text.\n", Message: "Rewrite the intro"},
+			wantChanges: []gh.FileChange{{Path: "README.md", Content: []byte("---\ntitle: About\nupdated: " + nowStamp + "\n---\nNew text.\n")}},
+			wantMessage: "Rewrite the intro",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: About\nupdated: " + nowStamp + "\n---\nNew text.\n")},
+		},
+		{
+			name:        "replace keeps created",
+			files:       created,
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "a.md", Version: blobID(created["a.md"]), Content: "---\ntitle: A\n---\nNew body.\n"},
+			wantChanges: []gh.FileChange{{Path: "a.md", Content: []byte("---\ntitle: A\ncreated: 2020-01-02T03:04:05Z\nupdated: " + nowStamp + "\n---\nNew body.\n")}},
+			wantMessage: "Update a.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: A\ncreated: 2020-01-02T03:04:05Z\nupdated: " + nowStamp + "\n---\nNew body.\n")},
+		},
+		{
+			name:        "edit",
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", OldText: "Run the job.", NewText: "Run the deploy job."},
+			wantChanges: []gh.FileChange{{Path: "services/esi-proxy.md", Content: []byte(strings.Replace(strings.Replace(esiProxy, "Run the job.", "Run the deploy job.", 1), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))}},
+			wantMessage: "Update services/esi-proxy.md",
+			wantResult:  knowledge.Result{Version: blobID(strings.Replace(strings.Replace(esiProxy, "Run the job.", "Run the deploy job.", 1), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))},
+		},
+		{
+			name:        "edit every match",
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", OldText: "ESI proxy", NewText: "ESI gateway", ReplaceAll: true},
+			wantChanges: []gh.FileChange{{Path: "services/esi-proxy.md", Content: []byte(strings.Replace(strings.ReplaceAll(esiProxy, "ESI proxy", "ESI gateway"), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))}},
+			wantMessage: "Update services/esi-proxy.md",
+			wantResult:  knowledge.Result{Version: blobID(strings.Replace(strings.ReplaceAll(esiProxy, "ESI proxy", "ESI gateway"), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))},
+		},
+		{
+			name:        "edit removing created keeps it",
+			files:       created,
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "a.md", OldText: "created: 2020-01-02T03:04:05Z\n", NewText: ""},
+			wantChanges: []gh.FileChange{{Path: "a.md", Content: []byte("---\ntitle: A\ncreated: 2020-01-02T03:04:05Z\nupdated: " + nowStamp + "\n---\nBody.\n")}},
+			wantMessage: "Update a.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: A\ncreated: 2020-01-02T03:04:05Z\nupdated: " + nowStamp + "\n---\nBody.\n")},
+		},
+		{
+			name:        "edit keeping a problem from outside speki",
+			files:       map[string]string{"odd.md": "---\ntitle: Odd\nstatus: wip\n---\nBody text.\n"},
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "odd.md", OldText: "Body text.", NewText: "Better text."},
+			wantChanges: []gh.FileChange{{Path: "odd.md", Content: []byte("---\ntitle: Odd\nstatus: wip\nupdated: " + nowStamp + "\n---\nBetter text.\n")}},
+			wantMessage: "Update odd.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: Odd\nstatus: wip\nupdated: " + nowStamp + "\n---\nBetter text.\n")},
+		},
+		{
+			name:        "edit of a long title from outside speki",
+			files:       map[string]string{"long.md": "---\ntitle: " + longTitle + "\n---\nBody text.\n"},
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "long.md", OldText: "Body", NewText: "New"},
+			wantChanges: []gh.FileChange{{Path: "long.md", Content: []byte("---\ntitle: " + longTitle + "\nupdated: " + nowStamp + "\n---\nNew text.\n")}},
+			wantMessage: "Update long.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: " + longTitle + "\nupdated: " + nowStamp + "\n---\nNew text.\n")},
+		},
+		{
+			name:        "edit fixing broken frontmatter",
+			files:       map[string]string{"broken.md": "---\ntitle: [\n---\nBody text.\n"},
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "title: [", NewText: "title: Fixed"},
+			wantChanges: []gh.FileChange{{Path: "broken.md", Content: []byte("---\ntitle: Fixed\nupdated: " + nowStamp + "\n---\nBody text.\n")}},
+			wantMessage: "Update broken.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: Fixed\nupdated: " + nowStamp + "\n---\nBody text.\n")},
+		},
+		{
+			name:        "move",
+			files:       moving,
+			req:         knowledge.MoveRequest{Vault: "ours/kb", From: "a.md", To: "archive/a.md", Version: blobID("# A\n")},
+			wantChanges: []gh.FileChange{{Path: "a.md"}, {Path: "archive/a.md", Content: []byte("# A\n")}},
+			wantMessage: "Move a.md to archive/a.md",
+			wantResult:  knowledge.Result{Version: blobID("# A\n"), LinkedFrom: []string{"b.md", "c.md"}},
+		},
+		{
+			name:        "move to another letter case",
+			files:       moving,
+			req:         knowledge.MoveRequest{Vault: "ours/kb", From: "taken.md", To: "Taken.md", Version: blobID("# Taken\n")},
+			wantChanges: []gh.FileChange{{Path: "taken.md"}, {Path: "Taken.md", Content: []byte("# Taken\n")}},
+			wantMessage: "Move taken.md to Taken.md",
+			wantResult:  knowledge.Result{Version: blobID("# Taken\n")},
+		},
+		{
+			name:        "move an empty document",
+			files:       moving,
+			req:         knowledge.MoveRequest{Vault: "ours/kb", From: "empty.md", To: "still-empty.md", Version: blobID("")},
+			wantChanges: []gh.FileChange{{Path: "empty.md"}, {Path: "still-empty.md", Content: []byte{}}},
+			wantMessage: "Move empty.md to still-empty.md",
+			wantResult:  knowledge.Result{Version: blobID("")},
+		},
+		{
+			name:        "delete",
+			files:       moving,
+			req:         knowledge.DeleteRequest{Vault: "ours/kb", Path: "a.md", Version: blobID("# A\n")},
+			wantChanges: []gh.FileChange{{Path: "a.md"}},
+			wantMessage: "Delete a.md",
+			wantResult:  knowledge.Result{LinkedFrom: []string{"b.md", "c.md"}},
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			var opts []fixtureOption
+			if testCase.files != nil {
+				opts = append(opts, withKB(testCase.files))
+			}
+			f := newFixture(t, opts...)
+			got, err := f.change(t.Context(), f.grant, testCase.req)
+			if err != nil {
+				t.Fatalf("change: %v", err)
+			}
+			want := testCase.wantResult
+			want.Commit = "commit-1"
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("result (-want +got):\n%s", diff)
+			}
+			c := f.lastCommit(t)
+			c.Message = withoutRequestID(c.Message)
+			wantCommit := gh.CommitRequest{
+				Repo:         "ours/kb",
+				Branch:       "main",
+				ExpectedHead: "c1",
+				Message:      testCase.wantMessage + "\n\nSpeki-Client: Claude Code",
+				Changes:      testCase.wantChanges,
+			}
+			if diff := cmp.Diff(wantCommit, c); diff != "" {
+				t.Errorf("commit (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff([]string{"1:commit-1"}, f.notices.all()); diff != "" {
+				t.Errorf("notices (-want +got):\n%s", diff)
+			}
+			// The index has the change by the time the change answers.
+			last := testCase.wantChanges[len(testCase.wantChanges)-1]
+			p, err := f.base.Read(t.Context(), f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: last.Path})
+			if last.Content == nil {
+				wantCode(t, err, knowledge.CodeNotFound)
+				return
+			}
+			if err != nil || p.Document.Version != got.Version {
+				t.Errorf("read after the change: got version %q, %v, want %q", p.Document.Version, err, got.Version)
+			}
+		})
+	}
+}
+
+func TestCommitMessage(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		message string
+		client  string
+		path    string // of a document to delete, to get the default message; a.md is created when empty
+		want    string
+	}{
+		{name: "default", client: "Claude Code", want: "Create a.md\n\nSpeki-Client: Claude Code"},
+		{name: "agent's first line, forged trailer dropped", message: "Fix typo\n\nSpeki-Client: forged", client: "claude.ai", want: "Fix typo\n\nSpeki-Client: claude.ai"},
+		{name: "only a forged trailer", message: "Speki-Client: forged", client: "x", want: "Create a.md\n\nSpeki-Client: x"},
+		{name: "control characters, no client", message: "  tabs\tand\u202econtrol\x00  ", want: "tabs andcontrol\n\nSpeki-Client: unknown"},
+		{name: "long line, client with a line break", message: strings.Repeat("é", 150), client: "c\nlient", want: strings.Repeat("é", 100) + "\n\nSpeki-Client: c lient"},
+		// Default messages name paths from git, which may hold line breaks and format characters.
+		{name: "path with a line break", path: "a\nSpeki-Client: x.md", client: "c", want: "Delete a Speki-Client: x.md\n\nSpeki-Client: c"},
+		{name: "path with a format character", path: "a\u202eb.md", client: "c", want: "Delete ab.md\n\nSpeki-Client: c"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			var f *fixture
+			var req any = knowledge.WriteRequest{Vault: "ours/kb", Path: "a.md", Content: "# A\n", Message: testCase.message}
+			if testCase.path != "" {
+				f = newFixture(t, withKB(map[string]string{testCase.path: "# A\n"}))
+				req = knowledge.DeleteRequest{Vault: "ours/kb", Path: testCase.path, Version: blobID("# A\n"), Message: testCase.message}
+			} else {
+				f = newFixture(t, withKB(map[string]string{}))
+			}
+			g := access.NewGrant(access.User{ID: 7, Token: "ghu_x", Client: testCase.client, Write: true}, []vault.Vault{ours}, []int64{ours.RepoID})
+			if _, err := f.change(t.Context(), g, req); err != nil {
+				t.Fatalf("change: %v", err)
+			}
+			if got := withoutRequestID(f.lastCommit(t).Message); got != testCase.want {
+				t.Errorf("got message %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// Changes that are refused before anything is committed.
+func TestChangeRejects(t *testing.T) {
+	t.Parallel()
+	nfd := norm.NFD.String
+	f := newFixture(t, withKB(map[string]string{
+		"README.md":             readme,
+		"services/esi-proxy.md": esiProxy,
+		"services/db/pg.md":     postgres,
+		"notes.txt":             "x",
+		"dir.md/inside.md":      "# Inside\n",
+		nfd("menü/brötchen.md"): "# Brötchen\n",
+		"café.md":               "# Café\n",
+		"body.md":               "# B\n\nab ab ab\n",
+		"taken.md":              "# Taken\n",
+		"broken.md":             "---\ntitle: [\n---\nBody text.\n",
+	}))
+	f.copy(ours.RepoID).setFile("c1", "huge.md", []byte("too large to index"))
+	readOnly := access.NewGrant(access.User{Login: "octocat", Token: "ghu_x"}, []vault.Vault{ours, shared}, []int64{ours.RepoID})
+	write := func(path, content string) knowledge.WriteRequest {
+		return knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content}
+	}
+	edit := func(oldText, newText string) knowledge.EditRequest {
+		return knowledge.EditRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", OldText: oldText, NewText: newText}
+	}
+	testCases := []struct {
+		name        string
+		grant       *access.Grant // f.grant when nil
+		req         any
+		code        knowledge.Code
+		wantVersion string
+		wantMessage string // part of it
+	}{
+		{name: "read-only session", grant: readOnly, req: write("new.md", "# New\n"), code: knowledge.CodeReadOnlySession},
+		// The grant is checked before the request itself, so a read-only session always hears so.
+		{name: "read-only session, bad edit", grant: readOnly, req: knowledge.EditRequest{Vault: "ours/kb", Path: "a.md"}, code: knowledge.CodeReadOnlySession},
+		{name: "read-only session, bad move", grant: readOnly, req: knowledge.MoveRequest{Vault: "ours/kb", From: "a.md", To: "a.md"}, code: knowledge.CodeReadOnlySession},
+		{name: "read-only session, bad delete", grant: readOnly, req: knowledge.DeleteRequest{Vault: "ours/kb", Path: "a.md"}, code: knowledge.CodeReadOnlySession},
+		{name: "no write access", req: knowledge.WriteRequest{Vault: "ours/shared", Path: "new.md", Content: "# New\n"}, code: knowledge.CodeNoWriteAccess},
+		{name: "write to a vault the user can't read", req: knowledge.WriteRequest{Vault: "ours/secret", Path: "x.md", Content: "# X\n"}, code: knowledge.CodeNotFound},
+		{name: "delete in a vault the user can't read", req: knowledge.DeleteRequest{Vault: "ours/secret", Path: "services/esi-proxy.md", Version: "v"}, code: knowledge.CodeNotFound},
+
+		{name: "create over a document", req: write("README.md", "# New\n"), code: knowledge.CodeAlreadyExists, wantVersion: blobID(readme)},
+		{name: "create over a file the index skips", req: write("huge.md", "# New\n"), code: knowledge.CodeAlreadyExists},
+		{name: "create over a folder", req: write("dir.md", "# New\n"), code: knowledge.CodeAlreadyExists},
+		{name: "create under a file", req: write("README.md/x.md", "# New\n"), code: knowledge.CodeAlreadyExists},
+		{name: "create over a name git stores in NFD", req: write("menü/brötchen.md", "# New\n"), code: knowledge.CodeAlreadyExists},
+		{name: "create in another letter case", req: write("readme.md", "# New\n"), code: knowledge.CodeInvalid},
+		{name: "create in a folder in another letter case", req: write("Services/new.md", "# New\n"), code: knowledge.CodeInvalid},
+		{name: "create not markdown", req: write("notes2.txt", "# New\n"), code: knowledge.CodeInvalid},
+		{name: "content that doesn't parse", req: write("new.md", "---\ntitle: [\n---\n# A\n"), code: knowledge.CodeInvalid},
+		{name: "content that fails the checks", req: write("new.md", "---\ntitle: A\nstatus: wip\n---\n"), code: knowledge.CodeInvalid},
+		{name: "content too large", req: write("new.md", "# A\n"+strings.Repeat("x", 1<<20)), code: knowledge.CodeTooLarge},
+		{name: "replace a stale version", req: knowledge.WriteRequest{Vault: "ours/kb", Path: "README.md", Version: "0000", Content: "# Stale\n"}, code: knowledge.CodeConflict, wantVersion: blobID(readme)},
+		{name: "replace a missing document", req: knowledge.WriteRequest{Vault: "ours/kb", Path: "gone.md", Version: "0000", Content: "# Gone\n"}, code: knowledge.CodeNotFound},
+
+		{name: "edit without old text", req: edit("", "x"), code: knowledge.CodeInvalid},
+		{name: "edit of text that isn't there", req: edit("not there", "x"), code: knowledge.CodeInvalid},
+		{name: "edit of text that's there twice", req: edit("ESI proxy", "Proxy"), code: knowledge.CodeInvalid, wantMessage: "2 times"},
+		{name: "edit of overlapping matches", req: knowledge.EditRequest{Vault: "ours/kb", Path: "body.md", OldText: "ab ab", NewText: "x"}, code: knowledge.CodeInvalid, wantMessage: "2 times"},
+		{name: "edit to content that fails the checks", req: edit("tags: [esi]", "status: wip"), code: knowledge.CodeInvalid},
+		{name: "edit keeping frontmatter that doesn't parse", req: knowledge.EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "Body text.", NewText: "Better text."}, code: knowledge.CodeInvalid},
+		{name: "edit of a stale version", req: knowledge.EditRequest{Vault: "ours/kb", Path: "services/db/pg.md", OldText: "Postgres", NewText: "PG", Version: "0000"}, code: knowledge.CodeConflict, wantVersion: blobID(postgres)},
+		{name: "edit of a missing document", req: knowledge.EditRequest{Vault: "ours/kb", Path: "gone.md", OldText: "x", NewText: "y"}, code: knowledge.CodeNotFound},
+
+		{name: "move without a version", req: knowledge.MoveRequest{Vault: "ours/kb", From: "taken.md", To: "z.md"}, code: knowledge.CodeInvalid},
+		{name: "move onto a document", req: knowledge.MoveRequest{Vault: "ours/kb", From: "café.md", To: "taken.md", Version: blobID("# Café\n")}, code: knowledge.CodeAlreadyExists, wantVersion: blobID("# Taken\n")},
+		{name: "move of a stale version", req: knowledge.MoveRequest{Vault: "ours/kb", From: "café.md", To: "z.md", Version: "0000"}, code: knowledge.CodeConflict, wantVersion: blobID("# Café\n")},
+		{name: "move to the same path in NFD", req: knowledge.MoveRequest{Vault: "ours/kb", From: "café.md", To: nfd("café.md"), Version: blobID("# Café\n")}, code: knowledge.CodeInvalid},
+
+		{name: "delete without a version", req: knowledge.DeleteRequest{Vault: "ours/kb", Path: "taken.md"}, code: knowledge.CodeInvalid},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			g := f.grant
+			if testCase.grant != nil {
+				g = testCase.grant
+			}
+			_, err := f.change(t.Context(), g, testCase.req)
+			kerr := wantError(t, err, testCase.code)
+			if kerr.Version != testCase.wantVersion {
+				t.Errorf("got version %q, want %q", kerr.Version, testCase.wantVersion)
+			}
+			if !strings.Contains(kerr.Message, testCase.wantMessage) {
+				t.Errorf("got message %q, want it to contain %q", kerr.Message, testCase.wantMessage)
+			}
+			if n := len(f.github.sent()); n != 0 {
+				t.Errorf("got %d commits, want none", n)
+			}
 		})
 	}
 }
 
 // The agent read a version GitHub has but speki's index doesn't yet: speki syncs and finds it.
 func TestWriteSyncsWhenTheIndexIsBehind(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	newer := []byte("---\ntitle: About\n---\nChanged on GitHub.\n")
-	f.github.push("ours/kb", "README.md", newer)
+	newer := "---\ntitle: About\n---\nChanged on GitHub.\n"
+	f.github.push("ours/kb", "README.md", []byte(newer))
 
-	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: blobID(newer), Content: "---\ntitle: About\n---\nMine.\n"})
+	_, err := f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "README.md", Version: blobID(newer), Content: "---\ntitle: About\n---\nMine.\n"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Write: %v", err)
 	}
-	if !strings.HasPrefix(f.lastCommit(t).ExpectedHead, "push-") {
-		t.Errorf("commit based on %s", f.lastCommit(t).ExpectedHead)
+	if got := f.lastCommit(t).ExpectedHead; got != "push-1" {
+		t.Errorf("got a commit based on %s, want push-1", got)
 	}
 }
 
-func TestEdit(t *testing.T) {
+// A blob the copy no longer has (a fresh clone dropped it) is fetched again rather than failing.
+func TestWriteRecoversFromAMissingBlob(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	ctx := t.Context()
-	edit := func(req EditRequest) (Result, error) {
-		req.Vault = "ours/kb"
-		if req.Path == "" {
-			req.Path = "services/esi-proxy.md"
-		}
-		return f.base.Edit(ctx, f.grant, req)
-	}
-
-	res, err := edit(EditRequest{OldText: "Run the job.", NewText: "Run the deploy job."})
+	f.copy(ours.RepoID).failBlobs(1)
+	_, err := f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "README.md", Version: blobID(readme), Content: "---\ntitle: About\n---\nNew.\n"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Write: %v", err)
 	}
-	got := f.read(t, "services/esi-proxy.md")
-	if !strings.Contains(got.Content, "Run the deploy job.") || !strings.Contains(got.Content, "updated: 2026-10-09T14:02:11Z") || got.Document.Version != res.Version {
-		t.Errorf("after edit:\n%s", got.Content)
-	}
-
-	_, err = edit(EditRequest{OldText: "not there", NewText: "x"})
-	wantCode(t, err, CodeInvalid)
-	_, err = edit(EditRequest{OldText: "ESI proxy", NewText: "Proxy"})
-	wantCode(t, err, CodeInvalid)
-	if !strings.Contains(err.Error(), "2 times") {
-		t.Errorf("count missing from %v", err)
-	}
-	_, err = edit(EditRequest{OldText: "ESI proxy", NewText: "ESI gateway", ReplaceAll: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := f.read(t, "services/esi-proxy.md"); strings.Contains(got.Content, "ESI proxy") || got.Document.Title != "ESI gateway" {
-		t.Errorf("replace_all: %s", got.Content)
-	}
-	_, err = edit(EditRequest{OldText: "tags: [esi]", NewText: "status: wip"})
-	wantCode(t, err, CodeInvalid)
-	_, err = edit(EditRequest{OldText: "Postgres", NewText: "PG", Version: res.Version, Path: "services/db/pg.md"})
-	wantCode(t, err, CodeConflict)
-	_, err = edit(EditRequest{OldText: "", NewText: "x"})
-	wantCode(t, err, CodeInvalid)
-	_, err = edit(EditRequest{OldText: "x", NewText: "y", Path: "gone.md"})
-	wantCode(t, err, CodeNotFound)
-}
-
-// A document whose frontmatter was broken outside speki can be fixed, but not changed while broken.
-func TestEditExistingProblems(t *testing.T) {
-	f := newFixture(t)
-	f.copies[1] = newCopy(t, map[string]string{
-		"odd.md":    "---\ntitle: Odd\nstatus: wip\n---\nBody text.\n",
-		"broken.md": "---\ntitle: [\n---\nBody text.\n",
-	})
-	ctx := t.Context()
-	_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "odd.md", OldText: "Body text.", NewText: "Better text."})
-	if err != nil {
-		t.Errorf("edit keeping an old problem: %v", err)
-	}
-	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "Body text.", NewText: "Better text."})
-	wantCode(t, err, CodeInvalid)
-	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "title: [", NewText: "title: Fixed"})
-	if err != nil {
-		t.Errorf("edit fixing the block: %v", err)
+	if got := f.vaults.syncCount(); got != 2 { // the extra one, then the one after the commit
+		t.Errorf("got %d syncs, want 2", got)
 	}
 }
 
-func TestMoveAndDelete(t *testing.T) {
+func TestWriteDuringARebuild(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	f.copies[1] = newCopy(t, map[string]string{
-		"a.md":     "# A\n",
-		"b.md":     "# B\n\nSee [A](a.md).\n",
-		"c.md":     "# C\n\nSee [[a]].\n",
-		"taken.md": "# Taken\n",
-	})
-	ctx := t.Context()
-	v := f.version(t, "a.md")
-
-	_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "z.md"})
-	wantCode(t, err, CodeInvalid)
-	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "taken.md", Version: v})
-	wantCode(t, err, CodeAlreadyExists)
-	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "z.md", Version: "0000"})
-	wantCode(t, err, CodeConflict)
-
-	res, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "a.md", To: "archive/a.md", Version: v})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := f.lastCommit(t)
-	if len(c.Changes) != 2 || c.Changes[0].Path != "a.md" || c.Changes[0].Content != nil || c.Changes[1].Path != "archive/a.md" || string(c.Changes[1].Content) != "# A\n" {
-		t.Errorf("move changes = %+v", c.Changes)
-	}
-	if res.Version != v || strings.Join(res.LinkedFrom, ",") != "b.md,c.md" || !strings.HasPrefix(c.Message, "Move a.md to archive/a.md\n\nSpeki-Client: Claude Code\n") {
-		t.Errorf("move result = %+v, message %q", res, c.Message)
-	}
-
-	// Renaming to another letter case of the same name is a move, not a collision.
-	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "taken.md", To: "Taken.md", Version: f.version(t, "taken.md")})
-	if err != nil {
-		t.Errorf("case-only rename: %v", err)
-	}
-
-	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: "b.md"})
-	wantCode(t, err, CodeInvalid)
-	res, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: "archive/a.md", Version: v})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(f.lastCommit(t).Changes) != 1 || res.Version != "" {
-		t.Errorf("delete = %+v", res)
-	}
-	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "archive/a.md"})
-	wantCode(t, err, CodeNotFound)
-}
-
-func TestWriteAccess(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	req := WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"}
-
-	readOnly := access.NewGrant(access.User{Login: "octocat", Token: "ghu_x"}, []vault.Vault{ours, shared}, []int64{1})
-	_, err := f.base.Write(ctx, readOnly, req)
-	wantCode(t, err, CodeReadOnlySession)
-
-	req.Vault = "ours/shared"
-	_, err = f.base.Write(ctx, f.grant, req)
-	wantCode(t, err, CodeNoWriteAccess)
-	for _, err := range []error{
-		func() error {
-			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/secret", Path: "x.md", Content: "# X\n"})
-			return err
-		}(),
-		func() error {
-			_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/secret", Path: "services/esi-proxy.md", OldText: "Hidden", NewText: "x"})
-			return err
-		}(),
-		func() error {
-			_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/secret", From: "services/esi-proxy.md", To: "x.md", Version: "v"})
-			return err
-		}(),
-		func() error {
-			_, err := f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/secret", Path: "services/esi-proxy.md", Version: "v"})
-			return err
-		}(),
-	} {
-		wantCode(t, err, CodeNotFound)
-	}
-	if len(f.github.requests) != 0 {
-		t.Errorf("committed %d times", len(f.github.requests))
-	}
-}
-
-func TestCommitRetriesWhenTheBranchMoves(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	moves := commitAttempts - 1 // every attempt but the last finds the branch moved
-	f.github.before = func(r *fakeRepo) {
-		if moves > 0 {
-			moves--
-			r.head += "+someone-else"
-		}
-	}
-	_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "zeppelin", NewText: "airship"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := len(f.github.requests); n != commitAttempts {
-		t.Errorf("%d commit attempts, want %d", n, commitAttempts)
-	}
-
-	f.github.before = func(r *fakeRepo) { r.head += "+" }
-	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "airship", NewText: "zeppelin"})
-	wantCode(t, err, CodeConflict)
-	var kerr *Error
-	if errors.As(err, &kerr); kerr.Version == "" || !strings.Contains(kerr.Message, kerr.Version) {
-		t.Errorf("conflict without the current version: %+v", kerr)
-	}
-	if n := len(f.github.requests); n != 2*commitAttempts {
-		t.Errorf("%d commit attempts in all, want %d", n, 2*commitAttempts)
-	}
-}
-
-func TestCommitErrors(t *testing.T) {
-	f := newFixture(t)
-	for _, tt := range []struct {
-		err  error
-		code Code
-	}{
-		{&gh.SecretError{Detail: "GitHub Personal Access Token"}, CodeSecretDetected},
-		{gh.ErrBranchRules, CodeVaultReadOnly},
-		{gh.ErrForbidden, CodeNoWriteAccess},
-		{&gh.RateLimitError{RetryAfter: 30 * time.Second}, CodeRateLimited},
-		{gh.ErrUnauthorized, CodeUnavailable},
-	} {
-		f.github.err = tt.err
-		_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
-		wantCode(t, err, tt.code)
-	}
-	f.github.err = errors.New("connection reset")
-	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
-	var kerr *Error
-	if err == nil || errors.As(err, &kerr) {
-		t.Errorf("unknown GitHub failure = %v, want a plain error", err)
+	f.github.push("ours/kb", "README.md", []byte("# Changed\n"))
+	f.vaults.setSyncErr(knowledge.ErrRebuilding)
+	_, err := f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "README.md", Version: blobID(readme), Content: "# Mine\n"})
+	kerr := wantError(t, err, knowledge.CodeUnavailable)
+	if !strings.Contains(kerr.Message, "rebuilding") {
+		t.Errorf("got %q, want it to say the vault is rebuilding", kerr.Message)
 	}
 }
 
 func TestIndexPending(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	f.github.before = func(*fakeRepo) { f.vaults.syncErr = errors.New("fetch timed out") }
-	res, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
+	f.github.before = func(*fakeRepo) { f.vaults.setSyncErr(errors.New("fetch timed out")) }
+	res, err := f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Write: %v", err)
 	}
-	if !res.IndexPending || res.Commit == "" {
-		t.Errorf("result = %+v", res)
+	if !res.IndexPending || res.Commit != "commit-1" {
+		t.Errorf("got %+v, want commit-1 with the index pending", res)
+	}
+}
+
+func TestCommitRetriesWhenTheBranchMoves(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name        string
+		moves       int // how many attempts find the branch moved
+		req         any
+		code        knowledge.Code
+		wantVersion string
+	}{
+		{
+			name:  "lands on the last attempt",
+			moves: knowledge.CommitAttempts - 1,
+			req:   knowledge.EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "zeppelin", NewText: "airship"},
+		},
+		{
+			name:        "keeps moving",
+			moves:       knowledge.CommitAttempts,
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "zeppelin", NewText: "airship"},
+			code:        knowledge.CodeConflict,
+			wantVersion: blobID(readme),
+		},
+		{
+			name:        "keeps moving under a move",
+			moves:       knowledge.CommitAttempts,
+			req:         knowledge.MoveRequest{Vault: "ours/kb", From: "README.md", To: "about.md", Version: blobID(readme)},
+			code:        knowledge.CodeConflict,
+			wantVersion: blobID(readme), // of the source
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			moves := testCase.moves
+			f.github.before = func(r *fakeRepo) {
+				if moves > 0 {
+					moves--
+					r.head += "+someone-else"
+				}
+			}
+			_, err := f.change(t.Context(), f.grant, testCase.req)
+			if n := len(f.github.sent()); n != knowledge.CommitAttempts {
+				t.Errorf("got %d commit attempts, want %d", n, knowledge.CommitAttempts)
+			}
+			if testCase.code == "" {
+				if err != nil {
+					t.Errorf("got %v, want no error", err)
+				}
+				return
+			}
+			kerr := wantError(t, err, testCase.code)
+			if kerr.Version != testCase.wantVersion || !strings.Contains(kerr.Message, testCase.wantVersion) {
+				t.Errorf("got %+v, want a conflict with version %s", kerr, testCase.wantVersion)
+			}
+		})
+	}
+}
+
+// GitHub's refusals reach the agent as codes, without looking for a commit that can't have landed.
+func TestCommitErrors(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		err  error
+		code knowledge.Code // empty: a plain error
+	}{
+		{name: "secret", err: &gh.SecretError{Detail: "GitHub Personal Access Token"}, code: knowledge.CodeSecretDetected},
+		{name: "branch rules", err: gh.ErrBranchRules, code: knowledge.CodeVaultReadOnly},
+		{name: "forbidden", err: gh.ErrForbidden, code: knowledge.CodeNoWriteAccess},
+		{name: "rate limited", err: &gh.RateLimitError{RetryAfter: 30 * time.Second}, code: knowledge.CodeRateLimited},
+		{name: "signed out", err: gh.ErrUnauthorized, code: knowledge.CodeUnavailable},
+		{name: "refused", err: fmt.Errorf("%w: something (UNPROCESSABLE)", gh.ErrRefused)},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.github.err = testCase.err
+			_, err := f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
+			if testCase.code != "" {
+				wantCode(t, err, testCase.code)
+			} else if _, ok := errors.AsType[*knowledge.Error](err); ok || err == nil {
+				t.Errorf("got %v, want a plain error", err)
+			}
+			if f.github.lookups != 0 {
+				t.Errorf("got %d lookups for the commit, want none", f.github.lookups)
+			}
+		})
+	}
+}
+
+// When GitHub's answer to a commit is lost, speki looks for the commit, twice, so the agent doesn't
+// retry an edit that would apply twice. synctest stands in for the wait between the lookups.
+func TestLostAnswerToACommit(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name        string
+		err         error // Commit fails with it, landing nothing
+		lostErr     error // Commit lands, then fails with it
+		wantLanded  bool
+		wantLookups int
+	}{
+		{name: "landed", lostErr: errors.New("502 Bad Gateway"), wantLanded: true, wantLookups: 1},
+		{name: "never landed", err: errors.New("connection reset"), wantLookups: 2},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.github.err, f.github.lostErr = testCase.err, testCase.lostErr
+				res, err := f.base.Edit(t.Context(), f.grant, knowledge.EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "# About", NewText: "# About\n\nAn intro."})
+				if f.github.lookups != testCase.wantLookups {
+					t.Errorf("got %d lookups, want %d", f.github.lookups, testCase.wantLookups)
+				}
+				if !testCase.wantLanded {
+					if _, ok := errors.AsType[*knowledge.Error](err); ok || err == nil {
+						t.Errorf("got %v, want a plain error", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("Edit: %v", err)
+				}
+				if res.Commit != f.github.head("ours/kb") || res.Version != f.version(t, "README.md") {
+					t.Errorf("got %+v, want the commit speki made, at the indexed version", res)
+				}
+			})
+		})
 	}
 }
 
 func TestConcurrentEdits(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := t.Context()
 	var wg sync.WaitGroup
 	errs := make(chan error, 3)
-	for _, e := range []EditRequest{
+	for _, e := range []knowledge.EditRequest{
 		{Path: "services/esi-proxy.md", OldText: "Run the job.", NewText: "Run the deploy job."},
 		{Path: "services/esi-proxy.md", OldText: "caches", NewText: "stores"},
 		{Path: "services/db/pg.md", OldText: "Zeppelin database.", NewText: "Main database."},
@@ -398,12 +554,12 @@ func TestConcurrentEdits(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Error(err)
+			t.Errorf("Edit: %v", err)
 		}
 	}
 	got := f.read(t, "services/esi-proxy.md").Content
 	if !strings.Contains(got, "Run the deploy job.") || !strings.Contains(got, "stores") {
-		t.Errorf("an edit was lost:\n%s", got)
+		t.Errorf("got\n%s\nwant both edits", got)
 	}
 
 	// Two writes from the same version: one wins, the other conflicts.
@@ -411,7 +567,7 @@ func TestConcurrentEdits(t *testing.T) {
 	results := make(chan error, 2)
 	for _, text := range []string{"One.", "Two."} {
 		wg.Go(func() {
-			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "---\ntitle: About\n---\n" + text + "\n"})
+			_, err := f.base.Write(ctx, f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "---\ntitle: About\n---\n" + text + "\n"})
 			results <- err
 		})
 	}
@@ -419,465 +575,268 @@ func TestConcurrentEdits(t *testing.T) {
 	close(results)
 	var ok, conflicts int
 	for err := range results {
-		var kerr *Error
+		kerr, isKerr := errors.AsType[*knowledge.Error](err)
 		switch {
 		case err == nil:
 			ok++
-		case errors.As(err, &kerr) && kerr.Code == CodeConflict:
+		case isKerr && kerr.Code == knowledge.CodeConflict:
 			conflicts++
 		default:
-			t.Error(err)
+			t.Errorf("Write: %v", err)
 		}
 	}
 	if ok != 1 || conflicts != 1 {
-		t.Errorf("%d succeeded, %d conflicted", ok, conflicts)
+		t.Errorf("got %d succeeded and %d conflicted, want 1 and 1", ok, conflicts)
 	}
 }
 
-func TestCommitMessage(t *testing.T) {
-	for _, tt := range []struct{ message, client, want string }{
-		{"", "Claude Code", "Update a.md\n\nSpeki-Client: Claude Code"},
-		{"Fix typo\n\nSpeki-Client: forged", "claude.ai", "Fix typo\n\nSpeki-Client: claude.ai"},
-		{"Speki-Client: forged", "x", "Update a.md\n\nSpeki-Client: x"},
-		{"  tabs\tand\u202econtrol\x00  ", "", "tabs andcontrol\n\nSpeki-Client: unknown"},
-		{strings.Repeat("é", 150), "c\nlient", strings.Repeat("é", 100) + "\n\nSpeki-Client: c lient"},
-	} {
-		if got := commitMessage(tt.message, "Update a.md", tt.client); got != tt.want {
-			t.Errorf("commitMessage(%q, %q) = %q, want %q", tt.message, tt.client, got, tt.want)
-		}
+// A change queued behind a slow one gives up when its request ends, or once the lock wait runs out
+// while its request still has time. synctest stands in for the lock wait.
+func TestWriteLockWait(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		timeout time.Duration // of the queued request; none when zero
+		code    knowledge.Code
+		wantErr error
+	}{
+		{name: "request ends first", timeout: time.Second, wantErr: context.DeadlineExceeded},
+		{name: "lock wait runs out", code: knowledge.CodeUnavailable},
 	}
-	// Default messages name paths from git, which may hold line breaks and format characters.
-	for _, tt := range []struct{ fallback, want string }{
-		{"Update a\nSpeki-Client: x.md", "Update a Speki-Client: x.md\n\nSpeki-Client: c"},
-		{"Delete a\u202eb.md", "Delete ab.md\n\nSpeki-Client: c"},
-	} {
-		if got := commitMessage("", tt.fallback, "c"); got != tt.want {
-			t.Errorf("commitMessage with fallback %q = %q, want %q", tt.fallback, got, tt.want)
-		}
-	}
-}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				committing, release := make(chan struct{}), make(chan struct{})
+				f.github.before = func(*fakeRepo) {
+					close(committing)
+					<-release
+				}
+				slow := make(chan error, 1)
+				go func() {
+					_, err := f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "slow.md", Content: "# Slow\n"})
+					slow <- err
+				}()
+				<-committing
 
-func TestCreatedIsSpekis(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	f.copies[1] = newCopy(t, map[string]string{
-		"a.md": "---\ntitle: A\ncreated: 2020-01-02T03:04:05Z\n---\nBody.\n",
-	})
-
-	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "---\ntitle: New\ncreated: 1999-01-01T00:00:00Z\n---\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := f.read(t, "new.md").Document.Created; got != "2026-10-09T14:02:11Z" {
-		t.Errorf("created on create = %s, want now", got)
-	}
-
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "a.md", Version: f.version(t, "a.md"), Content: "---\ntitle: A\n---\nNew body.\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := f.read(t, "a.md").Document.Created; got != "2020-01-02T03:04:05Z" {
-		t.Errorf("created after a replace that left it out = %q", got)
-	}
-	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "a.md", OldText: "created: 2020-01-02T03:04:05Z\n", NewText: ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := f.read(t, "a.md").Document.Created; got != "2020-01-02T03:04:05Z" {
-		t.Errorf("created after an edit that removed it = %q", got)
-	}
-}
-
-func TestWriteEdges(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	f.copies[1] = newCopy(t, map[string]string{"empty.md": "", "dir.md/inside.md": "# Inside\n"})
-
-	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "dir.md", Content: "# Dir\n"})
-	wantCode(t, err, CodeAlreadyExists)
-
-	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "empty.md", To: "still-empty.md", Version: f.version(t, "empty.md")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c := f.lastCommit(t); c.Changes[1].Content == nil || len(c.Changes[1].Content) != 0 {
-		t.Errorf("moving an empty document deletes it: %+v", c.Changes)
-	}
-}
-
-// A blob the copy no longer has (a fresh clone dropped it) is fetched again rather than failing.
-func TestWriteRecoversFromAMissingBlob(t *testing.T) {
-	f := newFixture(t)
-	v := f.version(t, "README.md")
-	f.copies[1].failBlobs(1)
-	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "---\ntitle: About\n---\nNew.\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.vaults.syncs.Load() < 2 { // the extra one, then the one after the commit
-		t.Errorf("syncs = %d", f.vaults.syncs.Load())
-	}
-}
-
-func TestWriteLockHonoursTheContext(t *testing.T) {
-	f := newFixture(t)
-	unlock, err := f.base.writes.lock(t.Context(), ours.RepoID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unlock()
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancel()
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("waiting on a held lock: %v", err)
-	}
-}
-
-// A change queued behind a slow one hears the vault is busy once the lock wait runs out, while its
-// request still has time.
-func TestWriteLockWaitIsCapped(t *testing.T) {
-	f := newFixture(t)
-	f.base.lockWait = 50 * time.Millisecond
-	committing, release := make(chan struct{}), make(chan struct{})
-	f.github.before = func(*fakeRepo) {
-		close(committing)
-		<-release
-	}
-	slow := make(chan error, 1)
-	go func() {
-		_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "slow.md", Content: "# Slow\n"})
-		slow <- err
-	}()
-	<-committing
-	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "queued.md", Content: "# Queued\n"})
-	wantCode(t, err, CodeUnavailable)
-	if !strings.Contains(err.Error(), "another change to ours/kb is still being committed") {
-		t.Errorf("error = %v", err)
-	}
-	close(release)
-	if err := <-slow; err != nil {
-		t.Errorf("slow write: %v", err)
+				ctx := t.Context()
+				if testCase.timeout > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, testCase.timeout)
+					defer cancel()
+				}
+				_, err := f.base.Write(ctx, f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "queued.md", Content: "# Queued\n"})
+				if testCase.wantErr != nil && !errors.Is(err, testCase.wantErr) {
+					t.Errorf("got %v, want %v", err, testCase.wantErr)
+				}
+				if testCase.code != "" {
+					kerr := wantError(t, err, testCase.code)
+					if !strings.Contains(kerr.Message, "another change to ours/kb is still being committed") {
+						t.Errorf("got %q, want it to name the change being committed", kerr.Message)
+					}
+				}
+				close(release)
+				if err := <-slow; err != nil {
+					t.Errorf("slow write: got %v, want no error", err)
+				}
+			})
+		})
 	}
 }
 
 // A commit that lands while the sync after it is slow is a success with its SHA. The sync and the notice
-// finish after the answer, and Stop waits for them.
+// finish after the answer, and Stop waits for them. synctest stands in for the request's deadline.
 func TestCommitLandsWhileItsSyncIsSlow(t *testing.T) {
-	f := newFixture(t)
-	f.vaults.hold = make(chan struct{}) // a new document: the only sync is the one after the commit
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	res, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
-	if err != nil {
-		t.Fatalf("write whose sync is slow: %v", err)
-	}
-	if res.Commit != f.github.repoOf("ours/kb").head || !res.IndexPending {
-		t.Errorf("result = %+v", res)
-	}
-	f.notices.mu.Lock()
-	early := len(f.notices.sent)
-	f.notices.mu.Unlock()
-	if early != 0 {
-		t.Errorf("notice sent before the sync finished")
-	}
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		f.vaults.hold = make(chan struct{}) // a new document: the only sync is the one after the commit
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		res, err := f.base.Write(ctx, f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
+		if err != nil {
+			t.Fatalf("write whose sync is slow: %v", err)
+		}
+		if res.Commit != "commit-1" || !res.IndexPending {
+			t.Errorf("got %+v, want commit-1 with the index pending", res)
+		}
+		if got := f.notices.all(); len(got) != 0 {
+			t.Errorf("got notices %v before the sync finished, want none", got)
+		}
 
-	close(f.vaults.hold)
-	err = f.base.Stop(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(f.notices.sent) != 1 || f.notices.sent[0] != "1:"+res.Commit {
-		t.Errorf("notices = %v", f.notices.sent)
-	}
+		close(f.vaults.hold)
+		if err := f.base.Stop(t.Context()); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		if diff := cmp.Diff([]string{"1:commit-1"}, f.notices.all()); diff != "" {
+			t.Errorf("notices (-want +got):\n%s", diff)
+		}
 
-	// Once stopped, a change still answers; the pollers catch up with it.
-	res, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "later.md", Content: "# Later\n"})
-	if err != nil || res.Commit == "" || !res.IndexPending {
-		t.Errorf("write after Stop: %+v, %v", res, err)
-	}
-}
-
-// Names that git stores in NFD, through the write path with the mirror's real paths.
-func TestWriteNormalisation(t *testing.T) {
-	f := newFixture(t)
-	nfd := norm.NFD.String
-	f.copies[1] = newCopy(t, map[string]string{nfd("menü/brötchen.md"): "# Brötchen\n"})
-	ctx := t.Context()
-
-	_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "menü/käse.md", Content: "# Käse\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := f.lastCommit(t).Changes[0].Path; got != nfd("menü")+"/käse.md" {
-		t.Errorf("new document at %q, not in the existing NFD folder", got)
-	}
-	_, err = f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "menü/brötchen.md", Content: "# Copy\n"})
-	wantCode(t, err, CodeAlreadyExists)
-}
-
-// The grant is checked before the request itself, so a read-only session always hears so.
-func TestGrantIsCheckedFirst(t *testing.T) {
-	f := newFixture(t)
-	readOnly := access.NewGrant(access.User{Login: "octocat"}, []vault.Vault{ours}, []int64{1})
-	ctx := t.Context()
-	_, err := f.base.Move(ctx, readOnly, MoveRequest{Vault: "ours/kb", From: "a.md", To: "a.md"})
-	wantCode(t, err, CodeReadOnlySession)
-	_, err = f.base.Delete(ctx, readOnly, DeleteRequest{Vault: "ours/kb", Path: "a.md"})
-	wantCode(t, err, CodeReadOnlySession)
-	_, err = f.base.Edit(ctx, readOnly, EditRequest{Vault: "ours/kb", Path: "a.md"})
-	wantCode(t, err, CodeReadOnlySession)
-}
-
-func TestWritePathChecks(t *testing.T) {
-	f := newFixture(t)
-	f.copies[1] = newCopy(t, map[string]string{"README.md": "# R\n", "notes.txt": "x", "café.md": "# Café\n", "body.md": "# B\n\nab ab ab\n"})
-	ctx := t.Context()
-
-	// Nothing goes under a file.
-	for _, p := range []string{"README.md/x.md", "notes.txt/a.md"} {
-		_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: p, Content: "# X\n"})
-		wantCode(t, err, CodeAlreadyExists)
-	}
-	_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "café.md", To: "README.md/café.md", Version: f.version(t, "café.md")})
-	wantCode(t, err, CodeAlreadyExists)
-
-	// A move to the same path in another normalisation isn't a move.
-	_, err = f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: "café.md", To: norm.NFD.String("café.md"), Version: f.version(t, "café.md")})
-	wantCode(t, err, CodeInvalid)
-
-	// Overlapping matches count: "ab ab" appears twice in "ab ab ab".
-	_, err = f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: "body.md", OldText: "ab ab", NewText: "x"})
-	wantCode(t, err, CodeInvalid)
-	if len(f.github.requests) != 0 {
-		t.Errorf("committed %d times", len(f.github.requests))
-	}
-}
-
-// GitHub made the commit but its answer was lost: speki finds the commit and reports success, so the
-// agent doesn't retry an edit that would apply twice.
-func TestLostAnswerToACommit(t *testing.T) {
-	f := newFixture(t)
-	f.github.lostErr = errors.New("502 Bad Gateway")
-	res, err := f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "# About", NewText: "# About\n\nAn intro."})
-	if err != nil {
-		t.Fatalf("edit whose answer was lost: %v", err)
-	}
-	if res.Commit == "" || res.Version != f.version(t, "README.md") {
-		t.Errorf("result = %+v", res)
-	}
-
-	if res.Commit != f.github.repoOf("ours/kb").head {
-		t.Errorf("result commit %s, want the commit speki made", res.Commit)
-	}
-
-	// A failure where nothing landed is still a failure.
-	f.github.lostErr = nil
-	f.github.err = errors.New("connection reset")
-	_, err = f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "An intro.", NewText: "Intro."})
-	if err == nil {
-		t.Error("a commit that never landed reported success")
-	}
-
-	// A definite refusal isn't looked for at all.
-	f.github.err = fmt.Errorf("%w: something (UNPROCESSABLE)", gh.ErrRefused)
-	_, err = f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "README.md", OldText: "An intro.", NewText: "Intro."})
-	if err == nil {
-		t.Error("a refusal reported success")
-	}
-}
-
-func TestWriteDuringARebuild(t *testing.T) {
-	f := newFixture(t)
-	v := f.version(t, "README.md")
-	f.github.push("ours/kb", "README.md", []byte("# Changed\n"))
-	f.vaults.syncErr = ErrRebuilding
-	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "README.md", Version: v, Content: "# Mine\n"})
-	wantCode(t, err, CodeUnavailable)
-	if !strings.Contains(err.Error(), "rebuilding") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-func TestMoveConflictCarriesTheSourceVersion(t *testing.T) {
-	f := newFixture(t)
-	v := f.version(t, "README.md")
-	f.github.before = func(r *fakeRepo) { r.head += "+" }
-	_, err := f.base.Move(t.Context(), f.grant, MoveRequest{Vault: "ours/kb", From: "README.md", To: "about.md", Version: v})
-	var kerr *Error
-	if !errors.As(err, &kerr) || kerr.Code != CodeConflict || kerr.Version != v {
-		t.Errorf("conflict = %+v, want the version of README.md", err)
-	}
-}
-
-// A document that already has an over-long title can still be edited; a new one can't be written with
-// one.
-func TestLongTitles(t *testing.T) {
-	f := newFixture(t)
-	long := strings.Repeat("t", document.MaxTitle+1)
-	f.copies[1] = newCopy(t, map[string]string{"long.md": "---\ntitle: " + long + "\n---\nBody text.\n"})
-	_, err := f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: "long.md", OldText: "Body", NewText: "New"})
-	if err != nil {
-		t.Errorf("editing a document with a long title: %v", err)
-	}
-	_, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "---\ntitle: " + long + "\n---\nBody.\n"})
-	wantCode(t, err, CodeInvalid)
-	if err != nil && !strings.Contains(err.Error(), "longer than") {
-		t.Errorf("refused for another reason: %v", err)
-	}
-	_, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "ok.md", Content: "---\ntitle: " + long[1:] + "\n---\nBody.\n"})
-	if err != nil {
-		t.Errorf("writing a title of exactly %d bytes: %v", document.MaxTitle, err)
-	}
-}
-
-// apply changes one file in the copy and applies it to the index, as a sync of a push would.
-func (c *fakeCopy) apply(t *testing.T, commit, path string, content []byte) {
-	t.Helper()
-	c.setFile(commit, path, content)
-	err := c.idx.Apply(t.Context(), commit, []index.Change{{Path: path, Version: blobID(content), Content: content}})
-	if err != nil {
-		t.Fatal(err)
-	}
+		// Once stopped, a change still answers; the pollers catch up with it.
+		res, err = f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: "ours/kb", Path: "later.md", Content: "# Later\n"})
+		if err != nil || res.Commit != "commit-2" || !res.IndexPending {
+			t.Errorf("write after Stop: got %+v, %v, want commit-2 with the index pending", res, err)
+		}
+	})
 }
 
 // A push that leaves a document unparseable must not let an agent overwrite it with the version it read
 // before. Delete with the current version is the only change allowed.
 func TestBrokenDocument(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	ctx := t.Context()
 	const path = "services/esi-proxy.md"
-	old := f.version(t, path)
-	bad := []byte("---\ntitle: ESI proxy\n---\n# ESI proxy\n\nA human's edit \xff\n")
-	f.copies[1].apply(t, "c2", path, bad)
+	old := blobID(esiProxy)
+	bad := "---\ntitle: ESI proxy\n---\n# ESI proxy\n\nA human's edit \xff\n"
+	f.copy(ours.RepoID).apply(t, "c2", path, []byte(bad))
 	now := blobID(bad)
 
-	_, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: path})
-	wantCode(t, err, CodeBroken)
-	var kerr *Error
-	if errors.As(err, &kerr); kerr.Version != now || !strings.Contains(kerr.Message, "not UTF-8") {
-		t.Errorf("read error = %+v", kerr)
+	_, err := f.base.Read(t.Context(), f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: path})
+	kerr := wantError(t, err, knowledge.CodeBroken)
+	if kerr.Version != now || !strings.Contains(kerr.Message, "not UTF-8") {
+		t.Errorf("got read error %+v, want broken at version %s", kerr, now)
 	}
 
 	content := "---\ntitle: ESI proxy\n---\nOverwritten.\n"
-	changes := map[string]func(version string) error{
-		"edit": func(v string) error {
-			_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "ESI", NewText: "X", Version: v})
-			return err
-		},
-		"replace": func(v string) error {
-			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: path, Content: content, Version: v})
-			return err
-		},
-		"create": func(string) error {
-			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: path, Content: content})
-			return err
-		},
-		"move": func(v string) error {
-			_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: path, To: "x.md", Version: v})
-			return err
-		},
+	testCases := []struct {
+		name string
+		req  any
+	}{
+		{name: "edit, old version", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "ESI", NewText: "X", Version: old}},
+		{name: "edit, current version", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "ESI", NewText: "X", Version: now}},
+		{name: "replace, old version", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content, Version: old}},
+		{name: "replace, current version", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content, Version: now}},
+		{name: "create", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content}},
+		{name: "move, old version", req: knowledge.MoveRequest{Vault: "ours/kb", From: path, To: "x.md", Version: old}},
+		{name: "move, current version", req: knowledge.MoveRequest{Vault: "ours/kb", From: path, To: "x.md", Version: now}},
 	}
-	for name, change := range changes {
-		t.Run(name, func(t *testing.T) {
-			for _, v := range []string{old, now} {
-				wantCode(t, change(v), CodeBroken)
-			}
-		})
-	}
-	if len(f.github.requests) != 0 {
-		t.Fatalf("committed %d times", len(f.github.requests))
+	// Not parallel itself, so the delete below waits for the refusals.
+	t.Run("refused", func(t *testing.T) {
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := f.change(t.Context(), f.grant, testCase.req)
+				wantCode(t, err, knowledge.CodeBroken)
+			})
+		}
+	})
+	if n := len(f.github.sent()); n != 0 {
+		t.Fatalf("got %d commits, want none", n)
 	}
 
-	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: old})
-	wantCode(t, err, CodeConflict)
-	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: now})
+	_, err = f.base.Delete(t.Context(), f.grant, knowledge.DeleteRequest{Vault: "ours/kb", Path: path, Version: old})
+	wantCode(t, err, knowledge.CodeConflict)
+	_, err = f.base.Delete(t.Context(), f.grant, knowledge.DeleteRequest{Vault: "ours/kb", Path: path, Version: now})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Delete: %v", err)
 	}
-	if c := f.lastCommit(t); len(c.Changes) != 1 || c.Changes[0].Path != path || c.Changes[0].Content != nil {
-		t.Errorf("delete changes = %+v", c.Changes)
+	if diff := cmp.Diff([]gh.FileChange{{Path: path}}, f.lastCommit(t).Changes); diff != "" {
+		t.Errorf("delete changes (-want +got):\n%s", diff)
 	}
 }
 
+// guardMismatches reads speki_write_guard_mismatches_total.
+func guardMismatches(tb testing.TB) float64 {
+	tb.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		tb.Fatalf("gather metrics: %v", err)
+	}
+	for _, mf := range families {
+		if mf.GetName() == "speki_write_guard_mismatches_total" {
+			return mf.GetMetric()[0].GetCounter().GetValue()
+		}
+	}
+	tb.Fatal("got no speki_write_guard_mismatches_total, want the counter")
+	return 0
+}
+
 // Before committing, the index's version is checked against git: an index that fell behind the tree must
-// not let a change overwrite what it doesn't know about.
+// not let a change overwrite what it doesn't know about. Not parallel: it counts a global metric.
 func TestChangeRefusesWhenTheIndexDisagreesWithGit(t *testing.T) {
 	const path = "services/esi-proxy.md"
-	changed := []byte("# ESI proxy\n\nChanged in git.\n")
-	for _, tt := range []struct {
+	v := blobID(esiProxy)
+	changed := "# ESI proxy\n\nChanged in git.\n"
+	changes := []struct {
+		name string
+		req  any
+	}{
+		{name: "edit", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v}},
+		{name: "replace", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: "# ESI proxy\n\nReplaced.\n", Version: v}},
+		{name: "move", req: knowledge.MoveRequest{Vault: "ours/kb", From: path, To: "services/proxy.md", Version: v}},
+		{name: "delete", req: knowledge.DeleteRequest{Vault: "ours/kb", Path: path, Version: v}},
+	}
+	testCases := []struct {
 		name    string
 		drift   []byte // nil deletes the file
 		version string
 	}{
-		{"changed", changed, blobID(changed)},
-		{"deleted", nil, ""},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t)
-			var logs bytes.Buffer
-			f.base.logger = slog.New(slog.NewTextHandler(&logs, nil))
-			ctx := t.Context()
-			v := f.version(t, path)
-			f.copies[1].setFile("c1", path, tt.drift)
-			before := testutil.ToFloat64(guardMismatches)
+		{name: "changed", drift: []byte(changed), version: blobID(changed)},
+		{name: "deleted", drift: nil, version: ""},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var logs syncBuffer
+			f := newFixture(t, withLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+			f.copy(ours.RepoID).setFile("c1", path, testCase.drift)
+			before := guardMismatches(t)
 
-			changes := map[string]func() error{
-				"edit": func() error {
-					_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v})
-					return err
-				},
-				"replace": func() error {
-					_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: path, Content: "# ESI proxy\n\nReplaced.\n", Version: v})
-					return err
-				},
-				"move": func() error {
-					_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: path, To: "services/proxy.md", Version: v})
-					return err
-				},
-				"delete": func() error {
-					_, err := f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: v})
-					return err
-				},
-			}
-			for name, change := range changes {
-				err := change()
-				wantCode(t, err, CodeConflict)
-				var kerr *Error
-				if errors.As(err, &kerr); kerr.Version != tt.version {
-					t.Errorf("%s: conflict version = %q, want %q", name, kerr.Version, tt.version)
+			for _, change := range changes {
+				_, err := f.change(t.Context(), f.grant, change.req)
+				kerr := wantError(t, err, knowledge.CodeConflict)
+				if kerr.Version != testCase.version {
+					t.Errorf("%s: got conflict version %q, want %q", change.name, kerr.Version, testCase.version)
 				}
 			}
-			if len(f.github.requests) != 0 {
-				t.Errorf("committed %d times", len(f.github.requests))
+			if n := len(f.github.sent()); n != 0 {
+				t.Errorf("got %d commits, want none", n)
 			}
-			if got := testutil.ToFloat64(guardMismatches) - before; got != float64(len(changes)) {
-				t.Errorf("guard mismatches counted %v, want %d", got, len(changes))
+			if got := guardMismatches(t) - before; got != float64(len(changes)) {
+				t.Errorf("got %v guard mismatches counted, want %d", got, len(changes))
 			}
-			want := fmt.Sprintf("level=WARN msg=\"index and git still disagree on a document after a sync\" vault=ours/kb path=%s commit=c1 index_version=%s git_version=%s", path, v, tt.version)
+			want := fmt.Sprintf("level=WARN msg=\"index and git still disagree on a document after a sync\" vault=ours/kb path=%s commit=c1 index_version=%s git_version=%s", path, v, testCase.version)
 			if n := strings.Count(logs.String(), want); n != len(changes) {
-				t.Errorf("%d warnings like %q in:\n%s", n, want, logs.String())
+				t.Errorf("got %d warnings like %q in:\n%s\nwant %d", n, want, logs.String(), len(changes))
 			}
 		})
 	}
 }
 
+// syncBuffer is a bytes.Buffer that work after a commit may log to while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // The guard checks the document at the index's commit, not at a newer one the mirror already fetched.
+// Not parallel: it counts a global metric.
 func TestChangeChecksTheIndexHead(t *testing.T) {
 	const path = "services/esi-proxy.md"
 	f := newFixture(t)
-	v := f.version(t, path)
-	f.copies[1].setFile("c2", path, []byte("# ESI proxy\n\nFetched, not indexed yet.\n"))
-	before := testutil.ToFloat64(guardMismatches)
+	f.copy(ours.RepoID).setFile("c2", path, []byte("# ESI proxy\n\nFetched, not indexed yet.\n"))
+	before := guardMismatches(t)
 
-	_, err := f.base.Edit(t.Context(), f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v})
+	_, err := f.base.Edit(t.Context(), f.grant, knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: blobID(esiProxy)})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Edit: %v", err)
 	}
 	if got := f.lastCommit(t).ExpectedHead; got != "c1" {
-		t.Errorf("expected head = %q, want c1", got)
+		t.Errorf("got expected head %q, want c1", got)
 	}
-	if got := testutil.ToFloat64(guardMismatches) - before; got != 0 {
-		t.Errorf("guard mismatches counted %v", got)
+	if got := guardMismatches(t) - before; got != 0 {
+		t.Errorf("got %v guard mismatches counted, want 0", got)
 	}
 }
