@@ -11,12 +11,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/eve-online-tools/speki/access"
-	"github.com/eve-online-tools/speki/oauth"
 	"github.com/eve-online-tools/speki/vault"
 )
 
 // fakeAuth signs in whoever the bearer token names.
 type fakeAuth struct{}
+
+type userKey struct{}
 
 func (fakeAuth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,9 +26,14 @@ func (fakeAuth) Middleware(next http.Handler) http.Handler {
 			http.Error(w, "no token", http.StatusUnauthorized)
 			return
 		}
-		ctx := oauth.NewContext(r.Context(), oauth.Identity{UserID: int64(len(login)), Login: login, GitHubToken: login})
+		ctx := context.WithValue(r.Context(), userKey{}, access.User{ID: int64(len(login)), Login: login, Token: login})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (fakeAuth) User(ctx context.Context) (access.User, bool) {
+	u, ok := ctx.Value(userKey{}).(access.User)
+	return u, ok
 }
 
 func (fakeAuth) Unauthorized(w http.ResponseWriter, reason string) {

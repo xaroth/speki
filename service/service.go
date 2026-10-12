@@ -162,7 +162,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		logger,
 	)
 	mcp := mcpserver.New(
-		auth,
+		oauthUsers{auth},
 		resolver,
 		kb,
 		mcpserver.Identity{
@@ -419,6 +419,20 @@ func newServer(h http.Handler) *http.Server {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+}
+
+// oauthUsers hands mcpserver the signed-in user as access knows them.
+type oauthUsers struct{ *oauth.Server }
+
+func (oauthUsers) User(ctx context.Context) (access.User, bool) {
+	id, ok := oauth.IdentityFrom(ctx)
+	return access.User{
+		ID:     id.UserID,
+		Login:  id.Login,
+		Token:  id.GitHubToken,
+		Client: id.Client,
+		Write:  id.Write,
+	}, ok
 }
 
 // libraryVaults hands knowledge the library's vaults.
