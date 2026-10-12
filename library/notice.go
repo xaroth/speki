@@ -18,37 +18,17 @@ type notices interface {
 // subscription is retried with backoff while n is unreachable; polling covers the gap. It returns when
 // ctx ends and the syncs it started are done.
 func (l *Library) FollowNotices(ctx context.Context, n notices) {
-	var syncs sync.WaitGroup
-	defer syncs.Wait()
-	var mu sync.Mutex
-	state := map[int64]string{} // "running", or "again" when a notice came during the sync
-
+	var c coalescer
+	defer c.wg.Wait()
 	onNotice := func(repoID int64, commit string) {
 		v, ok := l.Vault(repoID)
 		if !ok || v.Index().Commit() == commit {
 			return
 		}
-		mu.Lock()
-		defer mu.Unlock()
-		if state[repoID] != "" {
-			state[repoID] = "again"
-			return
-		}
-		state[repoID] = "running"
-		syncs.Go(func() {
-			for {
-				err := l.syncAfterNotice(ctx, v)
-				if err != nil && ctx.Err() == nil {
-					l.logger.WarnContext(ctx, "sync after a change notice failed", "vault", v.Info().Name, "err", err)
-				}
-				mu.Lock()
-				if state[repoID] != "again" || ctx.Err() != nil {
-					delete(state, repoID)
-					mu.Unlock()
-					return
-				}
-				state[repoID] = "running"
-				mu.Unlock()
+		c.notify(ctx, repoID, func() {
+			err := l.syncAfterNotice(ctx, v)
+			if err != nil && ctx.Err() == nil {
+				l.logger.WarnContext(ctx, "sync after a change notice failed", "vault", v.Info().Name, "err", err)
 			}
 		})
 	}
@@ -73,6 +53,41 @@ func (l *Library) FollowNotices(ctx context.Context, n notices) {
 		}
 		wait = min(wait*2, time.Minute)
 	}
+}
+
+// coalescer runs at most one sync per vault at a time.
+type coalescer struct {
+	wg      sync.WaitGroup
+	mu      sync.Mutex
+	pending map[int64]bool // vaults with a sync running: true when a notice came during it
+}
+
+// notify calls run for repoID, or, when a sync for it is running, has that one run once more. Nothing
+// runs again once ctx ends.
+func (c *coalescer) notify(ctx context.Context, repoID int64, run func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, running := c.pending[repoID]; running {
+		c.pending[repoID] = true
+		return
+	}
+	if c.pending == nil {
+		c.pending = make(map[int64]bool)
+	}
+	c.pending[repoID] = false
+	c.wg.Go(func() {
+		for {
+			run()
+			c.mu.Lock()
+			if !c.pending[repoID] || ctx.Err() != nil {
+				delete(c.pending, repoID)
+				c.mu.Unlock()
+				return
+			}
+			c.pending[repoID] = false
+			c.mu.Unlock()
+		}
+	})
 }
 
 // syncAfterNotice syncs a vault another instance changed, as a poll would: not while the vault is
