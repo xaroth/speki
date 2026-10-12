@@ -29,7 +29,6 @@ var ErrEmptyQuery = errors.New("the query has no words to search for")
 // ErrTooManyWords means a query has more distinct words than a search looks for.
 var ErrTooManyWords = fmt.Errorf("the query has more than %d different words", maxTerms)
 
-// maxTerms is the most distinct words and phrases a query may have.
 const maxTerms = 32
 
 // Source is one index to search, with the name results carry.
@@ -166,12 +165,10 @@ func searchAll(ctx context.Context, sources []Source, gens []*generation, terms 
 
 func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded string, opt Options) ([]Hit, error) {
 	filter, args := filters(opt)
-	// Rank inside the full-text table first and join the documents of the best few only: reading a
-	// document row means reading its body, which costs far more than ranking. Deprecated documents are
-	// halved after that, so keep enough candidates for them to drop out of the top. Filters can throw
-	// away any number of candidates, so a filtered search joins everything that matches.
-	// Deprecated documents are halved inside the ranking, through a small index, so they can't crowd
-	// active ones out of the top.
+	// Rank inside the full-text table and join only the best few documents: reading a document row reads
+	// its body, which costs far more than ranking. Deprecated documents are halved inside the ranking,
+	// through a partial index, so they can't crowd active ones out of the top. Filters can drop any
+	// number of candidates, so a filtered search joins every match.
 	ranked := `SELECT rowid AS id, bm25(fts, ` + bm25Weights + `) *
 			CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
 		FROM fts WHERE fts MATCH ?`
@@ -257,7 +254,6 @@ func boldMatches(s string) string {
 	return strings.NewReplacer("\x01", "**", "\x02", "**").Replace(s)
 }
 
-// addSnippets fills in the snippets of hits.
 func addSnippets(ctx context.Context, db *sql.DB, expr string, hits []found) error {
 	if len(hits) == 0 {
 		return nil
@@ -381,7 +377,6 @@ func parseQuery(text string) []term {
 	return terms
 }
 
-// addTerm adds t unless the same term is already there.
 func addTerm(terms []term, t term) []term {
 	if slices.Contains(terms, t) {
 		return terms

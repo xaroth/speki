@@ -60,7 +60,7 @@ type Base struct {
 	now     func() time.Time
 
 	mu      sync.Mutex
-	locks   map[int64]chan struct{} // one write at a time per vault: a slot taken while writing
+	locks   map[int64]chan struct{} // one write at a time per vault
 	queries map[int64]chan struct{} // one query at a time per user
 }
 

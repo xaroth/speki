@@ -186,7 +186,6 @@ func TestQueryEscapes(t *testing.T) {
 		})
 	}
 
-	// Nothing changed.
 	rows, err := runQuery(t, sb, sources, "SELECT count(*) FROM documents")
 	if err != nil || fmt.Sprint(rows.Rows) != "[[4]]" {
 		t.Errorf("documents after the attempts: %v, %v", rows.Rows, err)
@@ -415,7 +414,7 @@ func TestQueryErrorsKeepTheirSlashes(t *testing.T) {
 	}
 }
 
-// The forms schema.md gives for aggregating matches work.
+// The forms mcpserver/schema.md gives for aggregating matches work.
 func TestMatchWithAggregates(t *testing.T) {
 	sb, sources, _ := sandboxFixture(t)
 	for _, q := range []string{

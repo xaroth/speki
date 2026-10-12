@@ -73,7 +73,6 @@ func loadVocabulary(ctx context.Context, g *generation) (*vocabulary, error) {
 	return v, rows.Err()
 }
 
-// suggestion is a correction candidate.
 type suggestion struct {
 	word     string
 	distance int

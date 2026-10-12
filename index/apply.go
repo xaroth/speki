@@ -115,7 +115,6 @@ func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
 	return nil
 }
 
-// replaceDocument deletes the document at path, and inserts r in its place if add is set.
 func replaceDocument(ctx context.Context, tx *sql.Tx, path string, add bool, r row) error {
 	_, err := tx.ExecContext(ctx, "DELETE FROM documents WHERE path = ?", path)
 	if err != nil {

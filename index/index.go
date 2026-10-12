@@ -255,7 +255,6 @@ func removeGeneration(dir string, n int) {
 // or without a recorded commit.
 var errUnusable = errors.New("unusable index")
 
-// openGeneration opens an existing generation and checks that it's usable.
 func openGeneration(ctx context.Context, dir string, n int) (*generation, error) {
 	g, err := connect(ctx, dir, n)
 	if err != nil {
@@ -308,7 +307,6 @@ func unusable(err error) error {
 	return fmt.Errorf("%w: %w", errUnusable, err)
 }
 
-// createGeneration creates an empty generation.
 func createGeneration(ctx context.Context, dir string, n int) (*generation, error) {
 	removeGeneration(dir, n)
 	g, err := connect(ctx, dir, n)
