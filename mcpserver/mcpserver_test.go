@@ -127,8 +127,7 @@ func TestRateLimit(t *testing.T) {
 	}
 }
 
-// An instance's identity changes the advertised name, title and instructions; without one, speki
-// describes itself as before. The instructions fit Claude Code's 2,048 characters either way.
+// The instructions must fit Claude Code's 2,048 characters with or without an identity.
 func TestIdentity(t *testing.T) {
 	var zero Identity
 	if zero.name() != "speki" || zero.title() != "Speki knowledge base" || zero.instructions() != instructions {

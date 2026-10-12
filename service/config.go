@@ -56,7 +56,6 @@ type Auth struct {
 	ClientMetadataHosts []string `yaml:"client_metadata_hosts"`
 }
 
-// keyring loads whichever of Key and Keys is set.
 func (a Auth) keyring() (*seal.Keyring, error) {
 	if a.Key != "" {
 		k, err := seal.SingleKey(a.Key)
@@ -131,7 +130,6 @@ type Telemetry struct {
 	Tracing bool `yaml:"tracing"`
 }
 
-// withDefaults returns c with zero values replaced by defaults.
 func (c Config) withDefaults() Config {
 	if c.Listen == "" {
 		c.Listen = ":8080"

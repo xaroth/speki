@@ -195,7 +195,7 @@ func TestSecretsFromFiles(t *testing.T) {
 }
 
 // Errors name the line as written, whatever secret files the YAML reads.
-// Any text setting can come from a file, not only the secrets.
+// Any text setting can come from a file.
 func TestTextSettingsFromFiles(t *testing.T) {
 	t.Chdir(t.TempDir())
 	listen := writeFile(t, ":8081\n")
@@ -292,7 +292,7 @@ func TestRunConfigFile(t *testing.T) {
 			t.Chdir(t.TempDir())
 			var stdout, stderr bytes.Buffer
 			ctx, cancel := context.WithCancel(t.Context())
-			cancel() // start and stop straight away
+			cancel()
 
 			err := run(ctx, tt.args, environ, &stdout, &stderr)
 

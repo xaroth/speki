@@ -160,7 +160,7 @@ func (c *Client) BranchHead(ctx context.Context, installationID int64, repo, bra
 	return Head{SHA: ref.GetObject().GetSHA(), ETag: resp.Header.Get("ETag")}, nil
 }
 
-// RepositoryID returns the ID of the repository a name points to now. A name can move: after a rename,
+// RepositoryID returns the ID of the repository a name points to. A name can move: after a rename,
 // someone can create a new repository under the old one.
 func (c *Client) RepositoryID(ctx context.Context, installationID int64, repo string) (int64, error) {
 	client, err := c.installationClient(installationID)

@@ -220,7 +220,7 @@ func (l *Library) WaitIdle() { l.background.Wait() }
 
 // Close waits for background work and closes every vault.
 func (l *Library) Close() {
-	l.closed.Store(true) // no new background work from here on
+	l.closed.Store(true) // inBackground starts nothing from here on
 	l.background.Wait()
 	l.mu.Lock()
 	vaults := l.vaults

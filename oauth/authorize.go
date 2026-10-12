@@ -22,8 +22,6 @@ import (
 //go:embed pages/*.html
 var pages embed.FS
 
-// templates holds the consent and error pages. They're parsed once; html/template is safe for concurrent
-// use.
 var templates = template.Must(template.ParseFS(pages, "pages/*.html"))
 
 const (
@@ -144,8 +142,8 @@ func validChallenge(c string) bool {
 	return err == nil
 }
 
-// consent handles the consent form: it checks the form belongs to this browser, then sends the user to
-// GitHub with a fresh transaction.
+// consent checks the consent form came from the browser that got the page, via the cookie hash, then
+// sends the user to GitHub.
 func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxForm)
 	err := r.ParseForm()
@@ -185,7 +183,6 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.cfg.GitHub.AuthorizeURL(s.callbackURL(), nonce, challenge(verifier)), http.StatusSeeOther)
 }
 
-// codeValue is what an authorization code holds.
 type codeValue struct {
 	ID            string        `json:"id"`
 	User          gh.User       `json:"user"`
@@ -346,7 +343,6 @@ func (s *Server) errorPageAs(w http.ResponseWriter, r *http.Request, status int,
 	s.page(w, r, status, "error.html", map[string]string{"Name": s.title(), "Title": title, "Detail": detail, "Login": login})
 }
 
-// title names this speki on its pages.
 func (s *Server) title() string {
 	if s.cfg.Title == "" {
 		return "speki"
