@@ -492,7 +492,7 @@ func TestSyncAfterNoticeBacksOff(t *testing.T) {
 	r.push(map[string]string{"a.md": "# A\n\nchanged\n"})
 
 	v.recordFailure(errors.New("fetch failed"))
-	if err := l.SyncAfterNotice(t.Context(), v); err != nil {
+	if err := l.syncAfterNotice(t.Context(), v); err != nil {
 		t.Fatal(err)
 	}
 	if got := search(t, v, "changed"); len(got) != 0 {
