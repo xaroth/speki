@@ -500,7 +500,7 @@ var errMovedOn = errors.New("the branch moved on during the clone")
 // compactLocked replaces a copy with too many pack files by a fresh clone, at most once an hour, or ten
 // minutes after a commit landing during the clone spoiled the last try. Called with syncMu held.
 func (l *Library) compactLocked(ctx context.Context, v *Vault) {
-	if v.mirror.Packs() <= maxPacks || v.now().Sub(v.freshCloneAt) < time.Hour {
+	if v.mirror.Packs() <= l.maxPacks || v.now().Sub(v.freshCloneAt) < time.Hour {
 		return
 	}
 	v.freshCloneAt = v.now()

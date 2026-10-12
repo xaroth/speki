@@ -51,6 +51,8 @@ type Library struct {
 	opts   Options
 	logger *slog.Logger
 	now    func() time.Time
+	// maxPacks is a field, not the constant, so tests can compact after a few fetches.
+	maxPacks int
 
 	mu     sync.RWMutex
 	vaults map[int64]*Vault
@@ -75,13 +77,14 @@ func New(github githubAPI, opts Options, logger *slog.Logger) *Library {
 		opts.StallTimeout = 5 * time.Minute
 	}
 	return &Library{
-		github:  github,
-		opts:    opts,
-		logger:  logger,
-		now:     time.Now,
-		vaults:  make(map[int64]*Vault),
-		opening: semaphore.NewWeighted(int64(opts.Opening)),
-		changed: make(chan struct{}),
+		github:   github,
+		opts:     opts,
+		logger:   logger,
+		now:      time.Now,
+		maxPacks: maxPacks,
+		vaults:   make(map[int64]*Vault),
+		opening:  semaphore.NewWeighted(int64(opts.Opening)),
+		changed:  make(chan struct{}),
 	}
 }
 
