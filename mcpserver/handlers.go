@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/knowledge"
 )
 
@@ -161,7 +162,7 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 			Path:        e.Path,
 			Title:       e.Title,
 			Description: e.Description,
-			Status:      e.Status,
+			Status:      string(e.Status),
 			Updated:     e.Updated,
 			Version:     e.Version,
 		})
@@ -240,15 +241,15 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 			Title:       h.Title,
 			Description: h.Description,
 			Tags:        h.Tags,
-			Status:      h.Status,
+			Status:      string(h.Status),
 			Updated:     h.Updated,
 			Version:     h.Version,
 			Snippet:     h.Snippet,
 			Score:       h.Score,
 		})
 		status := ""
-		if h.Status != "" && h.Status != "active" {
-			status = " [" + oneLine(h.Status) + "]"
+		if h.Status != "" && h.Status != document.StatusActive {
+			status = " [" + oneLine(string(h.Status)) + "]"
 		}
 		fmt.Fprintf(&b, "\n%s %s  %s%s  version %s\n%s\n",
 			oneLine(h.Source), oneLine(h.Path), oneLine(h.Title), status, h.Version, oneLine(h.Snippet))
@@ -318,7 +319,7 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 			Description: d.Description,
 			Tags:        d.Tags,
 			Aliases:     d.Aliases,
-			Status:      d.Status,
+			Status:      string(d.Status),
 			Related:     d.Related,
 			Created:     d.Created,
 			Updated:     d.Updated,
