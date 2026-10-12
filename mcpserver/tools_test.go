@@ -438,7 +438,7 @@ func (s *safeBuffer) String() string {
 	return s.b.String()
 }
 
-// The text rendering of a query is capped on its own: it goes out beside the structured rows.
+// The text is capped separately because it goes out beside the structured rows.
 func TestQueryTextIsCapped(t *testing.T) {
 	row := []any{strings.Repeat("<", 60_000)}
 	rows := make([][]any, 30)
@@ -456,7 +456,6 @@ func TestQueryTextIsCapped(t *testing.T) {
 	}
 }
 
-// rowsKB answers queries with fixed rows.
 type rowsKB struct {
 	*fakeKB
 	rows index.Rows
@@ -466,7 +465,6 @@ func (r *rowsKB) Query(context.Context, *access.Grant, knowledge.QueryRequest) (
 	return r.rows, nil
 }
 
-// An instance's title and description open the guide.
 func TestGuideNamesTheInstance(t *testing.T) {
 	s := New(fakeAuth{}, fakeResolver{}, &fakeKB{}, Identity{Title: "Home notes", Description: "My own\nnotes."}, "test", slog.New(slog.DiscardHandler))
 	out, text, err := s.guide(t.Context(), nil, GuideInput{})

@@ -26,8 +26,7 @@ const identityExtra = "speki.identity"
 
 type identityKey struct{}
 
-// NewContext returns ctx with id as the signed-in identity. Middleware does this for every request with a
-// valid token; tests use it to sign someone in without a token.
+// NewContext returns ctx with id as the signed-in identity. Exported so tests can sign in without a token.
 func NewContext(ctx context.Context, id Identity) context.Context {
 	return context.WithValue(ctx, identityKey{}, id)
 }
