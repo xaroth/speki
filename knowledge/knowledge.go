@@ -58,10 +58,8 @@ type Base struct {
 	notices notifier
 	logger  *slog.Logger
 	now     func() time.Time
-
-	mu      sync.Mutex
-	locks   map[int64]chan struct{} // one write at a time per vault
-	queries map[int64]chan struct{} // one query at a time per user
+	writes  keyedLock // one write at a time per vault
+	queries keyedLock // one query at a time per user
 }
 
 // New returns a Base.
@@ -73,20 +71,27 @@ func New(vaults Vaults, github githubAPI, sandbox querier, notices notifier, log
 		notices: notices,
 		logger:  logger,
 		now:     time.Now,
-		locks:   map[int64]chan struct{}{},
-		queries: map[int64]chan struct{}{},
 	}
 }
 
-// lock takes a vault's write lock, or gives up when ctx ends, and returns its unlock.
-func (b *Base) lock(ctx context.Context, repoID int64) (func(), error) {
-	b.mu.Lock()
-	l, ok := b.locks[repoID]
+// keyedLock is a lock per key that a caller can stop waiting for. The zero value is ready to use.
+type keyedLock struct {
+	mu    sync.Mutex
+	locks map[int64]chan struct{}
+}
+
+// lock takes key's lock, or gives up when ctx ends, and returns its unlock.
+func (k *keyedLock) lock(ctx context.Context, key int64) (func(), error) {
+	k.mu.Lock()
+	if k.locks == nil {
+		k.locks = map[int64]chan struct{}{}
+	}
+	l, ok := k.locks[key]
 	if !ok {
 		l = make(chan struct{}, 1)
-		b.locks[repoID] = l
+		k.locks[key] = l
 	}
-	b.mu.Unlock()
+	k.mu.Unlock()
 	select {
 	case l <- struct{}{}:
 		return func() { <-l }, nil
