@@ -116,11 +116,11 @@ func (s *Server) codeGrant(w http.ResponseWriter, r *http.Request) {
 }
 
 // refreshGrant refreshes with GitHub and hands out a new pair. GitHub's refresh tokens work once, so a
-// stolen speki refresh token dies when the real client uses it. Two refreshes of one token at once (two
-// windows of one client, or a retry after a lost response) must both succeed: one refreshes under a lock,
-// the result is kept for a short while, encrypted with a key only the old refresh token gives, and the
-// other picks it up. Only GitHub refusing the refresh token is an invalid_grant, which signs the user
-// out; anything else is a temporary error.
+// stolen speki refresh token dies when the real client uses it. Concurrent refreshes of one token (two
+// windows, or a retry after a lost response) must both succeed: one refreshes under a lock and keeps the
+// result briefly, encrypted with a key only the old refresh token gives; the other picks it up. Only
+// GitHub refusing the refresh token is invalid_grant, which signs the user out; anything else is
+// temporary.
 func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 	f := r.PostForm
 	old := f.Get("refresh_token")
@@ -210,11 +210,10 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 		return
 	}
 
-	// Once GitHub is asked, its old refresh token may be spent. So the refresh and keeping its result
-	// go on when the client disconnects: its retry then finds the result instead of a dead token. The
-	// GitHub call must end before the lock does, or a second refresh could start alongside it.
-	// The deadline counts from when the lock was taken, not from now: a slow store before this point
-	// mustn't let the GitHub call outlive the lock.
+	// Once GitHub is asked, the old refresh token may be spent, so the refresh and keeping its result
+	// outlive a client disconnect: the retry then finds the result instead of a dead token. The GitHub
+	// call must end before the lock does, or a second refresh could start alongside it; the deadline
+	// counts from lock.at so a slow store before this point can't stretch it.
 	gctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), lock.at.Add(githubRefreshTimeout))
 	defer cancel()
 	tokens, err := s.github.Refresh(gctx, s.cfg.GitHub, rv.Refresh)
@@ -239,8 +238,8 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 		s.tokenServerError(w, r, err)
 		return
 	}
-	// The result should be kept before the lock runs out, or a waiting request takes the lock and refreshes
-	// again with the spent GitHub token. But a late GitHub answer still gets a moment to be kept.
+	// Keep the result before the lock runs out, or a waiter refreshes again with the spent GitHub token.
+	// A late GitHub answer still gets a moment to be kept.
 	kctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), maxTime(lock.at.Add(refreshLockTime), time.Now().Add(2*time.Second)))
 	defer cancel()
 	err = s.keepRefreshResult(kctx, key, old, resp)
@@ -248,9 +247,8 @@ func (s *Server) refreshLocked(w http.ResponseWriter, r *http.Request, lock refr
 		err = s.keepRefreshResult(kctx, key, old, resp) // once more
 	}
 	if err != nil {
-		// A request with the same token can't be given the result. A small marker tells it why, so it
-		// doesn't try GitHub with a spent token; if even that can't be written, the store is down and
-		// the lock is kept until it runs out.
+		// A marker tells requests with the same token not to try GitHub with a spent token. If even that
+		// can't be written the store is down, and the lock is left to run out.
 		s.logger.WarnContext(ctx, "keeping refresh result failed", "err", err)
 		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 		defer cancel()

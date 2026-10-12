@@ -58,11 +58,10 @@ type Service struct {
 	internalAddr net.Addr
 	// discovered is closed after the first discovery round, successful or not.
 	discovered chan struct{}
-	// shutdownTimeout is the const of that name; tests shorten it.
+	// shutdownTimeout is a field so tests can shorten it.
 	shutdownTimeout time.Duration
 }
 
-// closeComponents closes the library, the sandbox and the store.
 func (s *Service) closeComponents() error {
 	s.library.Close()
 	return errors.Join(s.sandbox.Close(), s.store.Close())
@@ -77,7 +76,6 @@ func (s *Service) markReady() {
 	}
 }
 
-// markStopping marks the service not ready, for good.
 func (s *Service) markStopping() {
 	s.readyMu.Lock()
 	defer s.readyMu.Unlock()
@@ -288,7 +286,7 @@ func (s *Service) Run(ctx context.Context) error {
 // service is ready after the first round, successful or not: vaults on disk are served either way.
 func (s *Service) discover(ctx context.Context) {
 	firstRound := sync.OnceFunc(func() {
-		s.markReady() // not when stopping, before the first round got anywhere
+		s.markReady()
 		close(s.discovered)
 	})
 	defer firstRound() // also when stopped before the first round
@@ -446,7 +444,6 @@ func (s *Service) internalHandler() http.Handler {
 	return mux
 }
 
-// statusPage is what /status returns.
 type statusPage struct {
 	Ready    bool             `json:"ready"`
 	Vaults   []library.Status `json:"vaults"`
@@ -519,7 +516,6 @@ type sharedStore interface {
 	Close() error
 }
 
-// newStore returns Redis when it's configured, otherwise memory for a single instance.
 func newStore(cfg Redis, logger *slog.Logger) (sharedStore, error) {
 	if cfg.URL == "" {
 		return store.NewMemory(), nil

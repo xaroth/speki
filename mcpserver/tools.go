@@ -27,7 +27,6 @@ Search speki before answering questions about our systems, services, infrastruct
 
 ` + instructionsRest
 
-// instanceSearch follows an instance's description in its instructions.
 const instanceSearch = `Search it before answering questions this covers, and when working out how such a system works, alongside reading the code. Someone may already have written it down.
 
 `
@@ -44,7 +43,6 @@ var guideText string
 //go:embed schema.md
 var schemaText string
 
-// knowledgeBase is what the tools do.
 type knowledgeBase interface {
 	Vaults(ctx context.Context, g *access.Grant) ([]knowledge.VaultInfo, error)
 	List(ctx context.Context, g *access.Grant, req knowledge.ListRequest) (knowledge.Listing, error)
@@ -83,7 +81,6 @@ func changes(destructive bool) *mcp.ToolAnnotations {
 // alwaysLoad asks Claude Code to load a tool without a tool search.
 func alwaysLoad() mcp.Meta { return mcp.Meta{"anthropic/alwaysLoad": true} }
 
-// addTools registers the tools.
 func (s *Server) addTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "guide",
@@ -163,12 +160,11 @@ func (s *Server) addTools() {
 	}, handle(s, "delete", s.delete))
 }
 
-// toolFunc is a tool's work: it returns the structured result and its text rendering.
+// toolFunc returns the structured result and its text rendering.
 type toolFunc[In, Out any] func(ctx context.Context, g *access.Grant, in In) (Out, string, error)
 
-// handle adapts a toolFunc to the go-sdk: it passes the grant, records metrics, and turns errors into
-// tool errors. A *knowledge.Error is shown as is. Anything else is logged and shown as unavailable, with
-// the request ID so an operator can find the log line.
+// handle adapts a toolFunc to the go-sdk. A *knowledge.Error is shown as is; anything else is logged
+// and shown as unavailable with the request ID, so an operator can find the log line.
 func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		start := time.Now()
@@ -176,7 +172,7 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 		defer span.End()
 		var zero Out
 		g, ok := GrantFrom(ctx)
-		if !ok { // the stack always sets it; this is a bug
+		if !ok { // unreachable: the grant middleware always sets it
 			return nil, zero, errors.New("not signed in")
 		}
 		out, text, err := f(ctx, g, in)
@@ -186,7 +182,7 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 		case err == nil:
 		case errors.As(err, &kerr):
 			outcome = string(kerr.Code)
-			err = kerr                                  // without any context wrapped around it
+			err = kerr                                  // drop wrapping context
 			if kerr.Code == knowledge.CodeUnavailable { // every unavailable carries the request ID
 				err = fmt.Errorf("%w. Request ID: %s", kerr, telemetry.RequestIDFrom(ctx))
 			}

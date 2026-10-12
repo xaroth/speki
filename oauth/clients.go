@@ -36,7 +36,6 @@ type registration struct {
 	RedirectURIs []string `json:"redirect_uris"`
 }
 
-// clientResolver finds out who a client_id is.
 type clientResolver struct {
 	keys  *seal.Keyring
 	hosts []string
@@ -251,8 +250,8 @@ func (r *clientResolver) fetchClient(ctx context.Context, u *url.URL, clientID s
 	}, noFailure, nil
 }
 
-// register handles dynamic client registration. Only local programs register, so only loopback
-// redirects are accepted: anything that says what it is can't send codes elsewhere.
+// register handles dynamic client registration. Hosted clients use metadata documents, so only local
+// programs register and only loopback redirects are accepted: a registration can't send codes elsewhere.
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ClientName   string   `json:"client_name"`
@@ -316,7 +315,6 @@ func (c client) redirectAllowed(redirectURI string) bool {
 	return false
 }
 
-// isLoopback reports whether u is an http URL on this computer.
 func isLoopback(u string) bool {
 	p, err := url.Parse(u)
 	if err != nil || p.Scheme != "http" || p.User != nil || p.Fragment != "" {

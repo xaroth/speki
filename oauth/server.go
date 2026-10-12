@@ -47,14 +47,13 @@ type Config struct {
 	CheckUser func(ctx context.Context, githubToken string) error
 }
 
-// githubAPI is what sign-in needs from GitHub.
 type githubAPI interface {
 	Exchange(ctx context.Context, o gh.OAuthConfig, code, codeVerifier, redirectURI string) (gh.UserTokens, error)
 	Refresh(ctx context.Context, o gh.OAuthConfig, refreshToken string) (gh.UserTokens, error)
 	Me(ctx context.Context, token string) (gh.User, error)
 }
 
-// store holds the little short-lived state sealing can't replace: used codes and refresh results.
+// stateStore holds the short-lived state sealing can't replace: used codes and refresh results.
 type stateStore interface {
 	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
@@ -87,7 +86,7 @@ func New(cfg Config, keys *seal.Keyring, github githubAPI, st stateStore, logger
 	}
 }
 
-// resource is the URL of the MCP endpoint, which tokens are issued for.
+// resource is the MCP endpoint URL, used as the token audience.
 func (s *Server) resource() string { return s.cfg.Issuer + "/mcp" }
 
 func (s *Server) resourceMetadataURL() string {
@@ -140,7 +139,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// oauthError answers a token or registration request with an OAuth error.
 func oauthError(w http.ResponseWriter, status int, code, description string) {
 	writeJSON(w, status, map[string]string{"error": code, "error_description": description})
 }

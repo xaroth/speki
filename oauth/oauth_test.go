@@ -1247,7 +1247,7 @@ func (m markingStore) SetNX(ctx context.Context, key string, value []byte, ttl t
 	return m.Memory.SetNX(ctx, key, value, ttl)
 }
 
-// failingSets fails the first left Set calls.
+// failingSets fails the first `left` Set calls.
 type failingSets struct {
 	*store.Memory
 	left int
