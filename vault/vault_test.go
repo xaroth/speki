@@ -252,7 +252,7 @@ func TestDiscoverRemovalRules(t *testing.T) {
 
 func TestOneInstallationFailingDoesNotStopOthers(t *testing.T) {
 	f := newFake()
-	f.installations[1].AccountID = 42
+	f.installations[1].AccountID = 42 // both installations allowed
 	r := NewRegistry(f, []int64{42}, discard())
 	mustDiscover(t, r)
 
@@ -274,7 +274,7 @@ func TestOneInstallationFailingDoesNotStopOthers(t *testing.T) {
 
 func TestRepositoryMovesBetweenInstallations(t *testing.T) {
 	f := newFake()
-	f.installations[1].AccountID = 42
+	f.installations[1].AccountID = 42 // both installations allowed
 	r := NewRegistry(f, []int64{42}, discard())
 	mustDiscover(t, r)
 
