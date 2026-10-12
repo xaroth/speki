@@ -21,7 +21,7 @@ type Document struct {
 	Path        string
 	Title       string
 	Description string
-	Status      string
+	Status      document.Status
 	Tags        []string
 	Aliases     []string
 	Related     []string
@@ -39,7 +39,7 @@ type Entry struct {
 	Path        string
 	Title       string
 	Description string
-	Status      string
+	Status      document.Status
 	Updated     string
 	Version     string
 }

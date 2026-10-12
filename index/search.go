@@ -20,6 +20,7 @@ import (
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/telemetry"
 )
 
@@ -52,7 +53,7 @@ type Hit struct {
 	Title       string
 	Description string
 	Tags        []string
-	Status      string
+	Status      document.Status
 	Updated     string
 	Version     string
 	Snippet     string
@@ -223,7 +224,7 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 			continue
 		}
 		h.Score = nameScore
-		if h.Status == "deprecated" {
+		if h.Status == document.StatusDeprecated {
 			h.Score /= 2
 		}
 		h.Snippet = h.Description
