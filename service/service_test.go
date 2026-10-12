@@ -1,591 +1,505 @@
-package service
+package service_test
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/library"
+	"github.com/eve-online-tools/speki/service"
+	"github.com/eve-online-tools/speki/vault"
 )
 
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+var kbFiles = map[string]string{
+	"speki.yaml":   "title: KB\ndescription: Test vault.\n",
+	"fleet.md":     "# Fleet\n\nWe fly zeppelins.\n",
+	"ops/roles.md": "# Roles\n",
 }
 
-func newTestService(t *testing.T) *Service {
-	t.Helper()
-	cfg := testConfig(t, newFakeGitHub(t, map[string]string{"a.md": "# A\n"}))
-	s, err := New(cfg, discardLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return s
-}
-
-// validConfig has every required setting, and nothing else.
-func validConfig(t *testing.T) Config {
-	t.Helper()
-	return Config{
-		PublicURL: "https://speki.example.com",
-		GitHub:    GitHub{AppID: 1, PrivateKey: testKey(t), ClientID: "Iv1", ClientSecret: "s"},
-		Auth:      Auth{Keys: testKeys()},
-	}
-}
-
-func TestNewRejectsBadConfig(t *testing.T) {
+func TestNew(t *testing.T) {
+	t.Parallel()
 	base := validConfig(t)
-	with := func(change func(*Config)) Config {
+	with := func(change func(*service.Config)) service.Config {
 		c := base
 		change(&c)
 		return c
 	}
-	tests := []struct {
+	testCases := []struct {
 		name string
-		cfg  Config
-		want []string
+		cfg  service.Config
+		want []string // in the error; none for a config New takes
 	}{
-		{
-			name: "same address",
-			cfg:  with(func(c *Config) { c.Listen, c.MetricsListen = ":8080", ":8080" }),
-			want: []string{"metrics_listen"},
-		},
-		{
-			name: "same address by default",
-			cfg:  with(func(c *Config) { c.Listen = ":9090" }),
-			want: []string{"metrics_listen"},
-		},
-		{
-			name: "bad log level",
-			cfg:  with(func(c *Config) { c.Telemetry.LogLevel = "loud" }),
-			want: []string{"log_level"},
-		},
+		{name: "key file", cfg: base},
+		{name: "single key", cfg: with(func(c *service.Config) { c.Auth = service.Auth{Key: testSecret()} })},
 		{
 			name: "every problem at once",
-			cfg:  Config{Listen: ":1", MetricsListen: ":1", Telemetry: Telemetry{LogLevel: "loud"}},
+			cfg:  service.Config{Listen: ":1", MetricsListen: ":1", Telemetry: service.Telemetry{LogLevel: "loud"}},
 			want: []string{"metrics_listen", "log_level", "app_id", "private_key", "client_id", "public_url", "auth.keys"},
 		},
 		{
-			name: "query memory over 3/4 of the limit",
-			cfg:  with(func(c *Config) { c.SQLite.MemoryLimit, c.SQLite.QueryMemory = 512, 400 }),
-			want: []string{"sqlite.query_memory_mib"},
-		},
-		{
-			name: "huge memory limit",
-			cfg:  with(func(c *Config) { c.SQLite.MemoryLimit = 1 << 44 }),
-			want: []string{"sqlite.memory_limit_mib"},
-		},
-		{
-			name: "tiny memory limit",
-			cfg:  with(func(c *Config) { c.SQLite.MemoryLimit = 64 }),
-			want: []string{"sqlite.memory_limit_mib"},
-		},
-		{
-			name: "bad private key",
-			cfg:  with(func(c *Config) { c.GitHub.PrivateKey = "not a key" }),
-			want: []string{"github.private_key"},
-		},
-		{
-			name: "plain http public URL",
-			cfg:  with(func(c *Config) { c.PublicURL = "http://speki.example.com" }),
-			want: []string{"https"},
-		},
-		{
-			name: "bad key file",
-			cfg:  with(func(c *Config) { c.Auth.Keys = "keys: []" }),
-			want: []string{"auth.keys"},
-		},
-		{
-			name: "bad single key",
-			cfg:  with(func(c *Config) { c.Auth.Keys, c.Auth.Key = "", "c2hvcnQ=" }),
-			want: []string{"auth.key:", "at least 32"},
-		},
-		{
-			name: "single key and key file",
-			cfg:  with(func(c *Config) { c.Auth.Key = testSecret() }),
-			want: []string{"auth.key and auth.keys are both set"},
-		},
-		{
 			name: "bad keys reported together",
-			cfg: with(func(c *Config) {
+			cfg: with(func(c *service.Config) {
 				c.GitHub.PrivateKey, c.Auth.Keys, c.Telemetry.LogLevel = "not a key", "keys: []", "loud"
 			}),
 			want: []string{"github.private_key", "auth.keys", "log_level"},
 		},
 		{
+			name: "same address by default",
+			cfg:  with(func(c *service.Config) { c.Listen = ":9090" }),
+			want: []string{"metrics_listen"},
+		},
+		{
+			name: "query memory over 3/4 of the limit",
+			cfg:  with(func(c *service.Config) { c.SQLite.MemoryLimit, c.SQLite.QueryMemory = 512, 400 }),
+			want: []string{"sqlite.query_memory_mib"},
+		},
+		{
+			name: "tiny memory limit",
+			cfg:  with(func(c *service.Config) { c.SQLite.MemoryLimit = 64 }),
+			want: []string{"sqlite.memory_limit_mib"},
+		},
+		{
+			name: "plain http public URL",
+			cfg:  with(func(c *service.Config) { c.PublicURL = "http://speki.example.com" }),
+			want: []string{"https"},
+		},
+		{
+			name: "bad single key",
+			cfg:  with(func(c *service.Config) { c.Auth.Keys, c.Auth.Key = "", "c2hvcnQ=" }),
+			want: []string{"auth.key:", "at least 32"},
+		},
+		{
+			name: "single key and key file",
+			cfg:  with(func(c *service.Config) { c.Auth.Key = testSecret() }),
+			want: []string{"auth.key and auth.keys are both set"},
+		},
+		{
 			name: "metadata host with a scheme",
-			cfg:  with(func(c *Config) { c.Auth.ClientMetadataHosts = []string{"https://claude.ai", "Claude.ai", "claude.ai."} }),
+			cfg: with(func(c *service.Config) {
+				c.Auth.ClientMetadataHosts = []string{"https://claude.ai", "Claude.ai", "claude.ai."}
+			}),
 			want: []string{"client_metadata_hosts"},
 		},
 		{
 			name: "account ID that isn't one",
-			cfg:  with(func(c *Config) { c.GitHub.AllowedAccounts = []int64{0} }),
+			cfg:  with(func(c *service.Config) { c.GitHub.AllowedAccounts = []int64{0} }),
 			want: []string{"allowed_accounts"},
 		},
 		{
 			name: "bad instance",
-			cfg: with(func(c *Config) {
-				c.Instance = Instance{Name: "Work!", Title: "hidden\u202etext", Description: "tag\U000E0041"}
+			cfg: with(func(c *service.Config) {
+				c.Instance = service.Instance{Name: "Work!", Title: "hidden\u202etext", Description: "tag\U000E0041"}
 			}),
 			want: []string{"instance.name", "instance.title", "instance.description"},
 		},
 		{
 			name: "long instance description",
-			cfg:  with(func(c *Config) { c.Instance.Description = strings.Repeat("x", 301) }),
+			cfg:  with(func(c *service.Config) { c.Instance.Description = strings.Repeat("x", 301) }),
 			want: []string{"instance.description"},
 		},
 		{
 			name: "negative interval",
-			cfg:  with(func(c *Config) { c.Sync.DiscoveryInterval = -1 }),
+			cfg:  with(func(c *service.Config) { c.Sync.DiscoveryInterval = -1 }),
 			want: []string{"sync.discovery_interval"},
 		},
+		{
+			name: "redis not answering",
+			cfg:  with(func(c *service.Config) { c.Redis.URL = "redis://" + hangUp(t) + "?max_retries=-1" }),
+			want: []string{"redis.url"},
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(tt.cfg, discardLogger())
-			if err == nil {
-				t.Fatal("New succeeded")
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := create(testCase.cfg, discardLogger())
+			if len(testCase.want) == 0 {
+				if err != nil {
+					t.Fatalf("got %v, want no error", err)
+				}
+				return
 			}
-			for _, w := range tt.want {
+			if err == nil {
+				t.Fatalf("got no error, want one mentioning %q", testCase.want)
+			}
+			for _, w := range testCase.want {
 				if !strings.Contains(err.Error(), w) {
-					t.Errorf("error %q doesn't mention %q", err, w)
+					t.Errorf("got error %q, want it to mention %q", err, w)
 				}
 			}
 		})
 	}
 }
 
-func TestNewWithSingleKey(t *testing.T) {
-	cfg := validConfig(t)
-	cfg.Auth = Auth{Key: testSecret()}
-	_, err := New(cfg, discardLogger())
+// hangUp listens for connections and closes each one straight away, so a client fails fast rather than
+// retrying a refused dial.
+func hangUp(tb testing.TB) string {
+	tb.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		tb.Fatal(err)
 	}
-}
-
-func TestNewDefaults(t *testing.T) {
-	s, err := New(validConfig(t), discardLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	c := s.cfg
-	if c.Listen != ":8080" || c.MetricsListen != ":9090" || c.Telemetry.LogLevel != "info" ||
-		c.GitHub.GitURL != "https://github.com" || c.Sync.DataDir != "data" ||
-		c.Sync.PollInterval != time.Minute || c.Sync.DiscoveryInterval != 5*time.Minute ||
-		c.GitHub.OAuthURL != "https://github.com" || c.Auth.ClientMetadataHosts[0] != "claude.ai" ||
-		c.SQLite.MemoryLimit != 1024 || c.SQLite.QueryMemory != 384 {
-		t.Errorf("defaults not applied: %+v", c)
-	}
-}
-
-func TestEndpointsAreSeparated(t *testing.T) {
-	s := newTestService(t)
-	s.markReady()
-	public := httptest.NewServer(s.publicHandler())
-	defer public.Close()
-	internal := httptest.NewServer(s.internalHandler())
-	defer internal.Close()
-
-	tests := []struct {
-		server *httptest.Server
-		path   string
-		want   int
-	}{
-		{public, "/healthz", http.StatusOK},
-		{public, "/.well-known/oauth-authorization-server", http.StatusOK},
-		{public, "/.well-known/oauth-protected-resource/mcp", http.StatusOK},
-		{public, "/mcp", http.StatusUnauthorized},
-		{internal, "/mcp", http.StatusNotFound},
-		{public, "/metrics", http.StatusNotFound},
-		{public, "/status", http.StatusNotFound},
-		{internal, "/metrics", http.StatusOK},
-		{internal, "/status", http.StatusOK},
-		{internal, "/healthz", http.StatusNotFound},
-	}
-	for _, tt := range tests {
-		resp, err := http.Get(tt.server.URL + tt.path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", tt.path, err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != tt.want {
-			name := "public"
-			if tt.server == internal {
-				name = "internal"
+	tb.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
 			}
-			t.Errorf("%s %s = %d, want %d", name, tt.path, resp.StatusCode, tt.want)
+			_ = c.Close()
 		}
+	}()
+	return ln.Addr().String()
+}
+
+// Internal endpoints are never reachable through the public server, nor public ones through the internal.
+func TestRoutes(t *testing.T) {
+	t.Parallel()
+	s := startService(t, testConfig(t, newGitHub(t, kbFiles, nil)))
+	public, internal := s.URLs()
+	testCases := []struct {
+		name string
+		url  string
+		want int
+	}{
+		{name: "public healthz", url: public + "/healthz", want: http.StatusOK},
+		{name: "public readyz", url: public + "/readyz", want: http.StatusOK},
+		{name: "public OAuth metadata", url: public + "/.well-known/oauth-authorization-server", want: http.StatusOK},
+		{name: "public resource metadata", url: public + "/.well-known/oauth-protected-resource/mcp", want: http.StatusOK},
+		{name: "public MCP without a token", url: public + "/mcp", want: http.StatusUnauthorized},
+		{name: "public metrics", url: public + "/metrics", want: http.StatusNotFound},
+		{name: "public status", url: public + "/status", want: http.StatusNotFound},
+		{name: "internal metrics", url: internal + "/metrics", want: http.StatusOK},
+		{name: "internal status", url: internal + "/status", want: http.StatusOK},
+		{name: "internal MCP", url: internal + "/mcp", want: http.StatusNotFound},
+		{name: "internal healthz", url: internal + "/healthz", want: http.StatusNotFound},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if got := get(t, testCase.url).status; got != testCase.want {
+				t.Errorf("got %d, want %d", got, testCase.want)
+			}
+		})
 	}
 }
 
+// holdRoute makes GitHub hold requests to route until release is closed or the request ends.
+func holdRoute(route string, release <-chan struct{}) gh.FakeOption {
+	return gh.ExpectRoute(route, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+}
+
+// Until the first discovery round, /readyz and /mcp answer 503, so clients retry rather than see no vaults.
 func TestReadyz(t *testing.T) {
-	s := newTestService(t)
-	h := s.publicHandler()
+	t.Parallel()
+	release := make(chan struct{})
+	s := newService(t, testConfig(t, newGitHub(t, kbFiles, nil, holdRoute("GET /app/installations", release))))
+	run(t, s)
+	public, _ := s.URLs()
 
-	status := func() int {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-		return rec.Code
+	if got := get(t, public+"/readyz").status; got != http.StatusServiceUnavailable {
+		t.Errorf("readyz before discovery: got %d, want 503", got)
+	}
+	resp := get(t, public+"/mcp")
+	if resp.status != http.StatusServiceUnavailable || resp.header.Get("Retry-After") != "5" {
+		t.Errorf("mcp before discovery: got %d with Retry-After %q, want 503 with 5", resp.status, resp.header.Get("Retry-After"))
 	}
 
-	mcp := func() int {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}")))
-		return rec.Code
-	}
-
-	if got := status(); got != http.StatusServiceUnavailable {
-		t.Errorf("before start: %d, want 503", got)
-	}
-	if got := mcp(); got != http.StatusServiceUnavailable {
-		t.Errorf("/mcp before start: %d, want 503", got)
-	}
-	s.markReady()
-	if got := status(); got != http.StatusOK {
-		t.Errorf("when ready: %d, want 200", got)
-	}
-	if got := mcp(); got == http.StatusServiceUnavailable {
-		t.Error("/mcp still 503 when ready")
-	}
-	s.markStopping()
-	s.markReady()
-	if got := status(); got != http.StatusServiceUnavailable {
-		t.Errorf("ready again after stopping: %d", got)
+	close(release)
+	s.WaitServing()
+	if got := get(t, public+"/readyz").status; got != http.StatusOK {
+		t.Errorf("readyz after discovery: got %d, want 200", got)
 	}
 }
 
 // Stopped before the first discovery round finished: the service must not turn ready during the drain.
 func TestNotReadyAfterEarlyStop(t *testing.T) {
-	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
-	fake.block = make(chan struct{}) // discovery hangs on GitHub
-	defer close(fake.block)
-	s, err := New(testConfig(t, fake), discardLogger())
-	if err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	release := make(chan struct{})
+	defer close(release)
+	s := newService(t, testConfig(t, newGitHub(t, kbFiles, nil, holdRoute("GET /app/installations", release))))
+	stop := run(t, s)
+	s.URLs()
+	if err := stop(); err != nil {
+		t.Errorf("Run: got %v, want nil", err)
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	<-s.started
-	cancel()
-	err = <-done
-	if err != nil {
-		t.Errorf("Run: %v", err)
-	}
-	if s.ready.Load() {
-		t.Error("ready after stopping")
+	if s.Ready() {
+		t.Error("got ready after stopping, want not ready")
 	}
 }
 
-// A request that never finishes doesn't keep speki from stopping, and isn't an error.
-func TestStuckRequestAtShutdown(t *testing.T) {
-	s := newTestService(t)
-	s.drainTimeout = 200 * time.Millisecond
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	<-s.started
-
-	conn, err := net.Dial("tcp", s.publicAddr.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = conn.Close() }()
-	_, err = conn.Write([]byte("POST /oauth/token HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The server says "100 Continue" once the handler reads the body; then send part of it and stop.
-	line, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil || !strings.Contains(line, "100") {
-		t.Fatalf("no 100 Continue: %q, %v", line, err)
-	}
-	_, err = conn.Write([]byte("grant_type="))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("Run: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run didn't return")
-	}
+type statusPage struct {
+	Ready    bool             `json:"ready"`
+	Store    string           `json:"store"`
+	Vaults   []library.Status `json:"vaults"`
+	Problems []vault.Problem  `json:"problems"`
+	Warnings []string         `json:"warnings"`
 }
 
-// stopDuringASlowCommit runs s until a write's commit is waiting on GitHub, stops it, and lets the commit
-// through after delay. It returns the write's answer, and whether it came before Run returned.
-func stopDuringASlowCommit(t *testing.T, s *Service, fake *fakeGitHub, delay time.Duration) (string, bool) {
-	t.Helper()
-	fake.committing, fake.hold = make(chan struct{}), make(chan struct{})
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	<-s.discovered
-	s.library.WaitIdle()
-	cs := connectMCP(t, s, signIn(t, "http://"+s.publicAddr.String()))
-
-	answered := make(chan string, 1)
-	go func() {
-		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "write", Arguments: map[string]any{
-			"vault": fakeRepo, "path": "deploy.md", "content": "# Deploy\n"}})
-		switch {
-		case err != nil:
-			answered <- err.Error()
-		case res.IsError:
-			answered <- "error: " + res.Content[0].(*mcp.TextContent).Text
-		default:
-			answered <- res.Content[0].(*mcp.TextContent).Text
-		}
-	}()
-	<-fake.committing
-	cancel()
-	time.AfterFunc(delay, func() { close(fake.hold) })
-
-	var text string
-	first := false
-	select {
-	case text = <-answered:
-		first = true
-		err := <-done
-		if err != nil {
-			t.Errorf("Run: %v", err)
-		}
-	case err := <-done:
-		if err != nil {
-			t.Errorf("Run: %v", err)
-		}
-		text = <-answered
-	case <-time.After(10 * time.Second):
-		t.Fatal("neither the write nor Run returned")
-	}
-	idle, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
-	defer cancel()
-	if !waitFor(idle, &s.handlers) {
-		t.Error("Run returned, closing the components, under a running handler")
-	}
-	return text, first
-}
-
-// Stopped while a write's commit is slower than the drain: its connection is cut, and the components are
-// still closed only after its handler returned.
-func TestStopCutsASlowCommit(t *testing.T) {
-	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
-	s, err := New(testConfig(t, fake), discardLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.drainTimeout = 100 * time.Millisecond
-	stopDuringASlowCommit(t, s, fake, 500*time.Millisecond)
-}
-
-// Stopped while a write's commit is slow: the write answers with its commit, and the components are closed
-// only after it did.
-func TestStopDuringASlowCommit(t *testing.T) {
-	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
-	s, err := New(testConfig(t, fake), discardLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, first := stopDuringASlowCommit(t, s, fake, 200*time.Millisecond)
-	if !first {
-		t.Error("Run returned before the write answered")
-	}
-	if !strings.Contains(text, "Saved in commit") {
-		t.Errorf("write: %s", text)
-	}
-}
-
-// Background work that ignores stop gets its own budget, after the requests: it takes none of theirs.
-func TestStuckBackgroundWorkAtShutdown(t *testing.T) {
-	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
-	s, err := New(testConfig(t, fake), discardLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.drainTimeout = 2 * time.Second
-	s.backgroundTimeout = 100 * time.Millisecond
-	stuck := make(chan struct{})
-	t.Cleanup(func() { close(stuck) })
-	s.background.Go(func() { <-stuck })
-
-	text, first := stopDuringASlowCommit(t, s, fake, 500*time.Millisecond)
-	if !first {
-		t.Error("Run returned before the write answered")
-	}
-	if !strings.Contains(text, "Saved in commit") {
-		t.Errorf("write: %s", text)
-	}
-}
-
-func TestRunDiscoversAndServesVaults(t *testing.T) {
-	fake := newFakeGitHub(t, map[string]string{
-		"speki.yaml":   "title: KB\ndescription: Test vault.\n",
-		"fleet.md":     "# Fleet\n\nzeppelin notes\n",
-		"ops/roles.md": "# Roles\n",
-	})
-	s, err := New(testConfig(t, fake), discardLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-
-	select {
-	case <-s.discovered:
-	case err := <-done:
-		t.Fatalf("Run returned early: %v", err)
-	}
-	s.library.WaitIdle()
-
-	resp, err := http.Get("http://" + s.publicAddr.String() + "/readyz")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("readyz = %d", resp.StatusCode)
-	}
-
-	page := getStatus(t, s)
-	if !page.Ready || len(page.Vaults) != 1 {
-		t.Fatalf("status = %+v", page)
-	}
-	v := page.Vaults[0]
-	if v.Name != fakeRepo || v.State != "serving" || v.Documents != 2 {
-		t.Errorf("vault status = %+v", v)
-	}
-
-	cancel()
-	err = <-done
-	if err != nil {
-		t.Errorf("Run: %v", err)
-	}
-	if s.ready.Load() {
-		t.Error("still ready after shutdown")
-	}
-
-	// A restart serves the vault from disk, even when GitHub doesn't answer.
-	fake.api.Close()
-	s2, err := New(s.cfg, discardLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx2, cancel2 := context.WithCancel(t.Context())
-	defer cancel2()
-	go func() { done <- s2.Run(ctx2) }()
-	<-s2.discovered
-	page = getStatus(t, s2)
-	if len(page.Vaults) != 1 || page.Vaults[0].State != "serving" {
-		t.Errorf("after restart without GitHub: %+v", page)
-	}
-	cancel2()
-	<-done
-}
-
-func getStatus(t *testing.T, s *Service) statusPage {
-	t.Helper()
-	resp, err := http.Get("http://" + s.internalAddr.String() + "/status")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+func getStatus(tb testing.TB, s *service.Service) statusPage {
+	tb.Helper()
+	_, internal := s.URLs()
 	var page statusPage
-	err = json.NewDecoder(resp.Body).Decode(&page)
-	if err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(get(tb, internal+"/status").body, &page); err != nil {
+		tb.Fatal(err)
 	}
 	return page
+}
+
+func TestStatus(t *testing.T) {
+	t.Parallel()
+	const memoryWarning = "no redis.url: sign-in state is kept in memory, so run exactly one instance; several instances need redis.url"
+	testCases := []struct {
+		name  string
+		redis bool
+		want  statusPage
+	}{
+		{name: "memory store", want: statusPage{Store: "memory", Warnings: []string{memoryWarning}}},
+		{name: "redis", redis: true, want: statusPage{Store: "redis", Warnings: []string{}}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			g := newGitHub(t, kbFiles, nil)
+			cfg := testConfig(t, g)
+			if testCase.redis {
+				cfg.Redis.URL = "redis://" + miniredis.RunT(t).Addr()
+			}
+			var logs syncBuffer
+			s, err := create(cfg, slog.New(slog.NewTextHandler(&logs, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if logged, want := strings.Contains(logs.String(), memoryWarning), !testCase.redis; logged != want {
+				t.Errorf("got memory store warning logged %t, want %t:\n%s", logged, !testCase.redis, logs.String())
+			}
+			run(t, s)
+			s.WaitServing()
+
+			want := testCase.want
+			want.Ready = true
+			want.Vaults = []library.Status{{
+				RepoID: 100, Name: kbRepo, State: library.StateServing, Commit: g.BranchSHA(kbRepo, branch), Documents: 2,
+			}}
+			want.Problems = []vault.Problem{}
+			got := getStatus(t, s)
+			ignore := cmpopts.IgnoreFields(library.Status{}, "Bytes", "LastSync", "Fresh")
+			if diff := cmp.Diff(want, got, ignore); diff != "" {
+				t.Errorf("status (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// syncBuffer is a bytes.Buffer that is safe for concurrent use: the service logs from several goroutines.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A restart serves the vaults on disk, even when GitHub refuses the app.
+func TestRestartWithoutGitHub(t *testing.T) {
+	t.Parallel()
+	g := newGitHub(t, kbFiles, nil)
+	cfg := testConfig(t, g)
+	first := newService(t, cfg)
+	stop := run(t, first)
+	first.WaitServing()
+	if err := stop(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	g.Apply(gh.ExpectInstallation_Refused(1))
+	s := startService(t, cfg)
+	page := getStatus(t, s)
+	if len(page.Vaults) != 1 || page.Vaults[0].State != library.StateServing {
+		t.Errorf("got vaults %+v, want ours/kb serving", page.Vaults)
+	}
+}
+
+func TestRunFails(t *testing.T) {
+	t.Parallel()
+	busy := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(busy.Close)
+	busyAddr := strings.TrimPrefix(busy.URL, "http://")
+	testCases := []struct {
+		name   string
+		change func(*service.Config)
+		want   string
+	}{
+		{name: "busy listen address", change: func(c *service.Config) { c.Listen = busyAddr }, want: "listen"},
+		{name: "busy metrics address", change: func(c *service.Config) { c.MetricsListen = busyAddr }, want: "metrics_listen"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := testConfig(t, newGitHub(t, kbFiles, nil))
+			testCase.change(&cfg)
+			err := newService(t, cfg).Run(t.Context())
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("got %v, want a %s error", err, testCase.want)
+			}
+		})
+	}
 }
 
 // A service runs once: a second Run fails, while the first runs and after it ended, without touching
 // the first.
 func TestRunTwice(t *testing.T) {
-	s := newTestService(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	<-s.started
+	t.Parallel()
+	s := newService(t, testConfig(t, newGitHub(t, kbFiles, nil)))
+	stop := run(t, s)
+	s.URLs()
 	if err := s.Run(t.Context()); err == nil {
-		t.Error("a second Run while the first runs succeeded")
+		t.Error("got no error from a second Run while the first runs, want one")
 	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Errorf("first Run: %v", err)
+	if err := stop(); err != nil {
+		t.Errorf("first Run: got %v, want nil", err)
 	}
 	if err := s.Run(t.Context()); err == nil {
-		t.Error("Run after the first ended succeeded")
+		t.Error("got no error from Run after the first ended, want one")
 	}
 }
 
-func TestRunFailsOnBusyAddress(t *testing.T) {
-	busy := httptest.NewServer(http.NotFoundHandler())
-	defer busy.Close()
-	addr := strings.TrimPrefix(busy.URL, "http://")
-
-	cfg := testConfig(t, newFakeGitHub(t, map[string]string{"a.md": "# A\n"}))
-	cfg.Listen = addr
-	s, err := New(cfg, discardLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	err = s.Run(t.Context())
-	if err == nil || !strings.Contains(err.Error(), "listen") {
-		t.Errorf("Run = %v, want a listen error", err)
-	}
-}
-
-// Instances with a memory store don't share refresh locks and results, so a second one signs users out.
-// Speki says so at startup and on the status page; with Redis, it says nothing.
-func TestMemoryStoreWarning(t *testing.T) {
-	tests := []struct {
-		name      string
-		redis     bool
-		wantStore string
-		wantWarn  bool
+// A stopping service lets running requests finish before it closes the components, and gives background
+// work its own budget, after the requests'.
+func TestStopDuringASlowCommit(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		// drain and background are the stop timeouts. Zero keeps the default.
+		drain, background time.Duration
+		stuckBackground   bool
+		// commitDelay is how long the commit takes after the stop began. Negative holds it until the
+		// write's connection was cut.
+		commitDelay time.Duration
+		wantSaved   bool
 	}{
-		{"memory", false, "memory", true},
-		{"redis", true, "redis", false},
+		{name: "commit within the drain", wantSaved: true},
+		{name: "commit slower than the drain", drain: 10 * time.Millisecond, commitDelay: -1},
+		{
+			name:            "background work stuck",
+			background:      10 * time.Millisecond,
+			stuckBackground: true,
+			commitDelay:     50 * time.Millisecond, // longer than the background budget
+			wantSaved:       true,
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := testConfig(t, newFakeGitHub(t, map[string]string{"a.md": "# A\n"}))
-			if tt.redis {
-				cfg.Redis.URL = "redis://" + miniredis.RunT(t).Addr()
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			committing, hold := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			wait := gh.ExpectRoute("POST /graphql", func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					once.Do(func() { close(committing) })
+					<-hold
+					next.ServeHTTP(w, r)
+				})
+			})
+			s := newService(t, testConfig(t, newGitHub(t, kbFiles, nil, wait)))
+			drain, background := 15*time.Second, 5*time.Second
+			if testCase.drain != 0 {
+				drain = testCase.drain
 			}
-			var logs strings.Builder
-			s, err := New(cfg, slog.New(slog.NewTextHandler(&logs, nil)))
-			if err != nil {
-				t.Fatal(err)
+			if testCase.background != 0 {
+				background = testCase.background
 			}
-			t.Cleanup(func() { _ = s.closeComponents() })
-			if logged := strings.Contains(logs.String(), "run exactly one instance"); logged != tt.wantWarn {
-				t.Errorf("startup warning logged %v, want %v:\n%s", logged, tt.wantWarn, logs.String())
+			s.SetStopTimeouts(drain, background)
+			if testCase.stuckBackground {
+				stuck := make(chan struct{})
+				t.Cleanup(func() { close(stuck) })
+				s.StartBackground(func() { <-stuck })
+			}
+			stop := run(t, s)
+			s.WaitServing()
+			cs := connectMCP(t, s, signIn(t, s).AccessToken)
+
+			type answer struct {
+				text    string
+				isError bool
+				err     error
+			}
+			answered := make(chan answer, 1)
+			go func() {
+				res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "write", Arguments: map[string]any{
+					"vault": kbRepo, "path": "deploy.md", "content": "# Deploy\n"}})
+				if err != nil {
+					answered <- answer{err: err}
+					return
+				}
+				answered <- answer{text: res.Content[0].(*mcp.TextContent).Text, isError: res.IsError}
+			}()
+			<-committing
+			stopped := make(chan error, 1)
+			go func() { stopped <- stop() }()
+
+			var got answer
+			var runErr error
+			if testCase.commitDelay < 0 {
+				got = <-answered // the connection is cut while the commit waits
+				close(hold)
+				runErr = <-stopped
+			} else {
+				for s.Ready() { // the stop began
+					runtime.Gosched()
+				}
+				time.AfterFunc(testCase.commitDelay, func() { close(hold) })
+				select {
+				case got = <-answered:
+					runErr = <-stopped
+				case runErr = <-stopped:
+					got = <-answered
+					t.Error("Run returned before the write answered")
+				}
+			}
+			if runErr != nil {
+				t.Errorf("Run: got %v, want nil", runErr)
+			}
+			idle, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+			defer cancel()
+			if !s.WaitHandlers(idle) {
+				t.Error("Run returned, closing the components, under a running handler")
 			}
 
-			rec := httptest.NewRecorder()
-			s.internalHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
-			var page statusPage
-			err = json.Unmarshal(rec.Body.Bytes(), &page)
-			if err != nil {
-				t.Fatal(err)
-			}
-			warned := len(page.Warnings) == 1 && strings.Contains(page.Warnings[0], "redis.url")
-			if page.Store != tt.wantStore || warned != tt.wantWarn || (!tt.wantWarn && len(page.Warnings) != 0) {
-				t.Errorf("status store %q, warnings %q", page.Store, page.Warnings)
+			saved := got.err == nil && !got.isError && strings.Contains(got.text, "Saved in commit")
+			if saved != testCase.wantSaved || !testCase.wantSaved && got.err == nil {
+				t.Errorf("got write answer %+v, want saved %t, else a cut connection", got, testCase.wantSaved)
 			}
 		})
 	}
