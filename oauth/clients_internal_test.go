@@ -20,9 +20,18 @@ func TestPublicAddr(t *testing.T) {
 		{name: "IPv4-mapped loopback", addr: "::ffff:127.0.0.1", want: false},
 		{name: "private", addr: "10.0.0.1", want: false},
 		{name: "link-local", addr: "169.254.169.254", want: false},
-		{name: "multicast", addr: "ff02::1", want: false},
-		{name: "special-purpose IPv4", addr: "100.64.0.1", want: false},
-		{name: "special-purpose IPv6 embedding IPv4", addr: "2002:7f00:1::", want: false},
+		{name: "link-local multicast", addr: "ff02::1", want: false},
+		{name: "interface-local multicast", addr: "ff01::1", want: false},
+		{name: "global multicast", addr: "239.1.1.1", want: false},
+		{name: "IPv4-compatible loopback", addr: "::127.0.0.1", want: false},
+		{name: "NAT64 loopback", addr: "64:ff9b::7f00:1", want: false},
+	}
+	for _, p := range specialPurpose {
+		testCases = append(testCases, struct {
+			name string
+			addr string
+			want bool
+		}{name: "special-purpose " + p.String(), addr: p.Addr().String(), want: false})
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
