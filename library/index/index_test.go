@@ -16,7 +16,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/eve-online-tools/speki/document"
-	"github.com/eve-online-tools/speki/index"
+	"github.com/eve-online-tools/speki/library/index"
 )
 
 var (

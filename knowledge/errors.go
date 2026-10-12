@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eve-online-tools/speki/index"
+	"github.com/eve-online-tools/speki/library/index"
 )
 
 // ErrRebuilding is what Vaults.Sync returns when a vault's index needs a full rebuild before it can catch

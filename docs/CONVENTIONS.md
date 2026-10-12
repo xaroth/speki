@@ -8,8 +8,10 @@ written down here.
 
 - One module. Packages are named after what they do (`vault`, `index`), never after a layer
   (`repository`, `handlers`) or a grab bag (`util`, `common`). No `internal/`.
-- Packages sit at the top level unless a parent folder names a shared concern: `auth` holds `oauth`,
-  `seal` and `access`. A parent folder holds no code of its own and doesn't change package names.
+- Packages sit at the top level unless they are grouped under a parent that either names a shared
+  concern (`auth` holds `oauth`, `seal` and `access`, and has no code of its own) or owns them (`library`
+  builds and syncs its `gitsync` and `index`). Nesting doesn't change package names, and a nested package
+  stays importable by anyone who needs it.
 - The command is `cmd/speki`. It's the only code that reads flags, the environment, files named on the
   command line, or signals. Everything it learns goes into `service.Config`.
 - `service` is the composition root: it builds and runs everything, and nothing imports it except

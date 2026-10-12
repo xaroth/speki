@@ -15,8 +15,8 @@ import (
 	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/knowledge"
+	"github.com/eve-online-tools/speki/library/index"
 )
 
 func TestVaults(t *testing.T) {
