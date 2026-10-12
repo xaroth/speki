@@ -70,7 +70,8 @@ characters, otherwise generated. It's in every log line, in error messages to cl
 when tracing is on.
 
 Every tool call logs one line at the end: request ID, GitHub login, client name, tool, vault, path,
-`outcome` (the error code, `ok`, or `canceled` when the client went away) and duration. Background work
+`outcome` (the error code, `timeout` when the call ran out of the request's time, `ok`, or `canceled` when
+the client went away) and duration. Background work
 logs per vault: discovery changes, sync results, index builds with duration and document count, failures.
 
 ## Metrics

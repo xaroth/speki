@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func discardLogger() *slog.Logger {
@@ -288,7 +289,7 @@ func TestNotReadyAfterEarlyStop(t *testing.T) {
 // A request that never finishes doesn't keep speki from stopping, and isn't an error.
 func TestStuckRequestAtShutdown(t *testing.T) {
 	s := newTestService(t)
-	s.shutdownTimeout = 200 * time.Millisecond
+	s.drainTimeout = 200 * time.Millisecond
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -320,6 +321,112 @@ func TestStuckRequestAtShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run didn't return")
+	}
+}
+
+// stopDuringASlowCommit runs s until a write's commit is waiting on GitHub, stops it, and lets the commit
+// through after delay. It returns the write's answer, and whether it came before Run returned.
+func stopDuringASlowCommit(t *testing.T, s *Service, fake *fakeGitHub, delay time.Duration) (string, bool) {
+	t.Helper()
+	fake.committing, fake.hold = make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	<-s.discovered
+	s.library.WaitIdle()
+	cs := connectMCP(t, s, signIn(t, "http://"+s.publicAddr.String()))
+
+	answered := make(chan string, 1)
+	go func() {
+		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "write", Arguments: map[string]any{
+			"vault": fakeRepo, "path": "deploy.md", "content": "# Deploy\n"}})
+		switch {
+		case err != nil:
+			answered <- err.Error()
+		case res.IsError:
+			answered <- "error: " + res.Content[0].(*mcp.TextContent).Text
+		default:
+			answered <- res.Content[0].(*mcp.TextContent).Text
+		}
+	}()
+	<-fake.committing
+	cancel()
+	time.AfterFunc(delay, func() { close(fake.hold) })
+
+	var text string
+	first := false
+	select {
+	case text = <-answered:
+		first = true
+		err := <-done
+		if err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run: %v", err)
+		}
+		text = <-answered
+	case <-time.After(10 * time.Second):
+		t.Fatal("neither the write nor Run returned")
+	}
+	idle, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	if !waitFor(idle, &s.handlers) {
+		t.Error("Run returned, closing the components, under a running handler")
+	}
+	return text, first
+}
+
+// Stopped while a write's commit is slower than the drain: its connection is cut, and the components are
+// still closed only after its handler returned.
+func TestStopCutsASlowCommit(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
+	s, err := New(testConfig(t, fake), discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.drainTimeout = 100 * time.Millisecond
+	stopDuringASlowCommit(t, s, fake, 500*time.Millisecond)
+}
+
+// Stopped while a write's commit is slow: the write answers with its commit, and the components are closed
+// only after it did.
+func TestStopDuringASlowCommit(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
+	s, err := New(testConfig(t, fake), discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, first := stopDuringASlowCommit(t, s, fake, 200*time.Millisecond)
+	if !first {
+		t.Error("Run returned before the write answered")
+	}
+	if !strings.Contains(text, "Saved in commit") {
+		t.Errorf("write: %s", text)
+	}
+}
+
+// Background work that ignores stop gets its own budget, after the requests: it takes none of theirs.
+func TestStuckBackgroundWorkAtShutdown(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]string{"speki.yaml": "title: KB\ndescription: Test vault.\n"})
+	s, err := New(testConfig(t, fake), discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.drainTimeout = 2 * time.Second
+	s.backgroundTimeout = 100 * time.Millisecond
+	stuck := make(chan struct{})
+	t.Cleanup(func() { close(stuck) })
+	s.background.Go(func() { <-stuck })
+
+	text, first := stopDuringASlowCommit(t, s, fake, 500*time.Millisecond)
+	if !first {
+		t.Error("Run returned before the write answered")
+	}
+	if !strings.Contains(text, "Saved in commit") {
+		t.Errorf("write: %s", text)
 	}
 }
 

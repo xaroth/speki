@@ -31,6 +31,11 @@ const (
 // ReadTimeout runs from the start of the request, and resolving can wait for vaults being built.
 const bodyTimeout = 30 * time.Second
 
+// requestTimeout bounds a /mcp request from its start, the wait for vaults being built included, so a
+// lock wait or GitHub call ends with an error the agent sees rather than a cut connection. The server's
+// WriteTimeout leaves room past it for a change looking for a commit whose answer was lost.
+const requestTimeout = 50 * time.Second
+
 // Per-user request rate: enough for an agent working quickly, not enough to hog the instance.
 const (
 	ratePerSecond = 10
@@ -121,8 +126,8 @@ func New(auth authenticator, grants resolver, kb knowledgeBase, id Identity, ver
 	return s
 }
 
-// Handler returns the whole /mcp stack, outermost first: cross-origin check, body limit, token check,
-// rate limit, grant, MCP.
+// Handler returns the whole /mcp stack, outermost first: deadline, cross-origin check, body limit, token
+// check, rate limit, grant, MCP.
 func (s *Server) Handler() http.Handler {
 	sdk := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return s.mcp },
@@ -133,7 +138,29 @@ func (s *Server) Handler() http.Handler {
 	h = s.rateLimit(h) // before grant: turned-away users would otherwise cost GitHub requests unthrottled
 	h = s.auth.Middleware(h)
 	h = http.MaxBytesHandler(h, maxBody)
-	return http.NewCrossOriginProtection().Handler(h)
+	h = http.NewCrossOriginProtection().Handler(h)
+	return withDeadline(h)
+}
+
+type deadlineKey struct{}
+
+// withDeadline sets the request's deadline, from its start, as a value: the go-sdk runs tools on a context
+// that keeps values but not deadlines, and the HTTP request must outlive the tool to carry its answer. The
+// grant applies it to resolving, handle to the tool.
+func withDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), deadlineKey{}, time.Now().Add(requestTimeout))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// withRequestDeadline returns ctx ending at the request's deadline, if withDeadline set one.
+func withRequestDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	d, ok := ctx.Value(deadlineKey{}).(time.Time)
+	if !ok {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(ctx, d)
 }
 
 type grantKey struct{}
@@ -154,7 +181,9 @@ func (s *Server) grant(next http.Handler) http.Handler {
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
 		}
-		g, err := s.grants.Resolve(r.Context(), u)
+		rctx, cancel := withRequestDeadline(r.Context())
+		g, err := s.grants.Resolve(rctx, u)
+		cancel()
 		switch {
 		case errors.Is(err, access.ErrUnauthorized):
 			s.auth.Unauthorized(w, "GitHub no longer accepts this sign-in: sign in again")
@@ -169,6 +198,11 @@ func (s *Server) grant(next http.Handler) http.Handler {
 		case errors.Is(err, access.ErrVaultsFailed):
 			w.Header().Set("Retry-After", failedRetry)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		case errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil:
+			s.logger.WarnContext(r.Context(), "resolving access ran out of time", "login", u.Login, "err", err)
+			w.Header().Set("Retry-After", notReadyRetry)
+			http.Error(w, "speki couldn't check your access in time; try again", http.StatusServiceUnavailable)
 			return
 		case err != nil:
 			s.logger.ErrorContext(r.Context(), "resolving access failed", "login", u.Login, "err", err)

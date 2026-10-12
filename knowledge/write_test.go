@@ -534,6 +534,70 @@ func TestWriteLockHonoursTheContext(t *testing.T) {
 	}
 }
 
+// A change queued behind a slow one hears the vault is busy once the lock wait runs out, while its
+// request still has time.
+func TestWriteLockWaitIsCapped(t *testing.T) {
+	f := newFixture(t)
+	f.base.lockWait = 50 * time.Millisecond
+	committing, release := make(chan struct{}), make(chan struct{})
+	f.github.before = func(*fakeRepo) {
+		close(committing)
+		<-release
+	}
+	slow := make(chan error, 1)
+	go func() {
+		_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "slow.md", Content: "# Slow\n"})
+		slow <- err
+	}()
+	<-committing
+	_, err := f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "queued.md", Content: "# Queued\n"})
+	wantCode(t, err, CodeUnavailable)
+	if !strings.Contains(err.Error(), "another change to ours/kb is still being committed") {
+		t.Errorf("error = %v", err)
+	}
+	close(release)
+	if err := <-slow; err != nil {
+		t.Errorf("slow write: %v", err)
+	}
+}
+
+// A commit that lands while the sync after it is slow is a success with its SHA. The sync and the notice
+// finish after the answer, and Stop waits for them.
+func TestCommitLandsWhileItsSyncIsSlow(t *testing.T) {
+	f := newFixture(t)
+	f.vaults.hold = make(chan struct{}) // a new document: the only sync is the one after the commit
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	res, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "# New\n"})
+	if err != nil {
+		t.Fatalf("write whose sync is slow: %v", err)
+	}
+	if res.Commit != f.github.repoOf("ours/kb").head || !res.IndexPending {
+		t.Errorf("result = %+v", res)
+	}
+	f.notices.mu.Lock()
+	early := len(f.notices.sent)
+	f.notices.mu.Unlock()
+	if early != 0 {
+		t.Errorf("notice sent before the sync finished")
+	}
+
+	close(f.vaults.hold)
+	err = f.base.Stop(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.notices.sent) != 1 || f.notices.sent[0] != "1:"+res.Commit {
+		t.Errorf("notices = %v", f.notices.sent)
+	}
+
+	// Once stopped, a change still answers; the pollers catch up with it.
+	res, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "later.md", Content: "# Later\n"})
+	if err != nil || res.Commit == "" || !res.IndexPending {
+		t.Errorf("write after Stop: %+v, %v", res, err)
+	}
+}
+
 // Names that git stores in NFD, through the write path with the mirror's real paths.
 func TestWriteNormalisation(t *testing.T) {
 	f := newFixture(t)

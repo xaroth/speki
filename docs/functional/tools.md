@@ -52,9 +52,9 @@ A failed tool call returns an error text that starts with a code, then says what
 | `vault_read_only` | GitHub refused the commit because the branch requires pull requests or checks |
 | `secret_detected` | GitHub's push protection found a secret in the content. Remove it and tell the user |
 | `too_large` | Over a limit. Says which one and how to stay under it |
-| `timeout` | A query ran longer than 3 seconds |
+| `timeout` | A query ran longer than 3 seconds, or a call ran out of its 50 seconds. After a change, read the document before retrying: it may have landed |
 | `rate_limited` | GitHub asked speki to slow down during a write. Says how long to wait. Speki's own per-user limit answers with HTTP 429 instead, before any tool runs |
-| `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, the vault is rebuilding its index, the named vault is still building its first index or failed to open, or too many queries are running. Says which, with a request ID for the operator |
+| `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, the vault is rebuilding its index, the named vault is still building its first index or failed to open, too many queries are running, or another change to the vault was still being committed after 15 seconds. Says which, with a request ID for the operator |
 
 A `broken` error and the `broken` column (see [search-and-query.md](search-and-query.md)) give one of
 these reasons. Their text is stable, so a client may match on it:
@@ -238,8 +238,8 @@ Speki checks the frontmatter, sets `created` (new documents) and `updated`, and 
 ```
 
 `index_pending` is true when the commit succeeded but speki's index hadn't caught up: within 10 seconds,
-or because the vault's index needs a full rebuild, which speki does in the background. Searches may miss
-the change for a little while.
+before the call ran out of time, or because the vault's index needs a full rebuild, which speki does in
+the background. Searches may miss the change for a little while.
 
 ## edit
 

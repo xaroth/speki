@@ -131,7 +131,12 @@ then fail with `read_only_session`.
 
 ## The `/mcp` stack
 
-`mcpserver.Handler` builds the whole chain, so it can be read in one place:
+`mcpserver.Handler` builds the whole chain, so it can be read in one place. Before step 1 it notes the
+request's deadline: 50 seconds from its start, the wait for vaults in step 5 included. Step 5 applies
+it to `Resolve`, and every tool handler to its call. The go-sdk runs tools on a context that keeps
+values but not deadlines, and the HTTP request must outlive the tool to carry its answer, so the
+deadline isn't set on the request itself. A lock wait or GitHub call that runs out of it ends with a
+`timeout` tool error, not a cut connection.
 
 1. `http.NewCrossOriginProtection`: rejects cross-origin browser requests, as the MCP spec asks.
 2. `http.MaxBytesHandler`, 2 MiB.
@@ -149,9 +154,11 @@ then fail with `read_only_session`.
    from `Library.Vaults`, reusing the read decisions they already made: no polling, no cache reads or
    GitHub calls for vaults already decided. `Resolver.Stop`, called when the service starts stopping,
    ends every wait. When the only readable vaults failed to open, the answer is 503 with
-   `Retry-After: 120` straight away: their retry is minutes off. After the grant, the middleware gives
+   `Retry-After: 120` straight away: their retry is minutes off. When the request's deadline passes
+   during `Resolve` (GitHub is slow), the answer is 503 with `Retry-After: 15`. After the grant, the middleware gives
    the body a fresh 30 second read deadline, so the server's 30 second `ReadTimeout` doesn't run out
-   during a wait; its 90 second `WriteTimeout` covers the wait and the tool call.
+   during a wait. Its 75 second `WriteTimeout` covers the 50 second deadline, and a change still looking
+   for a commit whose answer was lost when the deadline came (see [sync.md](sync.md)).
 6. The go-sdk handler, which routes to the tool handlers.
 
 Doing steps 3 and 4 as HTTP middleware matters: inside a tool handler it's too late to answer with a
@@ -172,7 +179,9 @@ status code, and clients only start a new sign-in on a 401.
 
 `edit` takes these steps after the grant:
 
-1. `knowledge.Edit` checks `grant.CanWrite` and takes the vault's write lock.
+1. `knowledge.Edit` checks `grant.CanWrite` and takes the vault's write lock, waiting at most 15 seconds
+   for a change before it. After that it answers `unavailable` ("another change ... is still being
+   committed").
 2. It reads the current document. If the agent passed a `version` that doesn't match, it first asks
    `library` to check GitHub for a newer head (a conditional request, free when nothing changed) and sync.
    Only if the document still doesn't match does it return `conflict`.
@@ -182,7 +191,9 @@ status code, and clients only start a new sign-in on a 401.
    GitHub says the head moved, `knowledge` syncs and goes back to step 2, up to three times.
 5. On success it computes the new version (the git blob hash of the content it sent), asks `library` to
    sync, and waits until a sync that started after the commit has finished (at most 10 seconds). Then it
-   publishes the new head for other instances and returns.
+   publishes the new head for other instances and returns. The sync and the notice run as background work
+   that outlives the request: when the request's deadline comes first, the answer is the commit with
+   `index_pending: true`, and the work carries on.
 
 Lock order is always the vault's write lock first, then its sync lock. Nothing takes them the other way
 around.
@@ -250,13 +261,23 @@ dependency for a fake happens through `Config`, not through globals or build tag
 So an instance with a persistent data directory serves from disk within seconds, even if GitHub is down.
 An instance on an empty disk is ready quickly but has no vaults until the first ones finish indexing.
 
-When `Run`'s context ends, within 25 seconds in all:
+When `Run`'s context ends, within 25 seconds in all (2 of them to flush traces), under Kubernetes' default
+30-second grace period:
 
 1. Mark not ready, for good: `/readyz` and `/mcp` answer 503 from now on.
-2. Stop the background loops and wait for them, so requests still running see open vaults.
-3. Stop accepting requests and let running ones finish. When the 25 seconds are up, close their
-   connections. That's logged, not an error: a routine stop exits 0.
-4. Close indexes, the sandbox and the store, and return from `Run`.
+2. Stop accepting requests and let running ones finish, for up to 15 seconds, while vaults stay open and
+   polled. Then close their connections. That's logged, not an error: a routine stop exits 0.
+3. Wait up to 3 seconds for handlers still running after their connections were closed. `service` counts
+   running handlers itself, since closing connections doesn't wait for them.
+4. Stop the background loops and the work after commits (`knowledge.Base.Stop`), and wait up to 5
+   seconds for them. This budget is separate, so work that ignores stop takes no time from requests.
+5. Close indexes, the sandbox and the store, and return from `Run`. If a handler is still running after
+   step 3, or background work after step 4, the components are left open instead, and that's logged:
+   closing them would fail that work. A request that starts after step 3 begins gets a 503.
+
+The drain is shorter than a request's 50-second deadline, so a change still running 15 seconds into a stop
+loses its connection. Its handler keeps going, so a commit that was sent lands, but the agent sees the
+connection drop and has to read the document to find out.
 
 `/mcp` also answers 503 with `Retry-After` before the first discovery round, like `/readyz`. Every
 goroutine is started from `service` or `library` with a context it watches, and its starter waits for

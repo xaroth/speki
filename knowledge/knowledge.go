@@ -64,18 +64,62 @@ type Base struct {
 	now     func() time.Time
 	writes  keyedLock // one write at a time per vault
 	queries keyedLock // one query at a time per user
+	// lockWait caps the wait for a vault's write lock. A field so tests can shorten it.
+	lockWait time.Duration
+
+	// Work after a commit outlives its request: it runs under after, which Stop ends.
+	after       context.Context
+	stopAfter   context.CancelFunc
+	afterMu     sync.Mutex
+	afterWork   sync.WaitGroup // guarded by afterMu for Go, so none starts once Stop waits
+	afterClosed bool           // guarded by afterMu
 }
 
 // New returns a Base.
 func New(vaults Vaults, github githubAPI, sandbox querier, notices notifier, logger *slog.Logger) *Base {
+	after, stop := context.WithCancel(context.Background())
 	return &Base{
-		vaults:  vaults,
-		github:  github,
-		sandbox: sandbox,
-		notices: notices,
-		logger:  logger,
-		now:     time.Now,
+		vaults:    vaults,
+		github:    github,
+		sandbox:   sandbox,
+		notices:   notices,
+		logger:    logger,
+		now:       time.Now,
+		lockWait:  writeLockWait,
+		after:     after,
+		stopAfter: stop,
 	}
+}
+
+// Stop ends the syncs still running after commits, and waits until ctx ends for their notices to go out.
+// Changes answered from then on leave both to the poller. It errs when ctx ends first.
+func (b *Base) Stop(ctx context.Context) error {
+	b.afterMu.Lock()
+	b.afterClosed = true
+	b.afterMu.Unlock()
+	b.stopAfter()
+	done := make(chan struct{})
+	go func() {
+		b.afterWork.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// goAfter runs f as work after a commit, unless Stop was called.
+func (b *Base) goAfter(f func()) bool {
+	b.afterMu.Lock()
+	defer b.afterMu.Unlock()
+	if b.afterClosed {
+		return false
+	}
+	b.afterWork.Go(f)
+	return true
 }
 
 // keyedLock is a lock per key that a caller can stop waiting for. The zero value is ready to use.

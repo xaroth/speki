@@ -31,6 +31,8 @@ type fakeGitHub struct {
 	dir    string
 
 	block chan struct{} // when set, the installation list waits for it to close
+	// When set, a commit closes committing, then waits for hold to close before it's made.
+	committing, hold chan struct{}
 
 	// hidden is a second repository the app can see but the user can't: speki serves it, and the user
 	// must never see anything from it. Nil unless addHidden was called.
@@ -272,6 +274,10 @@ func (f *fakeGitHub) commit(w http.ResponseWriter, r *http.Request) {
 		} `json:"variables"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if f.hold != nil {
+		close(f.committing)
+		<-f.hold
+	}
 	in := req.Variables.Input
 	w.Header().Set("Content-Type", "application/json")
 	f.mu.Lock()
