@@ -101,36 +101,34 @@ func (c *Client) UserRepositories(ctx context.Context, token string) ([]RepoAcce
 		return nil, err
 	}
 	var installations []int64
-	opt := &github.ListOptions{PerPage: 100}
-	for {
+	err = listAll(func(opt *github.ListOptions) (*github.Response, error) {
 		page, resp, err := client.Apps.ListUserInstallations(ctx, opt)
 		if err != nil {
-			return nil, fmt.Errorf("user installations: %w", userError(err))
+			return nil, err
 		}
 		for _, in := range page {
 			installations = append(installations, in.GetID())
 		}
-		if resp.NextPage == 0 {
-			break
-		}
-		opt.Page = resp.NextPage
+		return resp, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("user installations: %w", userError(err))
 	}
 
 	var out []RepoAccess
 	for _, id := range installations {
-		opt := &github.ListOptions{PerPage: 100}
-		for {
+		err := listAll(func(opt *github.ListOptions) (*github.Response, error) {
 			page, resp, err := client.Apps.ListUserRepos(ctx, id, opt)
 			if err != nil {
-				return nil, fmt.Errorf("repositories of installation %d: %w", id, userError(err))
+				return nil, err
 			}
 			for _, r := range page.Repositories {
 				out = append(out, RepoAccess{RepoID: r.GetID(), Role: roleOf(r.GetPermissions())})
 			}
-			if resp.NextPage == 0 {
-				break
-			}
-			opt.Page = resp.NextPage
+			return resp, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("repositories of installation %d: %w", id, userError(err))
 		}
 	}
 	return out, nil

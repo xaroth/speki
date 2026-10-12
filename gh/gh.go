@@ -100,6 +100,21 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
+// listAll calls list for every page of a GitHub list, 100 items a page.
+func listAll(list func(opt *github.ListOptions) (*github.Response, error)) error {
+	opt := &github.ListOptions{PerPage: 100}
+	for {
+		resp, err := list(opt)
+		if err != nil {
+			return err
+		}
+		if resp.NextPage == 0 {
+			return nil
+		}
+		opt.Page = resp.NextPage
+	}
+}
+
 func newGitHub(apiURL string, rt http.RoundTripper) (*github.Client, error) {
 	c, err := github.NewClient(
 		github.WithTransport(rt),
