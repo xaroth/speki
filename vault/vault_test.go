@@ -274,7 +274,7 @@ func TestOneInstallationFailingDoesNotStopOthers(t *testing.T) {
 
 func TestRepositoryMovesBetweenInstallations(t *testing.T) {
 	f := newFake()
-	f.installations[1].AccountID = 42 // both installations allowed
+	f.installations[1].AccountID = 42
 	r := NewRegistry(f, []int64{42}, discard())
 	mustDiscover(t, r)
 
