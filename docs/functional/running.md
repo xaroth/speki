@@ -3,6 +3,13 @@
 Speki is one binary. It needs a GitHub App, a configuration file, a secret key and some disk it may lose at
 any time. For more than one instance it also needs Redis or Valkey.
 
+To get a first instance running:
+
+1. Register the GitHub App and install it on a repository.
+2. Write a configuration file and generate a key.
+3. Build and start speki.
+4. Add a `speki.yaml` to the repository ([vaults.md](vaults.md)) and connect an MCP client.
+
 ## Registering the GitHub App
 
 Create a GitHub App in the organisation that runs speki (Settings → Developer settings → GitHub Apps):
@@ -87,13 +94,31 @@ variables win over the YAML file, including over a secret file it names, which t
 Speki refuses to start when something required is missing or a value is invalid, and lists every such
 key at once.
 
+Common settings you can leave out:
+
+| Key | Default |
+|---|---|
+| `listen` | `:8080` |
+| `metrics_listen` | `:9090` |
+| `github.allowed_accounts` | the account that owns the GitHub App |
+| `access.required_orgs` | no organisation check |
+| `auth.client_metadata_hosts` | `claude.ai` |
+| `sync.data_dir` | `data`, relative to the working directory |
+| `sync.poll_interval` | `1m` |
+| `sync.discovery_interval` | `5m` |
+| `telemetry.log_level` | `info` (also `debug`, `warn`, `error`) |
+
+`public_url` must be https, except for `http://localhost` or `http://127.0.0.1` during development, and
+has no path.
+
 ### Keys
 
 Speki seals its tokens with a key. Set exactly one of:
 
 - `auth.key`: a single key, base64 of at least 32 random bytes. Easiest to set from a secret store:
   `SPEKI_AUTH_KEY_FILE=/run/secrets/speki-key`. It can't be rotated without first moving to a key file.
-- `auth.keys`: a key file, which can hold several keys and supports rotation.
+- `auth.keys`: the contents of a key file, which can hold several keys and supports rotation. Usually
+  given as a path with `auth.keys_file`.
 
 `openssl rand -base64 32` makes a good secret.
 
@@ -130,6 +155,47 @@ keys:
 
 Replace `auth.key` with `auth.keys` on every instance and restart. Then rotate as above, starting by
 adding the replacement key. Listing the old key under any other ID signs everyone out.
+
+## Building and starting
+
+Build the binary with Go and a C compiler. The build tags enable SQLite's full-text search:
+
+```sh
+task build    # writes bin/speki
+```
+
+Without [Task](https://taskfile.dev):
+
+```sh
+CGO_ENABLED=1 go build -tags 'sqlite_fts5,sqlite_omit_load_extension' -o bin/speki ./cmd/speki
+```
+
+Start it with `bin/speki --config /path/to/config.yaml`. Without `--config` it reads `config.yaml` in the
+working directory if there is one, and otherwise runs on environment variables alone. `speki --version`
+prints the version.
+
+The Dockerfile builds a small image that runs as a non-root user:
+
+```sh
+docker build --build-arg VERSION=1.0.0 -t speki .
+docker run -p 8080:8080 \
+  -v /srv/speki/config.yaml:/etc/speki/config.yaml:ro \
+  -v /srv/speki/secrets:/run/secrets:ro \
+  -v speki-data:/var/lib/speki \
+  speki
+```
+
+The image's working directory is `/etc/speki`, so it reads `/etc/speki/config.yaml`. Its data volume is
+`/var/lib/speki`: set `sync.data_dir: /var/lib/speki` to use it. The image runs as user ID 65532, which
+must be able to write there.
+
+Once it runs, connect a client to `<public_url>/mcp`. For Claude Code:
+
+```sh
+claude mcp add --transport http speki https://speki.example.com/mcp
+```
+
+The first connection opens a browser to sign in ([access.md](access.md)).
 
 ## One instance or several
 
@@ -188,7 +254,7 @@ for. Below about 1.2 GiB, the kernel can kill the process before SQLite's own li
 | `/.well-known/oauth-authorization-server` | `listen` | OAuth metadata |
 | `/oauth/...` | `listen` | Sign-in, consent, token and registration endpoints |
 | `/healthz` | `listen` | 200 while the process runs |
-| `/readyz` | `listen` | 200 once the first round of vault discovery has finished, or once looking up the app's owner has failed (vaults on disk are served before that) |
+| `/readyz` | `listen` | 200 once the first round of vault discovery is done, whether or not it succeeded, or once looking up the app's owner has failed. 503 while starting and stopping. `/mcp` answers 503 at the same times |
 | `/metrics` | `metrics_listen` | Prometheus metrics |
 | `/status` | `metrics_listen` | Readiness, every vault's state, commit, last sync and last error, and any `speki.yaml` that couldn't be used, as JSON |
 

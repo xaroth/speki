@@ -3,8 +3,9 @@
 Every tool returns structured content (JSON matching an output schema) and a short text rendering of the
 same result, for clients that only show text.
 
-Vaults are named `owner/repo`, matched without regard to letter case as on GitHub; results always use the name as GitHub spells it. Naming a vault twice is the same as naming it once. Paths are relative to the vault root. Wherever a tool takes `vaults`, leaving
-it out means every vault the user can read.
+Vaults are named `owner/repo`, matched without regard to letter case as on GitHub. Results use the name
+as GitHub spells it. Naming a vault twice is the same as naming it once. Paths are relative to the vault
+root. Wherever a tool takes `vaults`, leaving it out means every vault the user can read.
 
 ## Versions
 
@@ -31,7 +32,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | `conflict` | The document changed since the given version. Includes the current version (none when creating a document the vault keeps changing under) |
 | `already_exists` | `write` without a version, or `move` onto a path that's taken. Includes the current version when the path is a document; a file speki doesn't index, a folder, or the same name in another Unicode normalisation has none |
 | `invalid` | Bad path, bad frontmatter, `old_text` not found or not unique, bad SQL. Says what and where |
-| `no_write_access` | The user can read this vault but not push to it on GitHub |
+| `no_write_access` | The user can read this vault but not write to it: they can't push to it on GitHub, or the vault's `writers` doesn't list them |
 | `read_only_session` | The user signed in read-only. Ask them to reconnect speki with write access |
 | `vault_read_only` | GitHub refused the commit because the branch requires pull requests or checks |
 | `secret_detected` | GitHub's push protection found a secret in the content. Remove it and tell the user |
@@ -81,12 +82,12 @@ With `vault`: the folders and documents under `path`.
       "status": "active", "updated": "2026-10-09T14:02:11Z",
       "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1" }
   ],
-  "next_cursor": null,
   "guidelines": "Put one document per service under services/ ..." }
 ```
 
-At most 200 entries per call, sorted by path. The cursor stays valid when documents are added or removed
-in between. The vault's guidelines come along when listing its root.
+At most 200 entries per call, sorted by path. When there are more, `next_cursor` is set: pass it as
+`cursor` to get the next page. It's left out on the last page. The cursor stays valid when documents are
+added or removed in between. The vault's guidelines come along when listing its root.
 
 ## search
 

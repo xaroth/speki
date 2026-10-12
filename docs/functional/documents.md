@@ -30,7 +30,6 @@ A path speki will write:
 - ends in `.md`
 - is relative, with `/` as separator, and has no `.` or `..` segments
 - has no segment starting with `.`
-- isn't `speki.yaml`
 - has no characters from `[]#^|:?*<>"\`, no control characters, and no invisible ones (zero-width
   spaces, direction marks)
 - has no part named like a Windows device (`con`, `nul`, `aux`, `prn`, `com1`, `lpt1` and so on) and
@@ -39,8 +38,11 @@ A path speki will write:
 - doesn't differ only in letter case from an existing path
 
 New paths are stored in Unicode NFC, and a new file can't have the same name as an existing one in another
-normalisation. Where the vault already has a folder with the same name in another normalisation (folders made on macOS are often stored decomposed), speki uses the vault's
-spelling, so the document lands in that folder rather than in a look-alike next to it. Lowercase names with `-` between words are the convention, but speki doesn't enforce it.
+normalisation. Where the vault already has a folder with the same name in another normalisation (folders
+made on macOS are often stored decomposed), speki uses the vault's spelling, so the document lands in that
+folder rather than in a look-alike next to it.
+
+Lowercase names with `-` between words are the convention, but speki doesn't enforce it.
 
 ## Frontmatter fields
 

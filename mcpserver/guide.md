@@ -77,7 +77,7 @@ vault don't cause conflicts.
 ## Errors
 
 A failed call starts with a code. `read_only_session` means the user connected speki without write access,
-`no_write_access` that they can't push to that vault on GitHub, and `vault_read_only` that the vault only
+`no_write_access` that they may read that vault but not write to it, and `vault_read_only` that the vault only
 takes changes through pull requests: tell the user in each case. `secret_detected` means GitHub found a
 secret in the content: remove it and tell the user.
 
