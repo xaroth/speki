@@ -105,8 +105,7 @@ func (l *Library) check(ctx context.Context, v *Vault) {
 	}
 }
 
-// inBackground runs work on a vault outside the poll round, a few vaults at a time, once at a time per
-// vault.
+// inBackground runs work on a vault outside the poll round, one at a time per vault.
 func (l *Library) inBackground(ctx context.Context, v *Vault, work func(context.Context, *Vault)) {
 	if l.closed.Load() || !v.scheduled.CompareAndSwap(false, true) {
 		return

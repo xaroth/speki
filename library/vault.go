@@ -494,8 +494,8 @@ func (l *Library) compactLocked(ctx context.Context, v *Vault) {
 	}
 }
 
-// freshClone replaces a copy that collected too many pack files. It clones next to the old copy and swaps
-// the directories, so a failure at any step leaves a working copy in place. With keep set, the new copy
+// freshClone replaces the local repository with a new clone. It clones next to the old copy and swaps the
+// directories, so a failure at any step leaves the old copy in place. With keep set, the new copy
 // must have that commit (the index's), or it's thrown away with errMovedOn: a commit landed during the
 // clone, and the index could only catch up by a full rebuild. Called with syncMu held.
 func (l *Library) freshClone(ctx context.Context, v *Vault, keep string) error {

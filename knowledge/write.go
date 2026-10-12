@@ -24,7 +24,7 @@ const (
 	commitAttempts = 3
 	// syncWait is how long a change waits for the index to catch up with its commit.
 	syncWait = 10 * time.Second
-	// maxHeadline is the longest commit message speki writes, in bytes.
+	// maxHeadline is the longest commit headline speki writes, in bytes.
 	maxHeadline = 200
 	// noticeTimeout bounds telling other instances about a commit.
 	noticeTimeout = 3 * time.Second
@@ -303,7 +303,6 @@ type state struct {
 	head  string
 }
 
-// document looks a document up in the index.
 func (st state) document(ctx context.Context, path string) (index.Document, bool, error) {
 	d, err := st.copy.Index().Document(ctx, path)
 	if errors.Is(err, index.ErrNotFound) {
@@ -483,7 +482,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			// A stale version, or a version or tree the copy no longer has: the copy may be behind
 			// GitHub, or was just replaced. Sync once and look again.
 			synced = true
-			sctx, cancel := context.WithTimeout(ctx, syncWait) // a write waits for a sync this long at most
+			sctx, cancel := context.WithTimeout(ctx, syncWait)
 			serr := b.vaults.Sync(sctx, v.RepoID)
 			cancel()
 			if errors.Is(serr, ErrRebuilding) {
@@ -672,7 +671,7 @@ func commitMessage(message, fallback, client string) string {
 	return line + "\n\n" + clientTrailer + " " + client
 }
 
-// oneLine drops line breaks and control and format characters.
+// oneLine turns line breaks into spaces and drops control and format characters.
 func oneLine(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {

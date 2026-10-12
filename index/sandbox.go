@@ -478,5 +478,4 @@ func queryError(ctx context.Context, err error, sources []Source) error {
 	return err
 }
 
-// literal quotes s as an SQL string literal.
 func literal(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }

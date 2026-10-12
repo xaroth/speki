@@ -389,7 +389,7 @@ func TestStallContext(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, touch, stop := stallContext(t.Context(), 4*time.Minute)
 		defer stop()
-		for range 5 { // twenty minutes of steady progress
+		for range 5 { // fifteen minutes of steady progress
 			touch()
 			time.Sleep(3 * time.Minute)
 			if ctx.Err() != nil {
