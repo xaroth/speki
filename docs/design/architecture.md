@@ -84,22 +84,30 @@ The rule that matters most for security: content is only handed out after checki
 
 // Grant is what one signed-in user may do right now, resolved from GitHub and the token's scope.
 type Grant struct {
-	user     User
-	readable []vault.Vault // sorted by name
-	writable map[int64]bool
+	user        User
+	readable    []vault.Vault // served, sorted by name
+	writable    map[int64]bool
+	unavailable []Unavailable // readable but building or failed, sorted by name
 }
 
-func NewGrant(u User, readable []vault.Vault, writable []int64) *Grant // used by Resolver and tests
+func NewGrant(u User, readable []vault.Vault, writable []int64, unavailable ...Unavailable) *Grant // used by Resolver and tests
 
 func (g *Grant) User() User                          // GitHub ID, login, GitHub token, client name
-func (g *Grant) Vault(name string) (vault.Vault, bool) // a readable vault, by name
+func (g *Grant) Vault(name string) (vault.Vault, bool) // a readable, served vault, by name
 func (g *Grant) Readable() []vault.Vault
+func (g *Grant) Unavailable() []Unavailable           // readable vaults speki doesn't serve, with their state
+func (g *Grant) UnavailableVault(name string) (Unavailable, bool)
 func (g *Grant) CanWrite(repoID int64) bool
 func (g *Grant) ReadOnlySession() bool
 ```
 
 Agents name vaults, so `knowledge` looks a vault up through `grant.Vault(name)`: a vault the user can't
 read doesn't resolve, and the answer is the same `not_found` as for a vault that doesn't exist.
+
+`Readable` and `Vault` only hold served vaults, so nothing queries an index that isn't ready. `Resolve`
+puts the user's readable vaults that are building or failed in `Unavailable`, from the same library
+snapshot and with the same read checks, so `knowledge` can name them as skipped and answer
+`unavailable` for them without revealing vaults the user can't read.
 
 Vaults are keyed by repository ID internally, so a renamed or transferred repository keeps its grant,
 its cache entries and its files. People and agents use the `owner/repo` name.

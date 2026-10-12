@@ -36,7 +36,10 @@ When those are all a user can read, the request waits up to 30 seconds for one t
 HTTP 503 with `Retry-After` saying speki is still loading their vaults. When their only vaults failed to
 open, they get an HTTP 503 straight away saying so, with a `Retry-After` of 2 minutes: speki retries
 those vaults by itself, with growing backoff, and the operator sees the error on the status page. A user
-who can read a served vault never waits.
+who can read a served vault never waits. Their vaults that are still building or failed to open show up
+in `list` with their state, are named as skipped in `search` and `query` results, and answer
+`unavailable` when named ([tools.md](tools.md#vaults-speki-cant-serve)). Vaults they can't read stay
+invisible, whatever their state.
 
 Speki checks 2 and 3 again at most every 5 minutes per user. Someone removed from an organisation, a
 repository or a team loses access within 5 minutes.

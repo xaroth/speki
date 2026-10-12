@@ -107,6 +107,7 @@ func (l *fakeLibrary) setQuietly(serving, building, failed []vault.Vault) {
 var kb = vault.Vault{RepoID: 100, Name: "ours/kb"}
 var infra = vault.Vault{RepoID: 101, Name: "ours/infra"}
 var other = vault.Vault{RepoID: 102, Name: "ours/other"}
+var docs = vault.Vault{RepoID: 999, Name: "ours/docs"}
 
 func setup() (*fakeGitHub, *Resolver) {
 	f := &fakeGitHub{
@@ -304,15 +305,26 @@ func TestTurnedAway(t *testing.T) {
 
 func TestUnservedVaultsNoWait(t *testing.T) {
 	tests := []struct {
-		name     string
-		token    string
-		serving  []vault.Vault
-		building []vault.Vault
-		failed   []vault.Vault
-		readable []string
-		err      error
+		name        string
+		token       string
+		serving     []vault.Vault
+		building    []vault.Vault
+		failed      []vault.Vault
+		readable    []string
+		unavailable []string // name:state
+		err         error
 	}{
-		{name: "one served, one building", token: "alice", serving: []vault.Vault{kb}, building: []vault.Vault{infra}, readable: []string{"ours/kb"}},
+		{name: "one served, one building", token: "alice", serving: []vault.Vault{kb}, building: []vault.Vault{infra}, readable: []string{"ours/kb"}, unavailable: []string{"ours/infra:building"}},
+		{
+			name:        "served, building and failed",
+			token:       "alice",
+			serving:     []vault.Vault{kb},
+			building:    []vault.Vault{infra, other},
+			failed:      []vault.Vault{docs},
+			readable:    []string{"ours/kb"},
+			unavailable: []string{"ours/docs:failed", "ours/infra:building"},
+		},
+		{name: "others' vaults building", token: "bob", serving: []vault.Vault{docs}, building: []vault.Vault{kb, infra}, failed: []vault.Vault{other}, readable: []string{"ours/docs"}},
 		{name: "only others' vaults building", token: "bob", building: []vault.Vault{kb, infra}, err: ErrNoVaults},
 		{name: "own vault failed, others' building", token: "alice", building: []vault.Vault{other}, failed: []vault.Vault{kb}, err: ErrVaultsFailed},
 	}
@@ -340,6 +352,22 @@ func TestUnservedVaultsNoWait(t *testing.T) {
 				}
 				if diff := cmp.Diff(tt.readable, names); diff != "" {
 					t.Errorf("readable (-want +got):\n%s", diff)
+				}
+				var unavailable []string
+				for _, u := range g.Unavailable() {
+					unavailable = append(unavailable, u.Vault.Name+":"+string(u.State))
+					if _, ok := g.Vault(u.Vault.Name); ok {
+						t.Errorf("%s is both readable and unavailable", u.Vault.Name)
+					}
+				}
+				if diff := cmp.Diff(tt.unavailable, unavailable); diff != "" {
+					t.Errorf("unavailable (-want +got):\n%s", diff)
+				}
+				for _, v := range append(tt.building, tt.failed...) {
+					_, ok := g.UnavailableVault(strings.ToUpper(v.Name))
+					if want := slices.Contains(unavailable, v.Name+":building") || slices.Contains(unavailable, v.Name+":failed"); ok != want {
+						t.Errorf("UnavailableVault(%s) = %v, want %v", v.Name, ok, want)
+					}
 				}
 			})
 		})

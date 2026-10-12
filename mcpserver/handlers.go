@@ -22,6 +22,7 @@ type VaultSummary struct {
 	Guidelines  string `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
 	CanWrite    bool   `json:"can_write"`
 	Documents   int    `json:"documents"`
+	State       string `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly) or failed (it couldn't be opened; tell the user)"`
 }
 
 func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummary {
@@ -33,6 +34,7 @@ func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummar
 			Description: v.Description,
 			CanWrite:    v.CanWrite,
 			Documents:   v.Documents,
+			State:       string(v.State),
 		}
 		if guidelines {
 			s.Guidelines = v.Guidelines
@@ -40,6 +42,51 @@ func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummar
 		out = append(out, s)
 	}
 	return out
+}
+
+// served counts the vaults speki serves.
+func served(vaults []knowledge.VaultInfo) int {
+	n := 0
+	for _, v := range vaults {
+		if v.State == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// SkippedVault is a vault you can read that a search or query didn't cover.
+type SkippedVault struct {
+	Vault string `json:"vault"`
+	State string `json:"state" jsonschema:"building: speki is indexing it for the first time; try again shortly. failed: speki couldn't open it; tell the user"`
+}
+
+func skippedVaults(skipped []knowledge.Skipped) []SkippedVault {
+	var out []SkippedVault
+	for _, s := range skipped {
+		out = append(out, SkippedVault{Vault: s.Name, State: string(s.State)})
+	}
+	return out
+}
+
+// stateText says why speki doesn't serve a vault, and what to do about it.
+func stateText(state string) string {
+	if state == string(access.StateFailed) {
+		return "failed to open; tell the user"
+	}
+	return "still building its index; try again shortly"
+}
+
+// writeSkipped writes which vaults a search or query didn't cover, so their silence isn't read as absence.
+func writeSkipped(b *strings.Builder, what string, skipped []SkippedVault) {
+	if len(skipped) == 0 {
+		return
+	}
+	parts := make([]string, len(skipped))
+	for i, s := range skipped {
+		parts[i] = fmt.Sprintf("%s (%s)", oneLine(s.Vault), stateText(s.State))
+	}
+	fmt.Fprintf(b, "Not %s, so this result says nothing about them: %s.\n", what, strings.Join(parts, ", "))
 }
 
 // GuideInput takes nothing.
@@ -70,7 +117,7 @@ func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (Guid
 	var b strings.Builder
 	b.WriteString(guide)
 	b.WriteString("\n## Your vaults\n")
-	if len(vaults) == 0 {
+	if served(vaults) == 0 {
 		b.WriteString("\nNone is ready yet. Try again in a minute.\n")
 	}
 	for _, v := range out.Vaults {
@@ -89,6 +136,10 @@ func writeVaultDetails(b *strings.Builder, v VaultSummary) {
 	}
 	if v.Description != "" {
 		fmt.Fprintf(b, "Description: %s\n", oneLine(v.Description))
+	}
+	if v.State != "" {
+		fmt.Fprintf(b, "Not available: %s\n", stateText(v.State))
+		return
 	}
 	access := "read only"
 	if v.CanWrite {
@@ -132,7 +183,7 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 		}
 		out := ListOutput{Vaults: vaultSummaries(vaults, false)}
 		var b strings.Builder
-		if len(vaults) == 0 {
+		if served(vaults) == 0 {
 			b.WriteString("No vault is ready yet. Try again in a minute.\n")
 		}
 		for _, v := range out.Vaults {
@@ -209,6 +260,7 @@ type SearchOutput struct {
 	Results   []SearchHit       `json:"results"`
 	Corrected map[string]string `json:"corrected,omitempty" jsonschema:"words found in none of your vaults, and what was searched for instead"`
 	Relaxed   bool              `json:"relaxed" jsonschema:"true when no document matched every word, and these results match only some"`
+	Skipped   []SkippedVault    `json:"skipped_vaults,omitempty" jsonschema:"vaults you can read that weren't searched because speki can't serve them right now. The results say nothing about what they hold"`
 }
 
 func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (SearchOutput, string, error) {
@@ -223,8 +275,14 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 	if err != nil {
 		return SearchOutput{}, "", err
 	}
-	out := SearchOutput{Results: make([]SearchHit, 0, len(res.Hits)), Corrected: res.Corrected, Relaxed: res.Relaxed}
+	out := SearchOutput{
+		Results:   make([]SearchHit, 0, len(res.Hits)),
+		Corrected: res.Corrected,
+		Relaxed:   res.Relaxed,
+		Skipped:   skippedVaults(res.Skipped),
+	}
 	var b strings.Builder
+	writeSkipped(&b, "searched", out.Skipped)
 	for _, word := range slices.Sorted(maps.Keys(res.Corrected)) {
 		fmt.Fprintf(&b, "No document has %q; searched for %q instead.\n", oneLine(word), oneLine(res.Corrected[word]))
 	}
@@ -554,17 +612,19 @@ type QueryInput struct {
 
 // QueryOutput is a query's result.
 type QueryOutput struct {
-	Columns   []string `json:"columns"`
-	Rows      [][]any  `json:"rows"`
-	Truncated bool     `json:"truncated" jsonschema:"true when rows were cut at 500 rows or 1 MiB"`
+	Columns   []string       `json:"columns"`
+	Rows      [][]any        `json:"rows"`
+	Truncated bool           `json:"truncated" jsonschema:"true when rows were cut at 500 rows or 1 MiB"`
+	Skipped   []SkippedVault `json:"skipped_vaults,omitempty" jsonschema:"vaults you can read that weren't queried because speki can't serve them right now. The rows say nothing about what they hold"`
 }
 
 func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (QueryOutput, string, error) {
-	r, err := s.kb.Query(ctx, g, knowledge.QueryRequest{SQL: in.SQL, Vaults: in.Vaults})
+	res, err := s.kb.Query(ctx, g, knowledge.QueryRequest{SQL: in.SQL, Vaults: in.Vaults})
 	if err != nil {
 		return QueryOutput{}, "", err
 	}
-	out := QueryOutput{Columns: r.Columns, Rows: r.Rows, Truncated: r.Truncated}
+	r := res.Rows
+	out := QueryOutput{Columns: r.Columns, Rows: r.Rows, Truncated: r.Truncated, Skipped: skippedVaults(res.Skipped)}
 	if out.Columns == nil {
 		out.Columns = []string{}
 	}
@@ -602,6 +662,7 @@ func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (Que
 		b.WriteString(", truncated: add a LIMIT or narrow the query to see the rest")
 	}
 	b.WriteString("\n")
+	writeSkipped(&b, "queried", out.Skipped)
 	return out, b.String(), nil
 }
 

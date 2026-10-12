@@ -300,7 +300,7 @@ func writable(g *access.Grant, name string) (vault.Vault, error) {
 	v, ok := g.Vault(name)
 	switch {
 	case !ok:
-		return vault.Vault{}, noVault(name)
+		return vault.Vault{}, missingVault(g, name)
 	case g.ReadOnlySession():
 		return vault.Vault{}, errorf(CodeReadOnlySession, "the user connected speki read-only. Ask them to reconnect it with write access")
 	case !g.CanWrite(v.RepoID):

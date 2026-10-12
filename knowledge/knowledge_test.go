@@ -357,6 +357,146 @@ func TestVaults(t *testing.T) {
 	}
 }
 
+var building = vault.Vault{RepoID: 4, Name: "ours/new", DefaultBranch: "main", Config: vault.Config{Title: "New"}}
+var failed = vault.Vault{RepoID: 5, Name: "ours/old", DefaultBranch: "main"}
+
+// withUnavailable gives f's user a grant that also knows building and failed, which they may read but
+// speki doesn't serve. building has a copy with matching documents, which must stay out of every answer.
+func withUnavailable(t *testing.T, f *fixture) {
+	t.Helper()
+	f.copies[building.RepoID] = newCopy(t, map[string]string{"zeppelin.md": "# Zeppelin\n\nNew zeppelin facts.\n"})
+	f.grant = access.NewGrant(f.grant.User(), []vault.Vault{ours, shared}, []int64{1},
+		access.Unavailable{Vault: failed, State: access.StateFailed},
+		access.Unavailable{Vault: building, State: access.StateBuilding},
+	)
+}
+
+func TestUnavailableVaultsSkipped(t *testing.T) {
+	f := newFixture(t)
+	withUnavailable(t, f)
+	ctx := t.Context()
+	want := []Skipped{{Name: "ours/new", State: access.StateBuilding}, {Name: "ours/old", State: access.StateFailed}}
+
+	res, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range res.Hits {
+		if h.Source != "ours/kb" && h.Source != "ours/shared" {
+			t.Errorf("hit from a vault that isn't served: %+v", h)
+		}
+	}
+	if len(res.Hits) != 4 {
+		t.Errorf("hits = %+v", res.Hits)
+	}
+	if diff := cmp.Diff(want, res.Skipped); diff != "" {
+		t.Errorf("search skipped (-want +got):\n%s", diff)
+	}
+
+	q, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT vault, count(*) FROM documents GROUP BY vault ORDER BY vault"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(q.Rows.Rows) != "[[ours/kb 3] [ours/shared 1]]" {
+		t.Errorf("rows = %v", q.Rows.Rows)
+	}
+	if diff := cmp.Diff(want, q.Skipped); diff != "" {
+		t.Errorf("query skipped (-want +got):\n%s", diff)
+	}
+
+	// Naming vaults covers exactly those, so nothing was skipped.
+	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared"}})
+	if err != nil || res.Skipped != nil {
+		t.Errorf("named vault: skipped %v, %v", res.Skipped, err)
+	}
+	q, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/kb"}})
+	if err != nil || q.Skipped != nil {
+		t.Errorf("named vault: skipped %v, %v", q.Skipped, err)
+	}
+
+	vaults, err := f.base.Vaults(ctx, f.grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantVaults := []VaultInfo{
+		{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", CanWrite: true, Documents: 3},
+		{Name: "ours/new", Title: "New", State: access.StateBuilding},
+		{Name: "ours/old", State: access.StateFailed},
+		{Name: "ours/shared", Documents: 1},
+	}
+	if diff := cmp.Diff(wantVaults, vaults); diff != "" {
+		t.Errorf("vaults (-want +got):\n%s", diff)
+	}
+}
+
+func TestUnavailableVaultNamed(t *testing.T) {
+	f := newFixture(t)
+	withUnavailable(t, f)
+	ctx := t.Context()
+	calls := map[string]func(name string) error{
+		"list": func(name string) error {
+			_, err := f.base.List(ctx, f.grant, ListRequest{Vault: name})
+			return err
+		},
+		"search": func(name string) error {
+			_, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb", name}})
+			return err
+		},
+		"query": func(name string) error {
+			_, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{name}})
+			return err
+		},
+		"read": func(name string) error {
+			_, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: name, Path: "zeppelin.md"})
+			return err
+		},
+		"history": func(name string) error {
+			_, err := f.base.History(ctx, f.grant, HistoryRequest{Vault: name})
+			return err
+		},
+		"write": func(name string) error {
+			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: name, Path: "a.md", Content: "# A\n"})
+			return err
+		},
+		"edit": func(name string) error {
+			_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: name, Path: "zeppelin.md", OldText: "New", NewText: "Old"})
+			return err
+		},
+		"move": func(name string) error {
+			_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: name, From: "zeppelin.md", To: "z.md", Version: "x"})
+			return err
+		},
+		"delete": func(name string) error {
+			_, err := f.base.Delete(ctx, f.grant, DeleteRequest{Vault: name, Path: "zeppelin.md", Version: "x"})
+			return err
+		},
+	}
+	tests := []struct {
+		name    string
+		code    Code
+		message string
+	}{
+		{name: "OURS/new", code: CodeUnavailable, message: "unavailable: ours/new is still building its index. Try again in a minute"},
+		{name: "ours/old", code: CodeUnavailable, message: "unavailable: ours/old failed to open"},
+		{name: "ours/nothing", code: CodeNotFound, message: `not_found: there's no vault named "ours/nothing"`},
+		{name: secret.Name, code: CodeNotFound, message: `not_found: there's no vault named "ours/secret"`},
+	}
+	for tool, call := range calls {
+		for _, tt := range tests {
+			t.Run(tool+" "+tt.name, func(t *testing.T) {
+				err := call(tt.name)
+				wantCode(t, err, tt.code)
+				if !strings.HasPrefix(err.Error(), tt.message) {
+					t.Errorf("error = %q, want it to start with %q", err, tt.message)
+				}
+			})
+		}
+	}
+	if f.github.commits != 0 || f.github.repo != "" {
+		t.Error("asked GitHub about a vault that isn't served")
+	}
+}
+
 func paths(entries []index.Entry) []string {
 	var out []string
 	for _, e := range entries {
@@ -655,9 +795,9 @@ func TestVaultNames(t *testing.T) {
 	if err != nil || len(res.Hits) != 1 || res.Hits[0].Source != "ours/shared" {
 		t.Errorf("a vault named twice: %+v, %v", res.Hits, err)
 	}
-	rows, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT count(*) FROM documents", Vaults: []string{"ours/shared", "ours/shared"}})
-	if err != nil || fmt.Sprint(rows.Rows) != "[[1]]" {
-		t.Errorf("query with a vault named twice: %v, %v", rows.Rows, err)
+	qres, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT count(*) FROM documents", Vaults: []string{"ours/shared", "ours/shared"}})
+	if err != nil || fmt.Sprint(qres.Rows.Rows) != "[[1]]" {
+		t.Errorf("query with a vault named twice: %v, %v", qres.Rows.Rows, err)
 	}
 }
 
