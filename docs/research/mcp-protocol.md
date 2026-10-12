@@ -42,7 +42,7 @@ Speki never relies on a session, so the legacy path costs us nothing beyond what
 The `instructions` string is returned by `server/discover` and, for legacy clients, in the
 `initialize` result. We send the same text in both.
 
-Things worth knowing about how Claude uses it:
+How Claude uses it:
 
 - Claude Code loads only tool names and server instructions at session start, then searches for tools
   when it needs them. The instructions are what make it think of speki in the first place.
@@ -82,7 +82,7 @@ The parts that shape our design:
 - Clients send the RFC 8707 `resource` parameter. The server must check that tokens were issued for it
   and must not accept or forward tokens meant for someone else ("token passthrough").
 - Client registration, in the client's order of preference: pre-registered client, Client ID Metadata
-  Documents (CIMD), then Dynamic Client Registration (DCR). DCR is now marked deprecated but still
+  Documents (CIMD), then Dynamic Client Registration (DCR). DCR is marked deprecated but still
   common.
 - Scope step-up works through a 403 with `insufficient_scope`.
 
@@ -123,7 +123,7 @@ Two options:
 We use the official SDK. It tracks the spec, ships the resource-server half of auth, and GitHub's MCP
 server runs on it. It has no authorization-server helpers, so that part is ours either way.
 
-One thing to remember: v1.8 removed built-in `Origin` checking. We wrap the handler with
+v1.8 removed built-in `Origin` checking. We wrap the handler with
 `http.NewCrossOriginProtection` from the standard library (Go 1.25+) ourselves. That rejects cross-origin
 browser requests. It doesn't add CORS headers, which speki doesn't need: Claude's apps call MCP servers from
 their own backend.

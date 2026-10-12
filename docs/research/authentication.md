@@ -87,7 +87,7 @@ stores nothing.
 
 ### What statelessness costs
 
-These were discussed and settled:
+Tradeoffs:
 
 - OAuth 2.1 wants authorization codes to be single use. Speki's codes are sealed blobs with a 60 second
   lifetime, bound to the PKCE challenge, so a stolen code is useless without the verifier. A single
@@ -112,8 +112,8 @@ A request passes only when:
 
 Failing 2 or 3 is a 403 with a message that names the reason, but not other vaults or orgs.
 
-Membership and vault access are cached per GitHub token for 60 seconds, on each instance. Removing someone from GitHub stops their
-speki access within that window. Writes go to GitHub with the user's own token, so GitHub re-checks push
+Membership and vault access are cached per GitHub token for 60 seconds, on each instance. Removing someone from GitHub stops their speki
+access within that window. Writes go to GitHub with the user's own token, so GitHub re-checks push
 access at that moment regardless of our cache.
 
 ## Who may install the app

@@ -27,7 +27,7 @@ straight from the object store, which also means a symlink can't point anywhere.
 Updating: `fetch --depth=1` for the default branch, then diff the old and new root trees. Both trees are
 local after the fetch, so this works on a shallow clone and costs no API calls.
 
-Milestone 0 check 4 confirmed this: a depth-1 fetch on top of a shallow copy keeps the previous commit, so
+Measured: a depth-1 fetch on top of a shallow copy keeps the previous commit, so
 the tree diff works. 100 fetch and diff rounds on a 2,000-file repository took 7.5 s and left one pack file
 per fetch, which the re-clone threshold handles.
 

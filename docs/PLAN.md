@@ -307,7 +307,7 @@ Done when: the four scenarios behave as described, and the operator finished the
 - `toolchain` in `go.mod` pinned to the newest Go patch release. `govulncheck` runs on every pull request
   (today only when `go.mod` or `go.sum` change) and weekly (today monthly), so Go security releases are
   noticed when they ship.
-- The README says what speki is now.
+- The README describes what speki does.
 - Issue #25 done or closed with what's left. Its recorded `gh` responses are covered by 10.2.
 
 Done when: `go.mod` has a `toolchain` line, and the vulnerability workflow runs on every pull request and
