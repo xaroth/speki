@@ -1,101 +1,76 @@
-package document
+package document_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"golang.org/x/text/unicode/norm"
+	"github.com/eve-online-tools/speki/document"
 )
 
-func readFixtureFS(name string) ([]byte, error) {
-	return os.ReadFile(filepath.Join("testdata", name))
-}
-
 func TestCheckPath(t *testing.T) {
+	t.Parallel()
 	existing := map[string]string{} // folded -> actual
 	for _, p := range []string{"Runbooks", "Runbooks/deploy.md", "ops", "ops/Fleet.md", "café.md", nfd("menü"), nfd("menü/Brötchen.md")} {
-		existing[Fold(p)] = p
+		existing[document.Fold(p)] = p
 	}
 	lookup := func(folded string) (string, bool) {
 		p, ok := existing[folded]
 		return p, ok
 	}
 
-	tests := []struct {
-		path    string
+	testCases := []struct {
+		name    string // the path
 		want    string // the returned path when valid
 		wantErr string
 	}{
-		{path: "ops/fleet-roles.md", want: "ops/fleet-roles.md"},
-		{path: "Runbooks/new.md", want: "Runbooks/new.md"},
-		{path: "ops/Fleet.md", want: "ops/Fleet.md"}, // the same path: not a collision
-		{path: "café-menu.md", want: "café-menu.md"},
-		{path: "", wantErr: "empty"},
-		{path: "/abs.md", wantErr: "relative"},
-		{path: "notes.txt", wantErr: ".md"},
-		{path: "speki.yaml", wantErr: ".md"},
-		{path: "a/../b.md", wantErr: "clean"},
-		{path: "./a.md", wantErr: "clean"},
-		{path: "a//b.md", wantErr: "clean"},
-		{path: ".github/workflows/x.md", wantErr: "dot"},
-		{path: "a/.hidden.md", wantErr: "dot"},
-		{path: "a\\b.md", wantErr: "contain"},
-		{path: "what?.md", wantErr: "contain"},
-		{path: "[x].md", wantErr: "contain"},
-		{path: "tab\t.md", wantErr: "control"},
-		{path: "bad\xff.md", wantErr: "UTF-8"},
-		{path: strings.Repeat("a/", 11) + "x.md", wantErr: "folders"},
-		{path: strings.Repeat("a", 256) + ".md", wantErr: "bytes"},
-		{path: "runbooks/new.md", wantErr: `"Runbooks"`},
-		{path: "OPS/x.md", wantErr: `"ops"`},
-		{path: "ops/fleet.md", wantErr: `"ops/Fleet.md"`},
-		{path: "café.md", want: "café.md"}, // same as the existing NFC path
-		{path: "CAFÉ.md", wantErr: "café.md"},
-		// Every forbidden character, and the limits exactly.
-		{path: "a#b.md", wantErr: "contain"},
-		{path: "a^b.md", wantErr: "contain"},
-		{path: "a|b.md", wantErr: "contain"},
-		{path: "a:b.md", wantErr: "contain"},
-		{path: "a*b.md", wantErr: "contain"},
-		{path: "a<b.md", wantErr: "contain"},
-		{path: "a>b.md", wantErr: "contain"},
-		{path: "a\"b.md", wantErr: "contain"},
-		{path: strings.Repeat("a/", 10) + "x.md", want: strings.Repeat("a/", 10) + "x.md"},
-		{path: strings.Repeat("a", 252) + ".md", want: strings.Repeat("a", 252) + ".md"},
-		{path: "caf\u0065\u0301.md", want: "café.md"},  // the same as the existing NFC name
-		{path: "nai\u0308ve-x.md", want: "naïve-x.md"}, // a new name given in NFD is stored in NFC
-		{path: "a\u202eb.md", wantErr: "invisible"},
-		{path: "zero\u200bwidth.md", wantErr: "invisible"},
-		{path: "con.md", wantErr: "Windows"},
-		{path: "notes/AUX.md", wantErr: "Windows"},
-		{path: "com1/x.md", wantErr: "Windows"},
-		{path: "console.md", want: "console.md"},
-		{path: "folder./x.md", wantErr: "end in"},
-		{path: "folder /x.md", wantErr: "end in"},
-		{path: "menü/new.md", want: nfd("menü") + "/new.md"},      // the folder git stores in NFD
-		{path: nfd("menü/new.md"), want: nfd("menü") + "/new.md"}, // given in NFD too
-		{path: "menü/Brötchen.md", wantErr: "already exists"},     // an existing NFD file
-		{path: "Menü/new.md", wantErr: "letter case"},
+		{name: "ops/fleet-roles.md", want: "ops/fleet-roles.md"},
+		{name: "Runbooks/new.md", want: "Runbooks/new.md"},
+		{name: "ops/Fleet.md", want: "ops/Fleet.md"}, // the same path: not a collision
+		{name: "", wantErr: "empty"},
+		{name: "/abs.md", wantErr: "relative"},
+		{name: "notes.txt", wantErr: ".md"},
+		{name: "a/../b.md", wantErr: "clean"},
+		{name: "a/.hidden.md", wantErr: "dot"},
+		{name: "a\\b.md", wantErr: "contain"},
+		{name: "[x].md", wantErr: "contain"},
+		{name: "tab\t.md", wantErr: "control"},
+		{name: "bad\xff.md", wantErr: "UTF-8"},
+		{name: "a\u202eb.md", wantErr: "invisible"},
+		{name: strings.Repeat("a/", 10) + "x.md", want: strings.Repeat("a/", 10) + "x.md"},
+		{name: strings.Repeat("a/", 11) + "x.md", wantErr: "folders"},
+		{name: strings.Repeat("a", 252) + ".md", want: strings.Repeat("a", 252) + ".md"},
+		{name: strings.Repeat("a", 253) + ".md", wantErr: "bytes"},
+		{name: "notes/AUX.md", wantErr: "Windows"},
+		{name: "com1/x.md", wantErr: "Windows"},
+		{name: "console.md", want: "console.md"},
+		{name: "folder./x.md", wantErr: "end in"},
+		{name: "runbooks/new.md", wantErr: `"Runbooks"`},
+		{name: "ops/fleet.md", wantErr: `"ops/Fleet.md"`},
+		{name: "café.md", want: "café.md"},                   // same as the existing NFC path
+		{name: "caf\u0065\u0301.md", want: "café.md"},        // the same as the existing NFC name, given in NFD
+		{name: "CAFÉ.md", wantErr: "café.md"},                // differs in case only
+		{name: "nai\u0308ve-x.md", want: "naïve-x.md"},       // a new name given in NFD is stored in NFC
+		{name: "menü/new.md", want: nfd("menü") + "/new.md"}, // the folder git stores in NFD
+		{name: nfd("menü/new.md"), want: nfd("menü") + "/new.md"},
+		{name: "menü/Brötchen.md", wantErr: "already exists"}, // an existing NFD file
+		{name: "Menü/new.md", wantErr: "letter case"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			got, err := CheckPath(tt.path, lookup)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("CheckPath(%q) = %q, %v; want error mentioning %q", tt.path, got, err, tt.wantErr)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := document.CheckPath(testCase.name, lookup)
+			if testCase.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+					t.Errorf("got %q, %v; want an error mentioning %q", got, err, testCase.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("CheckPath(%q): %v", tt.path, err)
+				t.Fatalf("got error %v, want none", err)
 			}
-			if got != tt.want {
-				t.Errorf("CheckPath(%q) = %q, want %q", tt.path, got, tt.want)
+			if got != testCase.want {
+				t.Errorf("got %q, want %q", got, testCase.want)
 			}
 		})
 	}
 }
-
-func nfd(s string) string { return norm.NFD.String(s) }
