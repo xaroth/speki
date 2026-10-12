@@ -220,7 +220,9 @@ A broken document (see [index.md](index.md)) can't be read through speki, so no 
 content: `read`, `write` (creating or replacing), `edit` and `move` on it answer `broken`. `delete` with
 its current version is allowed, so an agent can clear out a file that was never meant to be a document.
 One write runs at a time per vault on an instance; between instances, the expected head keeps commits
-from overwriting each other.
+from overwriting each other. A write waits at most 15 seconds for the one before it, then answers
+`unavailable` ("another change ... is still being committed"), well within the request's 50 second
+deadline.
 
 When GitHub's answer to a commit is lost (a dropped connection, a timeout, a 5xx), the commit may have
 landed anyway. Every commit carries a random `Speki-Request:` trailer, so before reporting a failure,
@@ -236,7 +238,8 @@ passing `version` to `edit` turns such a retry into a `conflict`.
 Syncs started for a write, before or after the commit, wait at most 10 seconds, and only apply changes.
 A full rebuild or a fresh clone is left to the poller: after a commit, the write answers with
 `index_pending`; before one, it answers `unavailable` ("rebuilding its index"). The sync after a commit
-carries on if the client goes away, for at most 10 seconds.
+and the notice run as background work: they carry on if the client goes away or the request's deadline
+comes, for at most 10 and 3 seconds. A stopping service ends the sync, and waits for the notice.
 
 Writes add a pack file each without the poller needing to sync, so the poller also compacts a copy whose
 head check found nothing new. If a commit lands during that fresh clone, the new copy lacks the index's
@@ -250,6 +253,9 @@ After a successful commit, `knowledge`:
    seconds
 3. publishes `{repo id, commit}` on the store's change channel (a no-op with the in-memory store)
 4. returns the version, the commit SHA, and `index_pending: true` if step 2 timed out
+
+Steps 2 and 3 run in the background. The answer waits for them, unless the request ends first: then it's
+the commit with `index_pending: true` straight away, since the commit landed whatever happens next.
 
 ## Change notices between instances
 

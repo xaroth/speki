@@ -24,6 +24,8 @@ const (
 	commitAttempts = 3
 	// syncWait is how long a change waits for the index to catch up with its commit.
 	syncWait = 10 * time.Second
+	// writeLockWait is how long a change waits for the one before it on the same vault.
+	writeLockWait = 15 * time.Second
 	// maxHeadline is the longest commit headline speki writes, in bytes.
 	maxHeadline = 200
 	// noticeTimeout bounds telling other instances about a commit.
@@ -478,17 +480,22 @@ type plan struct {
 	base       index.Document // the existing document the change replaces, moves or deletes, if any
 }
 
-// change runs one change: it checks the user may write, takes the vault's write lock, prepares the commit
-// against the index's head, and commits it. When the agent's version is stale it syncs once and looks
-// again; when the branch moved, it syncs and starts over, up to commitAttempts times. After the commit it
-// waits for the index to catch up, up to syncWait.
+// change runs one change: it checks the user may write, takes the vault's write lock (waiting up to
+// lockWait), prepares the commit against the index's head, and commits it. When the agent's version is
+// stale it syncs once and looks again; when the branch moved, it syncs and starts over, up to
+// commitAttempts times. After the commit it waits for the index to catch up, up to syncWait.
 func (b *Base) change(ctx context.Context, g *access.Grant, name, message string, prepare func(context.Context, state) (plan, error)) (Result, error) {
 	v, err := writable(g, name)
 	if err != nil {
 		return Result{}, err
 	}
-	unlock, err := b.writes.lock(ctx, v.RepoID)
+	lctx, cancel := context.WithTimeout(ctx, b.lockWait)
+	unlock, err := b.writes.lock(lctx, v.RepoID)
+	cancel()
 	if err != nil {
+		if ctx.Err() == nil { // the cap ran out, not the request
+			return Result{}, errorf(CodeUnavailable, "another change to %s is still being committed. Try again in a few seconds", v.Name)
+		}
 		return Result{}, err
 	}
 	defer unlock()
@@ -607,20 +614,38 @@ func (b *Base) syncNow(ctx context.Context, repoID int64) error {
 }
 
 // afterCommit waits for the index to catch up with a landed commit and tells other instances about it.
-// It finishes even if the client went away.
+// That work outlives the request, until Stop; the answer stops waiting for it when ctx ends, since the
+// commit landed whatever happens next.
 func (b *Base) afterCommit(ctx context.Context, v vault.Vault, p plan, sha string) Result {
-	ctx = context.WithoutCancel(ctx)
-	res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom}
-	err := b.syncNow(ctx, v.RepoID)
-	if err != nil {
-		b.logger.WarnContext(ctx, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
+	res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom, IndexPending: true}
+	indexed := make(chan bool, 1)
+	work, cancel := context.WithCancel(context.WithoutCancel(ctx)) // the request's values, Stop's end
+	stop := context.AfterFunc(b.after, cancel)
+	started := b.goAfter(func() {
+		defer cancel()
+		defer stop()
+		err := b.syncNow(work, v.RepoID)
+		if err != nil {
+			b.logger.WarnContext(work, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
+		}
+		ok := err == nil && b.indexed(work, v.RepoID, p.path, p.version)
+		nctx, ncancel := context.WithTimeout(context.WithoutCancel(work), noticeTimeout)
+		defer ncancel()
+		err = b.notices.Publish(nctx, v.RepoID, sha)
+		if err != nil {
+			b.logger.WarnContext(work, "telling other instances about a commit failed", "vault", v.Name, "err", err)
+		}
+		indexed <- ok
+	})
+	if !started { // speki is stopping: the pollers pick the commit up
+		stop()
+		cancel()
+		return res
 	}
-	res.IndexPending = err != nil || !b.indexed(ctx, v.RepoID, p.path, p.version)
-	nctx, cancel := context.WithTimeout(ctx, noticeTimeout)
-	defer cancel()
-	err = b.notices.Publish(nctx, v.RepoID, sha)
-	if err != nil {
-		b.logger.WarnContext(ctx, "telling other instances about a commit failed", "vault", v.Name, "err", err)
+	select {
+	case ok := <-indexed:
+		res.IndexPending = !ok
+	case <-ctx.Done():
 	}
 	return res
 }

@@ -166,7 +166,9 @@ conflict: services/esi-proxy.md changed since you read it. Current version:
 The code comes first, then a message that says what to do next. Error results carry no structured content,
 because it wouldn't match the tool's output schema.
 
-Anything that isn't a `*knowledge.Error` is logged and returned as `unavailable`, with the request ID in the
+A call that runs out of the request's 50 second deadline returns `timeout`, with the request ID; after a
+change, it tells the agent to read the document before retrying, as the change may have landed. Anything
+else that isn't a `*knowledge.Error` is logged and returned as `unavailable`, with the request ID in the
 message so an operator can find it.
 
 ## Limits

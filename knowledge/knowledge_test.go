@@ -256,6 +256,7 @@ type fakeVaults struct {
 	f       *fixture
 	syncs   atomic.Int32
 	syncErr error
+	hold    chan struct{} // when set, Sync waits for it to close or ctx to end
 }
 
 func (v *fakeVaults) Copy(id int64) (Copy, bool) {
@@ -275,8 +276,15 @@ func (v *fakeVaults) Copy(id int64) (Copy, bool) {
 	return c, true
 }
 
-func (v *fakeVaults) Sync(_ context.Context, id int64) error {
+func (v *fakeVaults) Sync(ctx context.Context, id int64) error {
 	v.syncs.Add(1)
+	if v.hold != nil {
+		select {
+		case <-v.hold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if v.syncErr != nil {
 		return v.syncErr
 	}

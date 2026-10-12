@@ -485,6 +485,34 @@ func TestHandleErrors(t *testing.T) {
 	if last := lines[len(lines)-1]; !strings.Contains(last, "outcome=canceled") {
 		t.Errorf("a canceled call is logged as %q", last)
 	}
+
+	// Out of the request's time: the agent hears so, not a dropped connection.
+	expired, cancel := context.WithDeadline(reqCtx, time.Now())
+	defer cancel()
+	if err := run(expired, context.DeadlineExceeded); err == nil || !strings.HasPrefix(err.Error(), "timeout: ") || !strings.Contains(err.Error(), "Request ID: test-id") {
+		t.Errorf("a call out of time = %v", err)
+	}
+}
+
+// deadlineKB records the deadline its write ran under.
+type deadlineKB struct {
+	fakeKB
+	deadline time.Time
+}
+
+func (d *deadlineKB) Write(ctx context.Context, g *access.Grant, req knowledge.WriteRequest) (knowledge.Result, error) {
+	d.deadline, _ = ctx.Deadline()
+	return d.fakeKB.Write(ctx, g, req)
+}
+
+func TestToolsRunUnderTheRequestDeadline(t *testing.T) {
+	kb := &deadlineKB{}
+	cs := connect(t, kb)
+	start := time.Now()
+	call(t, cs, "write", map[string]any{"vault": "ours/kb", "path": "a.md", "content": "# A\n"})
+	if kb.deadline.Before(start.Add(requestTimeout)) || kb.deadline.After(time.Now().Add(requestTimeout)) {
+		t.Errorf("write ran with deadline %v, want %s after the request started at %v", kb.deadline, requestTimeout, start)
+	}
 }
 
 func TestToolCallsAreLogged(t *testing.T) {

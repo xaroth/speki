@@ -31,9 +31,18 @@ import (
 	"github.com/eve-online-tools/speki/vault"
 )
 
-// shutdownTimeout is how long a stopping service takes at most: background work, then running requests.
-// It's under Kubernetes' default grace period of 30 seconds.
-const shutdownTimeout = 25 * time.Second
+// A stopping service drains running requests, then stops background work, each on its own budget, so
+// work that ignores stop can't take time from requests. Together they stay under Kubernetes' default grace
+// period of 30 seconds.
+const (
+	// drainTimeout is how long running requests get to finish before their connections are cut.
+	drainTimeout = 15 * time.Second
+	// handlerWait is how long handlers still running after their connections were cut get to return.
+	// Components stay open until they have.
+	handlerWait = 3 * time.Second
+	// backgroundTimeout is how long polling, notices and the work after commits get to stop.
+	backgroundTimeout = 5 * time.Second
+)
 
 // Service is one running speki.
 type Service struct {
@@ -45,6 +54,7 @@ type Service struct {
 	store    sharedStore
 	auth     *oauth.Server
 	resolver *access.Resolver
+	kb       *knowledge.Base
 	mcp      *mcpserver.Server
 	ready    atomic.Bool // read by /readyz; set through markReady and markStopping
 	readyMu  sync.Mutex
@@ -59,8 +69,14 @@ type Service struct {
 	internalAddr net.Addr
 	// discovered is closed after the first discovery round, successful or not.
 	discovered chan struct{}
-	// shutdownTimeout is a field so tests can shorten it.
-	shutdownTimeout time.Duration
+	// handlers counts running HTTP handlers, which may outlive their connections.
+	handlers sync.WaitGroup
+	// background is the work Run starts besides serving: discovery, polling and notices.
+	background sync.WaitGroup
+	// Fields so tests can shorten them.
+	drainTimeout      time.Duration
+	handlerWait       time.Duration
+	backgroundTimeout time.Duration
 }
 
 func (s *Service) closeComponents() error {
@@ -187,11 +203,14 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		store:      shared,
 		auth:       auth,
 		resolver:   resolver,
+		kb:         kb,
 		mcp:        mcp,
 		started:    make(chan struct{}),
 		discovered: make(chan struct{}),
 
-		shutdownTimeout: shutdownTimeout,
+		drainTimeout:      drainTimeout,
+		handlerWait:       handlerWait,
+		backgroundTimeout: backgroundTimeout,
 	}, nil
 }
 
@@ -243,35 +262,22 @@ func (s *Service) Run(ctx context.Context) error {
 		s.logger.ErrorContext(ctx, "restoring vaults from disk failed", "err", err)
 	}
 
-	// Background work stops before the servers do, so in-flight requests still see open vaults.
 	work, stopWork := context.WithCancel(gctx)
-	var background sync.WaitGroup
-	background.Go(func() { s.discover(work) })
-	background.Go(func() { s.library.Run(work, s.cfg.Sync.PollInterval) })
-	background.Go(func() { s.library.FollowNotices(work, s.store) })
+	s.background.Go(func() { s.discover(work) })
+	s.background.Go(func() { s.library.Run(work, s.cfg.Sync.PollInterval) })
+	s.background.Go(func() { s.library.FollowNotices(work, s.store) })
 
 	g.Go(func() error {
 		<-gctx.Done()
 		s.markStopping()
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.shutdownTimeout)
+		stopped := context.WithoutCancel(ctx)
+
+		// Running requests finish first, with vaults still open and polled. When their time runs out,
+		// their connections are cut: a routine stop, not a failure.
+		drainCtx, cancel := context.WithTimeout(stopped, s.drainTimeout)
 		defer cancel()
-
-		stopWork()
-		stopped := make(chan struct{})
-		go func() {
-			background.Wait()
-			close(stopped)
-		}()
-		select {
-		case <-stopped:
-		case <-shutdownCtx.Done(): // the process is about to end; the rest of the work goes with it
-			s.logger.WarnContext(ctx, "background work didn't stop in time")
-		}
-
-		// Running requests get the rest of the time. When it runs out, their connections are cut:
-		// a routine stop, not a failure.
 		for _, srv := range []*http.Server{publicSrv, internalSrv} {
-			err := srv.Shutdown(shutdownCtx)
+			err := srv.Shutdown(drainCtx)
 			if errors.Is(err, context.DeadlineExceeded) {
 				s.logger.WarnContext(ctx, "requests still running at shutdown; closing their connections")
 				err = srv.Close()
@@ -280,12 +286,58 @@ func (s *Service) Run(ctx context.Context) error {
 				s.logger.WarnContext(ctx, "stopping a server failed", "err", err)
 			}
 		}
+		// Close doesn't wait for handlers, and closing components under one would fail its request.
+		hctx, cancel := context.WithTimeout(stopped, s.handlerWait)
+		defer cancel()
+		handlersDone := waitFor(hctx, &s.handlers)
+
+		bgCtx, cancel := context.WithTimeout(stopped, s.backgroundTimeout)
+		defer cancel()
+		stopWork()
+		err := s.kb.Stop(bgCtx)
+		if err != nil {
+			s.logger.WarnContext(ctx, "work after commits didn't finish in time")
+		}
+		if !waitFor(bgCtx, &s.background) {
+			// The process is about to end; the rest of the work goes with it.
+			s.logger.WarnContext(ctx, "background work didn't stop in time")
+		}
+
+		if !handlersDone {
+			s.logger.WarnContext(ctx, "requests still running after their connections were cut; leaving components open")
+			return nil
+		}
 		return s.closeComponents()
 	})
 
 	err = g.Wait()
 	s.logger.InfoContext(ctx, "speki stopped")
 	return err
+}
+
+// waitFor waits for wg until ctx ends, and reports whether it finished.
+func waitFor(ctx context.Context, wg *sync.WaitGroup) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// track counts h's running handlers in s.handlers. The go-sdk's stateless handler returns only once its
+// tool calls have.
+func (s *Service) track(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.Add(1)
+		defer s.handlers.Done()
+		h.ServeHTTP(w, r)
+	})
 }
 
 // discover finds the allowed accounts, then keeps the vault registry and the library up to date. The
@@ -363,7 +415,7 @@ func (s *Service) publicHandler() http.Handler {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	return telemetry.RequestID(telemetry.Trace(mux))
+	return s.track(telemetry.RequestID(telemetry.Trace(mux)))
 }
 
 // whenReady answers 503 until the service is ready, and again once it's stopping, so a client that
@@ -385,7 +437,7 @@ func (s *Service) internalHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}))
 	mux.HandleFunc("GET /status", s.status)
-	return mux
+	return s.track(mux)
 }
 
 type statusPage struct {
@@ -428,14 +480,16 @@ func serve(srv *http.Server, ln net.Listener) error {
 	return err
 }
 
-// newServer's WriteTimeout leaves room for access.Resolver's 30 second wait for vaults being built. The
-// /mcp stack gives the body its own read deadline after that wait.
+// newServer's WriteTimeout is above the /mcp stack's 50 second request deadline, which includes
+// access.Resolver's wait for vaults being built, with room for a change still looking for a commit whose
+// answer was lost when the deadline came. The /mcp stack gives the body its own read deadline after the
+// wait.
 func newServer(h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      90 * time.Second,
+		WriteTimeout:      75 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 }

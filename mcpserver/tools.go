@@ -162,11 +162,14 @@ func (s *Server) addTools() {
 // toolFunc returns the structured result and its text rendering.
 type toolFunc[In, Out any] func(ctx context.Context, g *access.Grant, in In) (Out, string, error)
 
-// handle adapts a toolFunc to the go-sdk. A *knowledge.Error is shown as is; anything else is logged
-// and shown as unavailable with the request ID, so an operator can find the log line.
+// handle adapts a toolFunc to the go-sdk. A *knowledge.Error is shown as is; a call that ran out of the
+// request's time is a timeout; anything else is logged and shown as unavailable with the request ID, so an
+// operator can find the log line.
 func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		start := time.Now()
+		ctx, cancel := withRequestDeadline(ctx)
+		defer cancel()
 		ctx, span := telemetry.Tracer().Start(ctx, "tool "+name)
 		defer span.End()
 		var zero Out
@@ -185,6 +188,10 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 			if kerr.Code == knowledge.CodeUnavailable { // every unavailable carries the request ID
 				err = fmt.Errorf("%w. Request ID: %s", kerr, telemetry.RequestIDFrom(ctx))
 			}
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			outcome = string(knowledge.CodeTimeout)
+			s.logger.WarnContext(ctx, "tool ran out of time", "tool", name, "login", g.User().Login, "err", err)
+			err = fmt.Errorf("timeout: the request ran out of time. Try again; after a change, read the document first, as the change may have landed. Request ID: %s", telemetry.RequestIDFrom(ctx))
 		case ctx.Err() != nil: // the client went away or gave up
 			outcome = "canceled"
 		default:
