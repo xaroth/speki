@@ -175,9 +175,10 @@ func (x *Index) LinkedFrom(ctx context.Context, path string) ([]string, error) {
 		FROM links l JOIN documents d ON d.id = l.doc_id
 		WHERE d.path != ? AND (
 			(l.kind != 'wikilink' AND l.candidate = ? AND ? = (
-				SELECT k.path FROM documents k WHERE k.key = ? ORDER BY k.path LIMIT 1))
+				SELECT k.path FROM documents k WHERE k.key = ? ORDER BY k.status = 'broken', k.path LIMIT 1))
 			OR (l.kind = 'wikilink' AND l.candidate = ? AND ? = (
-				SELECT w.path FROM documents w WHERE w.name = ? ORDER BY length(w.key), w.path LIMIT 1))
+				SELECT w.path FROM documents w WHERE w.name = ?
+				ORDER BY w.status = 'broken', length(w.key), w.path LIMIT 1))
 		)
 		ORDER BY d.path`, path, key, path, key, name, path, name)
 	if err != nil {

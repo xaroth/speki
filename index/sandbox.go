@@ -242,7 +242,8 @@ func viewSQL(sources []Source) []string {
 			return "SELECT " + vault + " AS vault, d.path, h.level, h.text, h.line FROM " + db + ".headings h JOIN " + db + ".documents d ON d.id = h.doc_id"
 		}),
 		"CREATE TEMP VIEW fts AS " + arms(func(db, vault string) string {
-			return "SELECT " + vault + " AS vault, d.path, f.title, f.aliases, f.tags, f.description, f.headings, f.body FROM " + db + ".fts f JOIN " + db + ".documents d ON d.id = f.rowid"
+			// Without a MATCH, FTS5 reads every row of documents, broken ones included.
+			return "SELECT " + vault + " AS vault, d.path, f.title, f.aliases, f.tags, f.description, f.headings, f.body FROM " + db + ".fts f JOIN " + db + ".documents d ON d.id = f.rowid WHERE d.status != 'broken'"
 		}),
 	}
 }

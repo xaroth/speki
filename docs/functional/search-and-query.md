@@ -100,7 +100,7 @@ The full-text index, for combining text matching with other conditions. Columns:
 `aliases`, `tags`, `description`, `headings`, `body`. Match against a column, with
 [FTS5 query syntax](https://sqlite.org/fts5.html#full_text_query_syntax): `WHERE fts.body MATCH 'cache'`.
 Stemming applies, and a word ending in `*` matches as a prefix, but typo correction and ranking across
-columns don't. Those are what `search` is for.
+columns don't. Those are what `search` is for. Broken documents aren't in it.
 
 ### Examples
 
