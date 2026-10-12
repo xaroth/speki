@@ -146,7 +146,7 @@ large one. At our sizes we merge raw scores and accept the imprecision.
 
 Measured 2026-10-10 with the index as built (mattn/go-sqlite3, the schema in
 [design/index.md](../design/index.md)), on generated vaults: documents of about 5 KB with frontmatter,
-headings and links, words drawn from a 20,000-word vocabulary with a Zipf distribution. `index/measure_test.go`
+headings and links, words drawn from a 20,000-word vocabulary with a Zipf distribution. `library/index/measure_internal_test.go`
 reproduces them (`SPEKI_MEASURE=1`). Limited to 4 cores:
 
 | What | Result | Target |
@@ -184,7 +184,7 @@ match thousands of them. Real vaults should do better.
 ## Query sandbox checks
 
 Checks of the sandbox's assumptions, with go-sqlite3 1.14.52 and the
-`sqlite_fts5,sqlite_omit_load_extension` build tags. The tests in `index/sandbox_test.go` repeat each of
+`sqlite_fts5,sqlite_omit_load_extension` build tags. The tests in `library/index/sandbox_test.go` repeat each of
 these.
 
 - `ATTACH 'file:<path>?mode=ro'` works: go-sqlite3 opens connections with `SQLITE_OPEN_URI`. It works

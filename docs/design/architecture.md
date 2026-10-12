@@ -46,8 +46,9 @@ Speki keeps two kinds of state, and both can be thrown away:
 ## Packages
 
 One module, `github.com/eve-online-tools/speki`. The command lives in `cmd/speki`. Every other package is
-named after what it does and sits at the top level, except sign-in and permissions, which share the `auth`
-folder. No `internal/`, no `util`, no layers named `repository`.
+named after what it does and sits at the top level, with two exceptions: sign-in and permissions share the
+`auth` folder, and `gitsync` and `index` sit under `library`, which builds and syncs them. No `internal/`,
+no `util`, no layers named `repository`.
 
 | Package | Owns | Imports from speki |
 |---|---|---|
@@ -59,8 +60,8 @@ folder. No `internal/`, no `util`, no layers named `repository`.
 | `gh` | GitHub API: app JWT, installation tokens, user OAuth, user and installation lookups, commits, history | |
 | `document` | Parsing and writing documents: frontmatter, core fields, validation, links, headings, path rules | |
 | `vault` | The `Vault` type, `speki.yaml` parsing, the registry of current vaults and its discovery loop | `gh` |
-| `gitsync` | A shallow git copy of one repository: clone, fetch, tree diff, blobs | `document` |
-| `index` | One SQLite index file: schema, build, apply changes, search, listing, and the query sandbox over several index files | `document` |
+| `library/gitsync` | A shallow git copy of one repository: clone, fetch, tree diff, blobs | `document` |
+| `library/index` | One SQLite index file: schema, build, apply changes, search, listing, and the query sandbox over several index files | `document` |
 | `library` | The local copy of every vault (a `gitsync` mirror plus an `index`), keeping them in step with GitHub: the poll loop, sync locks, syncing after change notices | `vault`, `gitsync`, `index`, `gh` |
 | `auth/access` | Turning a signed-in user into a `Grant`: org gate, readable and writable vaults, caching | `gh`, `vault` |
 | `auth/oauth` | Authorization server endpoints, consent page, speki tokens, bearer token check | `gh`, `seal` |

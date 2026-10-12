@@ -255,12 +255,12 @@ With 10.2 done as well, issue #23 closes: checks 3 and 4 are already answered.
 
 ### 10.4 Sandbox review
 
-Milestone 7's last condition. Someone who didn't write `index/sandbox.go` reviews it with
+Milestone 7's last condition. Someone who didn't write `library/index/sandbox.go` reviews it with
 [index.md](design/index.md) and [security.md](research/security.md) in hand, and tries to break it on
 staging through `query`. Scope: the authorizer, attached databases, limits (time, memory, result size),
 error scrubbing, and reaching another vault's rows or the file system.
 
-Each finding is an issue. Each fix adds the attempt to `index/sandbox_test.go`.
+Each finding is an issue. Each fix adds the attempt to `library/index/sandbox_test.go`.
 
 Done when: the reviewer signs off that nothing is open.
 
