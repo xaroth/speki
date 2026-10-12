@@ -19,18 +19,24 @@ type SearchRequest struct {
 	Limit             int // 1 to 50; 0 means 10
 }
 
+// SearchResult is what a search found, and the vaults it didn't cover.
+type SearchResult struct {
+	index.Results
+	Skipped []Skipped // only when no vault was named
+}
+
 // Search runs a full-text search across vaults, best match first. Hits carry the vault name as Source.
-func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (index.Results, error) {
+func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (SearchResult, error) {
 	if req.Limit < 0 || req.Limit > 50 {
-		return index.Results{}, errorf(CodeInvalid, "limit must be between 1 and 50")
+		return SearchResult{}, errorf(CodeInvalid, "limit must be between 1 and 50")
 	}
 	if strings.TrimSpace(req.Query) == "" {
-		return index.Results{}, errorf(CodeInvalid, "the query is empty. Give one or more words to search for")
+		return SearchResult{}, errorf(CodeInvalid, "the query is empty. Give one or more words to search for")
 	}
 
-	sources, err := b.sources(g, req.Vaults)
+	sources, notServed, err := b.sources(g, req.Vaults)
 	if err != nil {
-		return index.Results{}, err
+		return SearchResult{}, err
 	}
 
 	prefix := strings.Trim(req.Path, "/")
@@ -45,13 +51,13 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	})
 	switch {
 	case errors.Is(err, index.ErrEmptyQuery):
-		return index.Results{}, errorf(CodeInvalid, "the query has no words to search for, only exclusions. Add a word")
+		return SearchResult{}, errorf(CodeInvalid, "the query has no words to search for, only exclusions. Add a word")
 	case errors.Is(err, index.ErrTooManyWords):
-		return index.Results{}, errorf(CodeInvalid, "%s. Search for the few words that matter most", err)
+		return SearchResult{}, errorf(CodeInvalid, "%s. Search for the few words that matter most", err)
 	case errors.Is(err, index.ErrClosed):
-		return index.Results{}, errorf(CodeNotFound, "a vault was removed during the search. Search again")
+		return SearchResult{}, errorf(CodeNotFound, "a vault was removed during the search. Search again")
 	case err != nil:
-		return index.Results{}, err
+		return SearchResult{}, err
 	}
-	return res, nil
+	return SearchResult{Results: res, Skipped: notServed}, nil
 }

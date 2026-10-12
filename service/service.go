@@ -126,6 +126,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		lib,
 		cfg.Access.RequiredOrgs,
 		shared,
+		logger,
 	)
 	auth := oauth.New(
 		oauth.Config{

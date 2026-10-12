@@ -4,10 +4,12 @@
 package knowledge
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -106,7 +108,7 @@ func (k *keyedLock) lock(ctx context.Context, key int64) (func(), error) {
 func (b *Base) open(g *access.Grant, name string) (vault.Vault, Copy, error) {
 	v, ok := g.Vault(name)
 	if !ok {
-		return vault.Vault{}, nil, noVault(name)
+		return vault.Vault{}, nil, missingVault(g, name)
 	}
 	c, ok := b.vaults.Copy(v.RepoID)
 	if !ok {
@@ -115,24 +117,38 @@ func (b *Base) open(g *access.Grant, name string) (vault.Vault, Copy, error) {
 	return v, c, nil
 }
 
+// Skipped is a vault the user may read that a request over all their vaults didn't cover, because speki
+// doesn't serve it right now.
+type Skipped struct {
+	Name  string
+	State access.State
+}
+
 // sources returns the indexes to search or query: the named vaults, each once however often it's named,
-// or every vault the user may read when names is empty.
-func (b *Base) sources(g *access.Grant, names []string) ([]index.Source, error) {
+// or every vault the user may read when names is empty, with the ones that aren't served as skipped.
+func (b *Base) sources(g *access.Grant, names []string) ([]index.Source, []Skipped, error) {
 	var sources []index.Source
 	if len(names) == 0 {
+		var notServed []Skipped
+		for _, u := range g.Unavailable() {
+			notServed = append(notServed, Skipped{Name: u.Vault.Name, State: u.State})
+		}
 		for _, v := range g.Readable() {
 			c, ok := b.vaults.Copy(v.RepoID)
-			if ok {
-				sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
+			if !ok {
+				notServed = append(notServed, Skipped{Name: v.Name, State: access.StateGone})
+				continue
 			}
+			sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
 		}
-		return sources, nil
+		slices.SortFunc(notServed, func(a, b Skipped) int { return cmp.Compare(a.Name, b.Name) })
+		return sources, notServed, nil
 	}
 	seen := map[int64]bool{}
 	for _, name := range names {
 		v, c, err := b.open(g, name)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if seen[v.RepoID] { // named twice: searched once, or every hit would come back twice
 			continue
@@ -140,7 +156,20 @@ func (b *Base) sources(g *access.Grant, names []string) ([]index.Source, error) 
 		seen[v.RepoID] = true
 		sources = append(sources, index.Source{Name: v.Name, Index: c.Index()})
 	}
-	return sources, nil
+	return sources, nil, nil
+}
+
+// missingVault is the error for a name that isn't one of the user's served vaults: unavailable when they
+// may read it but speki doesn't serve it right now, not_found otherwise.
+func missingVault(g *access.Grant, name string) *Error {
+	u, ok := g.UnavailableVault(name)
+	switch {
+	case !ok:
+		return noVault(name)
+	case u.State == access.StateFailed:
+		return errorf(CodeUnavailable, "%s failed to open, and speki keeps retrying it. Tell the user so they can ask the operator", u.Vault.Name)
+	}
+	return errorf(CodeUnavailable, "%s is still building its index. Try again in a minute", u.Vault.Name)
 }
 
 func noVault(name string) *Error {

@@ -14,16 +14,16 @@ func TestQuery(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 
-	rows, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT vault, count(*) FROM documents GROUP BY vault ORDER BY vault"})
+	res, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT vault, count(*) FROM documents GROUP BY vault ORDER BY vault"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fmt.Sprint(rows.Rows) != "[[ours/kb 3] [ours/shared 1]]" {
-		t.Errorf("rows = %v", rows.Rows)
+	if fmt.Sprint(res.Rows.Rows) != "[[ours/kb 3] [ours/shared 1]]" {
+		t.Errorf("rows = %v", res.Rows.Rows)
 	}
-	rows, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT path FROM documents", Vaults: []string{"ours/shared"}})
-	if err != nil || fmt.Sprint(rows.Rows) != "[[zeppelin.md]]" {
-		t.Errorf("one vault: %v, %v", rows.Rows, err)
+	res, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT path FROM documents", Vaults: []string{"ours/shared"}})
+	if err != nil || fmt.Sprint(res.Rows.Rows) != "[[zeppelin.md]]" {
+		t.Errorf("one vault: %v, %v", res.Rows.Rows, err)
 	}
 
 	for name, tt := range map[string]struct {

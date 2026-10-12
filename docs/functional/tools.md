@@ -7,6 +7,20 @@ Vaults are named `owner/repo`, matched without regard to letter case as on GitHu
 as GitHub spells it. Naming a vault twice is the same as naming it once. Paths are relative to the vault
 root. Wherever a tool takes `vaults`, leaving it out means every vault the user can read.
 
+## Vaults speki can't serve
+
+A vault the user can read may not be served: speki is still cloning and indexing it (`building`), it
+failed to open (`failed`; speki retries it with backoff and the operator sees why on the status page), or
+it stopped being served while the request ran (`gone`: just removed, or reopening). Such a vault is never
+searched or read, but it isn't hidden either:
+
+- `list` without `vault` shows it with its `state`.
+- `search` and `query` without `vaults` name it in `skipped_vaults`, with its state, and say so in the
+  text: `Not searched, so this result says nothing about them: ours/new (still building its index; try
+  again shortly)`. The key is left out when every readable vault was covered.
+- Naming a building or failed vault in any tool fails with `unavailable`, saying which. A vault the user
+  can't read, or one that's gone, answers `not_found`.
+
 ## Versions
 
 `read`, `search`, `list` and `query` return each document's `version`: a fingerprint of its content (the
@@ -40,12 +54,13 @@ A failed tool call returns an error text that starts with a code, then says what
 | `too_large` | Over a limit. Says which one and how to stay under it |
 | `timeout` | A query ran longer than 3 seconds |
 | `rate_limited` | GitHub asked speki to slow down during a write. Says how long to wait. Speki's own per-user limit answers with HTTP 429 instead, before any tool runs |
-| `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, or the vault is rebuilding its index. Says which, with a request ID for the operator |
+| `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, the vault is rebuilding its index, or the named vault is still building its first index or failed to open. Says which, with a request ID for the operator |
 
 A user who isn't allowed in at all (not in a required organisation, or no vaults) doesn't get as far as a
 tool. Their client gets an HTTP 403 with the reason. A user whose vaults are still being cloned or
 indexed, or failed to open, gets an HTTP 503 with `Retry-After` instead
-([access.md](access.md#who-gets-in)).
+([access.md](access.md#who-gets-in)). A user who can read at least one served vault gets in, and sees
+the others as described in [Vaults speki can't serve](#vaults-speki-cant-serve).
 
 ## guide
 
@@ -59,13 +74,15 @@ description, guidelines and whether the user can write to it.
 
 ## list
 
-Without `vault`: the user's vaults.
+Without `vault`: the user's vaults, sorted by name. One speki can't serve right now has a `state`,
+`building`, `failed` or `gone`, and no documents, guidelines or write access.
 
 ```json
 { "vaults": [
   { "vault": "eve-online-tools/kb", "title": "Infrastructure knowledge",
     "description": "How our services are deployed and operated...",
-    "can_write": true, "documents": 412 }
+    "can_write": true, "documents": 412 },
+  { "vault": "eve-online-tools/new", "can_write": false, "documents": 0, "state": "building" }
 ] }
 ```
 
@@ -120,11 +137,13 @@ Search is forgiving. "configuring" finds "configured", "kubrenetes" finds "kuber
     "snippet": "... the proxy **caches** ESI responses for ...", "score": 12.4 }
 ],
   "corrected": { "kubrenetes": "kubernetes" },
-  "relaxed": false }
+  "relaxed": false,
+  "skipped_vaults": [{ "vault": "eve-online-tools/new", "state": "building" }] }
 ```
 
 `corrected` lists words speki couldn't find and what it searched for instead. `relaxed` is true when no
-document matched all words and the results match only some of them.
+document matched all words and the results match only some of them. `skipped_vaults` lists the readable
+vaults that weren't searched because speki can't serve them, when `vaults` was left out.
 
 ## schema
 
@@ -150,6 +169,9 @@ A user who can read more than 10 vaults has to name the ones to query.
 
 Limits: 500 rows, 1 MiB of result, 3 seconds, one query per user at a time. Hitting the row or size limit
 sets `truncated`. Hitting the time limit is a `timeout` error.
+
+Like `search`, a query without `vaults` lists the readable vaults it didn't cover in `skipped_vaults`.
+Only served vaults count toward the 10.
 
 ## read
 

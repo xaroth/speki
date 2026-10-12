@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -51,18 +52,41 @@ type User struct {
 	Write  bool   // signed in with write access
 }
 
-// Grant is what one user may do.
-type Grant struct {
-	user     User
-	readable []vault.Vault // sorted by name
-	writable map[int64]bool
+// State says why a vault the user may read isn't served.
+type State string
+
+// The states of vaults the user may read that aren't served.
+const (
+	StateBuilding State = "building" // being cloned and indexed for the first time
+	StateFailed   State = "failed"   // failed to open; speki retries it with backoff
+	StateGone     State = "gone"     // served when the grant was made, but not any more: removed, or reopening
+)
+
+// Unavailable is a vault the user may read that speki doesn't serve right now.
+type Unavailable struct {
+	Vault vault.Vault
+	State State
 }
 
-// NewGrant returns a grant for u to read readable and write the vaults in writable. Resolver makes the
-// real ones; tests make their own.
-func NewGrant(u User, readable []vault.Vault, writable []int64) *Grant {
-	g := &Grant{user: u, readable: slices.Clone(readable), writable: make(map[int64]bool)}
+// Grant is what one user may do.
+type Grant struct {
+	user        User
+	readable    []vault.Vault // sorted by name
+	writable    map[int64]bool
+	unavailable []Unavailable // sorted by name
+}
+
+// NewGrant returns a grant for u to read readable and write the vaults in writable, and that knows u may
+// read the vaults in unavailable once they're served. Resolver makes the real ones; tests make their own.
+func NewGrant(u User, readable []vault.Vault, writable []int64, unavailable ...Unavailable) *Grant {
+	g := &Grant{
+		user:        u,
+		readable:    slices.Clone(readable),
+		writable:    make(map[int64]bool),
+		unavailable: slices.Clone(unavailable),
+	}
 	slices.SortFunc(g.readable, func(a, b vault.Vault) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(g.unavailable, func(a, b Unavailable) int { return cmp.Compare(a.Vault.Name, b.Vault.Name) })
 	if u.Write {
 		for _, id := range writable {
 			g.writable[id] = true
@@ -86,6 +110,20 @@ func (g *Grant) Vault(name string) (vault.Vault, bool) {
 		}
 	}
 	return vault.Vault{}, false
+}
+
+// Unavailable returns the vaults the user may read that aren't served, sorted by name. They're never in
+// Readable.
+func (g *Grant) Unavailable() []Unavailable { return slices.Clone(g.unavailable) }
+
+// UnavailableVault returns a vault the user may read that isn't served, by name, matched like Vault.
+func (g *Grant) UnavailableVault(name string) (Unavailable, bool) {
+	for _, u := range g.unavailable {
+		if asciiEqualFold(u.Vault.Name, name) {
+			return u, true
+		}
+	}
+	return Unavailable{}, false
 }
 
 // CanWrite reports whether the user may write to a vault.
@@ -119,6 +157,7 @@ type library interface {
 type Resolver struct {
 	github       githubAPI
 	library      library
+	logger       *slog.Logger
 	requiredOrgs []string
 	cache        cache // by GitHub token, never by user: tokens can differ in scope or be revoked
 	ttl          time.Duration
@@ -138,10 +177,17 @@ type cached struct {
 }
 
 // NewResolver returns a resolver. requiredOrgs may be empty.
-func NewResolver(github githubAPI, lib library, requiredOrgs []string, c cache) *Resolver {
+func NewResolver(
+	github githubAPI,
+	lib library,
+	requiredOrgs []string,
+	c cache,
+	logger *slog.Logger,
+) *Resolver {
 	return &Resolver{
 		github:       github,
 		library:      lib,
+		logger:       logger,
 		requiredOrgs: requiredOrgs,
 		cache:        c,
 		ttl:          5 * time.Minute,
@@ -210,8 +256,9 @@ type readDecision struct {
 	ok      bool
 }
 
-// grant returns the grant over the vaults being served. With none readable it errs with errLoading,
-// ErrVaultsFailed or ErrNoVaults, by what the user may read among the vaults that aren't served.
+// grant returns the grant over the vaults being served, with the readable ones that aren't served as
+// unavailable. With none served readable it errs with errLoading, ErrVaultsFailed or ErrNoVaults, by what
+// the user may read among the vaults that aren't served.
 func (res *resolution) grant(ctx context.Context) (*Grant, error) {
 	serving, building, failed := res.r.library.Vaults()
 	readable, err := res.readable(ctx, serving)
@@ -234,7 +281,37 @@ func (res *resolution) grant(ctx context.Context) (*Grant, error) {
 			writable = append(writable, v.RepoID)
 		}
 	}
-	return NewGrant(res.u, readable, writable), nil
+	unavailable, err := res.unavailable(ctx, building, failed)
+	if err != nil {
+		return nil, err
+	}
+	return NewGrant(res.u, readable, writable, unavailable...), nil
+}
+
+// unavailable returns the vaults among building and failed that the user may read. A user with served
+// vaults isn't turned away over a vault they can't use yet: one whose read check fails is left out,
+// unless GitHub no longer accepts the sign-in.
+func (res *resolution) unavailable(ctx context.Context, building, failed []vault.Vault) ([]Unavailable, error) {
+	var out []Unavailable
+	for _, l := range []struct {
+		vs    []vault.Vault
+		state State
+	}{{building, StateBuilding}, {failed, StateFailed}} {
+		for _, v := range l.vs {
+			ok, err := res.canRead(ctx, v)
+			if errors.Is(err, ErrUnauthorized) {
+				return nil, err
+			}
+			if err != nil {
+				res.r.logger.WarnContext(ctx, "read check for a vault that isn't served failed; leaving it out", "vault", v.Name, "err", err)
+				continue
+			}
+			if ok {
+				out = append(out, Unavailable{Vault: v, State: l.state})
+			}
+		}
+	}
+	return out, nil
 }
 
 // unserved says why the user gets no vault: errLoading for one being built, ErrVaultsFailed for one that

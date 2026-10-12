@@ -1,7 +1,9 @@
 package knowledge
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/eve-online-tools/speki/access"
@@ -19,14 +21,23 @@ type VaultInfo struct {
 	Guidelines  string
 	CanWrite    bool
 	Documents   int
+	State       access.State // why speki doesn't serve the vault right now; empty when it does
 }
 
-// Vaults returns the vaults the user may read and speki serves, sorted by name.
+// Vaults returns the vaults the user may read, sorted by name. Those speki doesn't serve right now come
+// with their state, and without documents or write access.
 func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error) {
 	var out []VaultInfo
 	for _, v := range g.Readable() {
 		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
+			out = append(out, VaultInfo{
+				Name:        v.Name,
+				Title:       v.Config.Title,
+				Description: v.Config.Description,
+				Guidelines:  v.Config.Guidelines,
+				State:       access.StateGone,
+			})
 			continue
 		}
 		stats, err := c.Index().Stats(ctx)
@@ -43,6 +54,16 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 			Documents:   stats.Documents,
 		})
 	}
+	for _, u := range g.Unavailable() {
+		out = append(out, VaultInfo{
+			Name:        u.Vault.Name,
+			Title:       u.Vault.Config.Title,
+			Description: u.Vault.Config.Description,
+			Guidelines:  u.Vault.Config.Guidelines,
+			State:       u.State,
+		})
+	}
+	slices.SortFunc(out, func(a, b VaultInfo) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
 }
 

@@ -24,7 +24,13 @@ vault's guidelines below.
 - Every word has to match. If nothing does, speki retries with any word and marks the result relaxed.
 - Matches in titles, aliases and tags count for more than matches in the body. Deprecated documents rank
   lower.
-- `list` shows a vault's folders and documents, 200 at a time. Without a vault, it lists your vaults.
+- `list` shows a vault's folders and documents, 200 at a time. Without a vault, it lists your vaults,
+  with a `state` on those speki can't serve right now: `building` (indexing it for the first time),
+  `failed` (it couldn't be opened) or `gone` (just removed or reopening).
+- `search` and `query` without `vaults` name the vaults they skipped for that reason, in
+  `skipped_vaults`. The result says nothing about those vaults: don't conclude something is
+  undocumented, and don't write a document that may duplicate one there. Try a building or gone vault
+  again in a minute, and tell the user about a failed one.
 - `query` runs read-only SQL over the vaults' metadata, links and text, for questions search can't
   answer: "runbooks not updated this year", "what links here", "documents without a description". Call
   `schema` first.
@@ -76,12 +82,14 @@ vault don't cause conflicts.
 
 ## Errors
 
-A failed call starts with a code. `read_only_session` means the user connected speki without write access,
-`no_write_access` that they may read that vault but not write to it, and `vault_read_only` that the vault only
-takes changes through pull requests: tell the user in each case. `secret_detected` means GitHub found a
-secret in the content: remove it and tell the user. `broken` means the file can't be parsed (it isn't
-UTF-8, or its frontmatter is too large): speki can't read or change it, so tell the user to fix it in git.
-Only `delete`, with the version the error gives, works on it.
+A failed call starts with a code. `unavailable` on a vault you named means speki can't serve it right
+now: it's still building its index (try again shortly) or failed to open (tell the user).
+`read_only_session` means the user connected speki without write access, `no_write_access` that they may
+read that vault but not write to it, and `vault_read_only` that the vault only takes changes through pull
+requests: tell the user in each case. `secret_detected` means GitHub found a secret in the content:
+remove it and tell the user. `broken` means the file can't be parsed (it isn't UTF-8, or its frontmatter
+is too large): speki can't read or change it, so tell the user to fix it in git. Only `delete`, with the
+version the error gives, works on it.
 
 ## Trust
 
