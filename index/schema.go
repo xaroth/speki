@@ -2,7 +2,7 @@ package index
 
 // schemaVersion changes whenever schema does. An index with another version is rebuilt; there are no
 // migrations, because rebuilding from git is always possible.
-const schemaVersion = "5"
+const schemaVersion = "1"
 
 // schema creates one vault's index, without the triggers. Documents are only ever inserted and deleted,
 // never updated.
