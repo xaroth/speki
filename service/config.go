@@ -226,8 +226,8 @@ func (c Config) validate() error {
 	if c.Sync.DiscoveryInterval < 0 {
 		errs = append(errs, errors.New("sync.discovery_interval must be positive"))
 	}
-	if c.SQLite.MemoryLimit < 128 {
-		errs = append(errs, errors.New("sqlite.memory_limit_mib must be at least 128"))
+	if c.SQLite.MemoryLimit < 128 || c.SQLite.MemoryLimit > 1<<20 {
+		errs = append(errs, errors.New("sqlite.memory_limit_mib must be between 128 and 1048576 (1 TiB)"))
 	}
 	if c.SQLite.QueryMemory <= 0 || c.SQLite.QueryMemory > c.SQLite.MemoryLimit*3/4 {
 		errs = append(errs, errors.New("sqlite.query_memory_mib must be positive and at most 3/4 of sqlite.memory_limit_mib, so searches and index builds keep some"))

@@ -68,8 +68,8 @@ func init() { SetMemoryLimits(DefaultMemoryLimit, DefaultQueryMemory) }
 // interrupted past query, which leaves the rest for search and indexing. Set them before using indexes.
 func SetMemoryLimits(limit, query int64) {
 	hardHeapLimit, queryMemoryBudget = limit<<20, query<<20
+	setHardHeapLimit(hardHeapLimit) // first: SQLite caps the soft limit at the hard limit in force
 	C.sqlite3_soft_heap_limit64(C.longlong(hardHeapLimit / 2))
-	setHardHeapLimit(hardHeapLimit)
 	setQueryMemoryBudget(queryMemoryBudget)
 }
 
@@ -83,6 +83,9 @@ var harden = sync.OnceValue(func() error {
 
 // setHardHeapLimit changes the hard limit. Tests lower it to try a query that runs into it.
 func setHardHeapLimit(n int64) { C.sqlite3_hard_heap_limit64(C.longlong(n)) }
+
+// softHeapLimit returns the soft limit in force.
+func softHeapLimit() int64 { return int64(C.sqlite3_soft_heap_limit64(-1)) }
 
 // setQueryMemoryBudget changes the sandbox budget. Tests lower it.
 func setQueryMemoryBudget(n int64) { C.spekiSetQueryBudget(C.longlong(n)) }

@@ -78,6 +78,11 @@ func TestNewRejectsBadConfig(t *testing.T) {
 			want: []string{"sqlite.query_memory_mib"},
 		},
 		{
+			name: "huge memory limit",
+			cfg:  with(func(c *Config) { c.SQLite.MemoryLimit = 1 << 44 }),
+			want: []string{"sqlite.memory_limit_mib"},
+		},
+		{
 			name: "tiny memory limit",
 			cfg:  with(func(c *Config) { c.SQLite.MemoryLimit = 64 }),
 			want: []string{"sqlite.memory_limit_mib"},
