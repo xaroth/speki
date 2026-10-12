@@ -193,6 +193,24 @@ func (g *generation) release() {
 	}
 }
 
+// acquireAll acquires the current generation of every source. Call release when done, also on error.
+func acquireAll(sources []Source) (gens []*generation, release func(), err error) {
+	gens = make([]*generation, 0, len(sources))
+	release = func() {
+		for _, g := range gens {
+			g.release()
+		}
+	}
+	for _, s := range sources {
+		g, err := s.Index.acquire()
+		if err != nil {
+			return gens, release, fmt.Errorf("%s: %w", s.Name, err)
+		}
+		gens = append(gens, g)
+	}
+	return gens, release, nil
+}
+
 // retire stops new readers and closes g once the current ones are done, deleting its file if remove is
 // set.
 func (g *generation) retire(remove bool) {
