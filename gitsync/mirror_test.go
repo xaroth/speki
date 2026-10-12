@@ -414,7 +414,6 @@ func removeObject(t *testing.T, gitDir, hash string) {
 	}
 }
 
-// treeOf returns the hash of the folder at path in commit.
 func treeOf(t *testing.T, repo *git.Repository, commit, path string) string {
 	t.Helper()
 	c, err := repo.CommitObject(plumbing.NewHash(commit))
@@ -550,7 +549,6 @@ func TestBrokenErrors(t *testing.T) {
 	}
 }
 
-// entryOf returns the tree entry at path in commit.
 func entryOf(t *testing.T, repo *git.Repository, commit, path string) *object.TreeEntry {
 	t.Helper()
 	c, err := repo.CommitObject(plumbing.NewHash(commit))

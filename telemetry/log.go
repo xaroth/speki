@@ -28,7 +28,6 @@ func redact(_ []string, a slog.Attr) slog.Attr {
 	return a
 }
 
-// requestIDHandler adds the request ID from a record's context.
 type requestIDHandler struct{ slog.Handler }
 
 func (h requestIDHandler) Handle(ctx context.Context, r slog.Record) error {
