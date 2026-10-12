@@ -14,7 +14,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/store"
 	"github.com/eve-online-tools/speki/vault"

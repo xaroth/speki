@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/mcpserver"
 	"github.com/eve-online-tools/speki/telemetry"
 	"github.com/eve-online-tools/speki/vault"

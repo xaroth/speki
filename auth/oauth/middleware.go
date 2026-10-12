@@ -10,7 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
-	"github.com/eve-online-tools/speki/seal"
+	"github.com/eve-online-tools/speki/auth/seal"
 )
 
 // Identity is who made a request, from their speki access token.

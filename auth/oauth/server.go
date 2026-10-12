@@ -14,8 +14,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
+	"github.com/eve-online-tools/speki/auth/seal"
 	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/seal"
 )
 
 // Scopes speki grants.

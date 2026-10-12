@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/oauth"
+	"github.com/eve-online-tools/speki/auth/oauth"
 )
 
 func TestServerMetadata(t *testing.T) {

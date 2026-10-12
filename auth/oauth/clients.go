@@ -19,7 +19,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/eve-online-tools/speki/seal"
+	"github.com/eve-online-tools/speki/auth/seal"
 )
 
 // client is a registered MCP client.

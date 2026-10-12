@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/gh"
 )
 
