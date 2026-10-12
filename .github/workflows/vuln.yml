@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: [go.mod, go.sum]
   schedule:
-    - cron: '0 6 1 * *'
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -19,6 +19,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: false
       - uses: arduino/setup-task@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}

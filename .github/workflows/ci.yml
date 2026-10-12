@@ -12,14 +12,29 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CGO_ENABLED: "1"
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Only the test job writes the setup-go cache, so it holds the race-built cgo artifacts.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      # golangci-lint runs govet, so there is no separate vet step.
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+
   test:
-    name: Lint and test
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -29,10 +44,6 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # golangci-lint runs govet, so there is no separate vet step.
-      - uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.14.0
       - run: task test
 
   image:
