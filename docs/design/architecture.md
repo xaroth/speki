@@ -131,7 +131,15 @@ then fail with `read_only_session`.
 5. Grant middleware: calls `access.Resolver.Resolve` and puts the `Grant` on the context. When GitHub
    rejects the user's GitHub token, it answers 401 (the client refreshes, which fails, and the user signs in
    again). When the org gate or the "at least one vault" rule fails, it answers 403 with a message saying
-   which.
+   which. When the user can read no vault being served but can read one the library is still cloning and
+   indexing, `Resolve` waits up to 30 seconds for the library to serve one, then answers 503 with
+   `Retry-After: 15`. Waiters are woken by `Library.Changed` and look again at one consistent snapshot
+   from `Library.Vaults`, reusing the read decisions they already made: no polling, no cache reads or
+   GitHub calls for vaults already decided. `Resolver.Stop`, called when the service starts stopping,
+   ends every wait. When the only readable vaults failed to open, the answer is 503 with
+   `Retry-After: 120` straight away: their retry is minutes off. After the grant, the middleware gives
+   the body a fresh 30 second read deadline, so the server's 30 second `ReadTimeout` doesn't run out
+   during a wait; its 90 second `WriteTimeout` covers the wait and the tool call.
 6. The go-sdk handler, which routes to the tool handlers.
 
 Doing steps 3 and 4 as HTTP middleware matters: inside a tool handler it's too late to answer with a

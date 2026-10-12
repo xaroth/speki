@@ -275,6 +275,80 @@ func TestFailedCloneIsReported(t *testing.T) {
 	}
 }
 
+func TestChangedFollowsState(t *testing.T) {
+	missing := kb
+	missing.Name = "ours/missing"
+	tests := []struct {
+		name  string
+		vault vault.Vault
+		done  func(*Library) []vault.Vault
+	}{
+		{name: "served", vault: kb, done: func(l *Library) []vault.Vault { s, _, _ := l.Vaults(); return s }},
+		{name: "failed", vault: missing, done: func(l *Library) []vault.Vault { _, _, f := l.Vaults(); return f }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRemote(t)
+			r.push(map[string]string{"a.md": "# A\n"})
+			l := newLibrary(t, r, t.TempDir())
+			changed := l.Changed()
+			l.Update(t.Context(), vault.Changes{Added: []vault.Vault{tt.vault}})
+			timeout := time.After(time.Minute)
+			for len(tt.done(l)) == 0 {
+				select {
+				case <-changed:
+				case <-timeout:
+					t.Fatalf("no change announced; status = %+v", l.Status())
+				}
+				changed = l.Changed()
+			}
+			l.WaitIdle()
+
+			changed = l.Changed()
+			l.Update(t.Context(), vault.Changes{})
+			select {
+			case <-changed:
+				t.Error("an update that changed nothing woke waiters")
+			default:
+			}
+		})
+	}
+}
+
+// A vault changing state while Vaults runs is in one of its lists, never in none: callers tell "not
+// served yet" from "unknown" by it.
+func TestVaultsListsEveryVaultOnce(t *testing.T) {
+	l := newLibrary(t, newRemote(t), t.TempDir())
+	v := newVault(kb, t.TempDir(), time.Now)
+	l.mu.Lock()
+	l.vaults[kb.RepoID] = v
+	l.mu.Unlock()
+
+	stop := make(chan struct{})
+	var flipping sync.WaitGroup
+	flipping.Go(func() {
+		states := []State{StateBuilding, StateServing, StateFailed}
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			v.mu.Lock()
+			v.status.State = states[i%len(states)]
+			v.mu.Unlock()
+		}
+	})
+	defer flipping.Wait()
+	defer close(stop)
+	for range 10_000 {
+		serving, building, failed := l.Vaults()
+		if n := len(serving) + len(building) + len(failed); n != 1 {
+			t.Fatalf("vault listed %d times", n)
+		}
+	}
+}
+
 func TestBranchChangeReclones(t *testing.T) {
 	r := newRemote(t)
 	r.push(map[string]string{"a.md": "# A\n\nmaster text\n"})

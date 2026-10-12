@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/time/rate"
@@ -18,6 +19,17 @@ import (
 )
 
 const maxBody = 2 << 20
+
+// Retry-After, in seconds, for a user whose vaults are still being built, and for one whose vaults failed
+// to open and are retried with backoff.
+const (
+	notReadyRetry = "15"
+	failedRetry   = "120"
+)
+
+// bodyTimeout is how long the MCP handler has to read the body once the grant is resolved. The server's
+// ReadTimeout runs from the start of the request, and resolving can wait for vaults being built.
+const bodyTimeout = 30 * time.Second
 
 // Per-user request rate: enough for an agent working quickly, not enough to hog the instance.
 const (
@@ -133,7 +145,8 @@ func GrantFrom(ctx context.Context) (*access.Grant, bool) {
 }
 
 // grant runs before the MCP handler because only here can speki still answer with a status code: 401
-// makes the client refresh or sign in again, 403 says why the user isn't allowed in.
+// makes the client refresh or sign in again, 403 says why the user isn't allowed in, 503 that their vaults
+// aren't served yet.
 func (s *Server) grant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := s.auth.User(r.Context())
@@ -149,11 +162,21 @@ func (s *Server) grant(next http.Handler) http.Handler {
 		case errors.Is(err, access.ErrNotMember), errors.Is(err, access.ErrNoVaults):
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
+		case errors.Is(err, access.ErrNotReady):
+			w.Header().Set("Retry-After", notReadyRetry)
+			http.Error(w, access.ErrNotReady.Error(), http.StatusServiceUnavailable)
+			return
+		case errors.Is(err, access.ErrVaultsFailed):
+			w.Header().Set("Retry-After", failedRetry)
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
 		case err != nil:
 			s.logger.ErrorContext(r.Context(), "resolving access failed", "login", u.Login, "err", err)
 			http.Error(w, "speki couldn't check your access with GitHub; try again", http.StatusBadGateway)
 			return
 		}
+		// Fails only where deadlines aren't supported, such as in tests: nothing to extend there.
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyTimeout))
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), grantKey{}, g)))
 	})
 }

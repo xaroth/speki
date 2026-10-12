@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -29,6 +30,17 @@ var ErrNotMember = errors.New("you aren't a member of an organisation this speki
 
 // ErrNoVaults means the user can't read any vault.
 var ErrNoVaults = errors.New("you can't read any vault on this speki")
+
+// ErrNotReady means the user can't read any vault being served yet, but may read one speki is still
+// cloning and indexing.
+var ErrNotReady = errors.New("speki is still loading your vaults; try again shortly")
+
+// ErrVaultsFailed means the only vaults the user may read failed to open. Speki retries them with backoff,
+// so asking again in a few minutes can succeed.
+var ErrVaultsFailed = errors.New("speki couldn't open your vaults and keeps retrying; try again in a few minutes")
+
+// errLoading means a resolve found only vaults being built that the user may read: worth waiting for.
+var errLoading = errors.New("readable vaults are still being built")
 
 // User is a signed-in user, from their speki token.
 type User struct {
@@ -95,15 +107,26 @@ type cache interface {
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }
 
+// library is what the resolver needs to know about speki's vaults.
+type library interface {
+	// Vaults returns every vault by state, each in exactly one list.
+	Vaults() (serving, building, failed []vault.Vault)
+	// Changed returns a channel closed when a vault is added, changed or removed, or changes state.
+	Changed() <-chan struct{}
+}
+
 // Resolver turns users into grants.
 type Resolver struct {
 	github       githubAPI
-	vaults       func() []vault.Vault // the vaults speki serves
+	library      library
 	requiredOrgs []string
 	cache        cache // by GitHub token, never by user: tokens can differ in scope or be revoked
 	ttl          time.Duration
+	wait         time.Duration // how long Resolve waits for a readable vault that's being built
 	now          func() time.Time
 	flight       singleflight.Group // one lookup per key at a time, shared by its callers
+	stopping     chan struct{}      // closed by Stop
+	stopOnce     sync.Once
 }
 
 // cached is one answer as the cache holds it. Expires is checked as well as the cache's own TTL, so a
@@ -114,45 +137,96 @@ type cached struct {
 	Expires time.Time       `json:"expires"`
 }
 
-// NewResolver returns a resolver. vaults returns the vaults speki currently serves; requiredOrgs may be
-// empty.
-func NewResolver(github githubAPI, vaults func() []vault.Vault, requiredOrgs []string, c cache) *Resolver {
+// NewResolver returns a resolver. requiredOrgs may be empty.
+func NewResolver(github githubAPI, lib library, requiredOrgs []string, c cache) *Resolver {
 	return &Resolver{
 		github:       github,
-		vaults:       vaults,
+		library:      lib,
 		requiredOrgs: requiredOrgs,
 		cache:        c,
 		ttl:          5 * time.Minute,
+		wait:         30 * time.Second,
 		now:          time.Now,
+		stopping:     make(chan struct{}),
 	}
 }
 
+// Stop ends every wait for vaults being built, now and from now on, with ErrNotReady, so a stopping
+// service isn't held up by requests that would wait.
+func (r *Resolver) Stop() { r.stopOnce.Do(func() { close(r.stopping) }) }
+
 // Resolve returns what u may do. It errs with ErrUnauthorized, ErrNotMember or ErrNoVaults when u
-// doesn't get in.
+// doesn't get in, and with ErrVaultsFailed when the only vaults u may read failed to open. When u can read
+// no vault being served but one being built, it waits for the library to serve one, and errs with
+// ErrNotReady if it doesn't in time, ctx ends or the resolver stops first.
 func (r *Resolver) Resolve(ctx context.Context, u User) (*Grant, error) {
 	repos, err := r.lookup(ctx, u.Token)
 	if err != nil {
 		return nil, err
 	}
-	var readable []vault.Vault
+	res := &resolution{r: r, u: u, repos: repos, seen: make(map[int64]readDecision)}
+	changed := r.library.Changed() // before resolving, so a change while it runs isn't missed
+	g, err := res.grant(ctx)
+	if !errors.Is(err, errLoading) {
+		return g, err
+	}
+	timeout := time.NewTimer(r.wait)
+	defer timeout.Stop()
+	for {
+		last := false
+		select {
+		case <-changed:
+		case <-timeout.C:
+			last = true // one more look: a vault served just now still counts
+		case <-r.stopping:
+			return nil, ErrNotReady
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", ErrNotReady, ctx.Err())
+		}
+		changed = r.library.Changed()
+		g, err = res.grant(ctx)
+		if !errors.Is(err, errLoading) {
+			return g, err
+		}
+		if last {
+			return nil, ErrNotReady
+		}
+	}
+}
+
+// resolution is one Resolve call: the user, what GitHub says they can see, and the read decisions made so
+// far, so a waiter that wakes up only looks at vaults that are new or whose read settings changed.
+type resolution struct {
+	r     *Resolver
+	u     User
+	repos map[int64]gh.RepoAccess
+	seen  map[int64]readDecision
+}
+
+// readDecision is whether the user may read a vault with the read settings it was decided under.
+type readDecision struct {
+	role    gh.Role
+	readers []vault.Principal
+	ok      bool
+}
+
+// grant returns the grant over the vaults being served. With none readable it errs with errLoading,
+// ErrVaultsFailed or ErrNoVaults, by what the user may read among the vaults that aren't served.
+func (res *resolution) grant(ctx context.Context) (*Grant, error) {
+	serving, building, failed := res.r.library.Vaults()
+	readable, err := res.readable(ctx, serving)
+	if err != nil {
+		return nil, err
+	}
+	if len(readable) == 0 {
+		return nil, res.unserved(ctx, building, failed)
+	}
 	var writable []int64
-	for _, v := range r.vaults() {
-		a, ok := repos[v.RepoID]
-		if !ok || a.Role < max(v.Config.ReadRole, gh.RoleRead) {
+	for _, v := range readable {
+		if res.repos[v.RepoID].Role < gh.RoleWrite || !res.u.Write {
 			continue
 		}
-		reader, err := r.listed(ctx, u, v.Config.Readers)
-		if err != nil {
-			return nil, err
-		}
-		if !reader {
-			continue
-		}
-		readable = append(readable, v)
-		if a.Role < gh.RoleWrite || !u.Write {
-			continue
-		}
-		writer, err := r.listed(ctx, u, v.Config.Writers)
+		writer, err := res.r.listed(ctx, res.u, v.Config.Writers)
 		if err != nil {
 			return nil, err
 		}
@@ -160,10 +234,62 @@ func (r *Resolver) Resolve(ctx context.Context, u User) (*Grant, error) {
 			writable = append(writable, v.RepoID)
 		}
 	}
-	if len(readable) == 0 {
-		return nil, ErrNoVaults
+	return NewGrant(res.u, readable, writable), nil
+}
+
+// unserved says why the user gets no vault: errLoading for one being built, ErrVaultsFailed for one that
+// failed to open, ErrNoVaults for none. A failed vault isn't waited for: its next retry is minutes away.
+func (res *resolution) unserved(ctx context.Context, building, failed []vault.Vault) error {
+	readable, err := res.readable(ctx, building)
+	if err != nil {
+		return err
 	}
-	return NewGrant(u, readable, writable), nil
+	if len(readable) > 0 {
+		return errLoading
+	}
+	readable, err = res.readable(ctx, failed)
+	if err != nil {
+		return err
+	}
+	if len(readable) > 0 {
+		return ErrVaultsFailed
+	}
+	return ErrNoVaults
+}
+
+// readable returns the vaults among vs that the user may read.
+func (res *resolution) readable(ctx context.Context, vs []vault.Vault) ([]vault.Vault, error) {
+	var out []vault.Vault
+	for _, v := range vs {
+		ok, err := res.canRead(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+func (res *resolution) canRead(ctx context.Context, v vault.Vault) (bool, error) {
+	c := v.Config
+	d, ok := res.seen[v.RepoID]
+	// nil readers means everyone, an empty list no one: Equal alone doesn't tell them apart.
+	if ok && d.role == c.ReadRole && (d.readers == nil) == (c.Readers == nil) && slices.Equal(d.readers, c.Readers) {
+		return d.ok, nil
+	}
+	a, ok := res.repos[v.RepoID]
+	can := ok && a.Role >= max(c.ReadRole, gh.RoleRead)
+	if can {
+		var err error
+		can, err = res.r.listed(ctx, res.u, c.Readers)
+		if err != nil {
+			return false, err
+		}
+	}
+	res.seen[v.RepoID] = readDecision{role: c.ReadRole, readers: c.Readers, ok: can}
+	return can, nil
 }
 
 // CheckMember reports whether the token's user passes the organisation gate, for sign-in.

@@ -41,14 +41,38 @@ func (l *Library) publish() {
 	}
 }
 
-// Vaults returns the vaults being served, sorted by name.
-func (l *Library) Vaults() []vault.Vault {
-	var out []vault.Vault
+// Vaults returns every vault by state, each sorted by name. It reads each vault's state once, so a vault
+// changing state meanwhile is in one of the lists, never in none. Failed vaults are retried by the poller,
+// with backoff.
+func (l *Library) Vaults() (serving, building, failed []vault.Vault) {
 	for _, v := range l.all() {
-		if v.Status().State == StateServing {
-			out = append(out, v.Info())
+		switch v.Status().State {
+		case StateServing:
+			serving = append(serving, v.Info())
+		case StateBuilding:
+			building = append(building, v.Info())
+		case StateFailed:
+			failed = append(failed, v.Info())
 		}
 	}
-	slices.SortFunc(out, func(a, b vault.Vault) int { return cmp.Compare(a.Name, b.Name) })
-	return out
+	for _, vs := range [][]vault.Vault{serving, building, failed} {
+		slices.SortFunc(vs, func(a, b vault.Vault) int { return cmp.Compare(a.Name, b.Name) })
+	}
+	return serving, building, failed
+}
+
+// Changed returns a channel that's closed the next time a vault is added, changed or removed, or changes
+// state.
+func (l *Library) Changed() <-chan struct{} {
+	l.changedMu.Lock()
+	defer l.changedMu.Unlock()
+	return l.changed
+}
+
+// notify wakes everyone waiting on Changed.
+func (l *Library) notify() {
+	l.changedMu.Lock()
+	defer l.changedMu.Unlock()
+	close(l.changed)
+	l.changed = make(chan struct{})
 }

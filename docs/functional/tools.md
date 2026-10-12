@@ -42,7 +42,9 @@ A failed tool call returns an error text that starts with a code, then says what
 | `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, or the vault is rebuilding its index. Says which, with a request ID for the operator |
 
 A user who isn't allowed in at all (not in a required organisation, or no vaults) doesn't get as far as a
-tool. Their client gets an HTTP 403 with the reason.
+tool. Their client gets an HTTP 403 with the reason. A user whose vaults are still being cloned or
+indexed, or failed to open, gets an HTTP 503 with `Retry-After` instead
+([access.md](access.md#who-gets-in)).
 
 ## guide
 
