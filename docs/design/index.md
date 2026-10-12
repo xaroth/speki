@@ -157,8 +157,8 @@ old row (cascading to tags, links and headings, and removing it from the FTS tab
 external-content delete command) and inserts the new one. A file that's unusable in itself (not UTF-8,
 frontmatter over 64 KiB) is skipped and logged with its path, and keeps its last good version in the
 index if it had one, so one bad file can't stop a vault from updating. Any other failure aborts the whole
-transaction and the next sync tries again. `meta.commit` is updated in the same transaction. Readers see the old
-state or the new one, never a mix.
+transaction and the next sync tries again. `meta.commit` is updated in the same transaction. Readers see
+the old state or the new one, never a mix.
 
 `Build` writes the next generation with `journal_mode=OFF` and `synchronous=OFF`: it inserts all rows,
 runs the three FTS `rebuild` commands and `optimize`, switches to WAL, and then becomes the current
@@ -191,10 +191,10 @@ vault's vocabulary.
 2. Correct words. For each word, ask `words_vocab` whether it exists, in the same read transaction as the
    search, so a word added by the agent's own write a moment ago counts. A word that exists in none of the
    searched vaults is replaced by the best candidate from the in-memory vocabularies: edit distance 1 for
-   words up to 5 letters, 2 for longer ones, highest document count wins. A word that matches anything by its
-   stem (`runs` where documents say `run`) isn't corrected, and quoted words never are. A trigram map over each vocabulary
-   keeps candidate lookups well under a millisecond. The in-memory vocabulary may be a moment behind, which
-   only means a brand-new word isn't suggested as a correction yet.
+   words up to 5 letters, 2 for longer ones, highest document count wins. A word that matches anything by
+   its stem (`runs` where documents say `run`) isn't corrected, and quoted words never are. A trigram map
+   over each vocabulary keeps candidate lookups well under a millisecond. The in-memory vocabulary may be
+   a moment behind, which only means a brand-new word isn't suggested as a correction yet.
 3. Build the FTS5 expression: each word quoted, the last unquoted one with `*`, phrases as phrases, joined
    with `AND`, and the exclusions as one group: `(...) NOT ("a" OR "b")`. Repeated words count once; more
    than 32 distinct words or phrases is `invalid`. Tag, status and path-prefix filters go into the SQL, not
@@ -279,7 +279,7 @@ query's own reads of `v0.documents` from FTS5's reads of the same table, since g
 the view a read comes from. That's no leak, since only the user's own vaults are attached. `schema.md`
 tells agents the views are the interface and the tables behind them may change.
 
-Memory: the same C file sets `sqlite3_soft_heap_limit64` (512 MiB), so SQLite releases cache memory under
+Memory: `index` sets `sqlite3_soft_heap_limit64` (512 MiB), so SQLite releases cache memory under
 pressure, and `sqlite3_hard_heap_limit64` (1 GiB), so an allocation past that fails with `SQLITE_NOMEM`.
 The hard limit is what stops one query from growing the process: in-memory sorts and recursive queries
 don't spill to disk, and a sort of many 90 KB rows otherwise reaches gigabytes within the time limit. A
@@ -287,19 +287,18 @@ query that hits it fails with `too_large`. Both limits are for the whole process
 below them on their own (about 40 MB at 50,000 documents), but a build that allocates while a query has
 just used up the shared budget fails with `SQLITE_NOMEM`. The build or apply then fails as a whole, the
 index stays at its commit, and the vault is synced again at the next poll: only a file that's unusable
-in itself is skipped.
-The 100 KB value and 50 column limits bound how much one row can hold before the 1 MiB
-result check sees it.
+in itself is skipped. The 100 KB value and 50 column limits bound how much one row can hold before the
+1 MiB result check sees it.
 
 Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,
 `fts_config` and the content table `documents`, and run `PRAGMA data_version`. Those are on the lists
 above. The match has to name a column (`body MATCH 'x'`): the view has no hidden column named after the
 table, so `fts MATCH 'x'` is a "no such column" error.
 
-`DEFENSIVE` mode and `trusted_schema` can't be set through mattn's Go API. A small C file in `index`
-registers an `sqlite3_auto_extension` hook that, only for connections whose main database is `:memory:`,
-calls `sqlite3_db_config` with `SQLITE_DBCONFIG_DEFENSIVE` on and `SQLITE_DBCONFIG_TRUSTED_SCHEMA` off.
-Index writers aren't affected, because `DEFENSIVE` would block the `journal_mode=OFF` builds use. The file
+`DEFENSIVE` mode and `trusted_schema` can't be set through mattn's Go API. The cgo preamble of
+`index/defensive.go` registers an `sqlite3_auto_extension` hook that, only for connections whose main
+database is `:memory:`, calls `sqlite3_db_config` with `SQLITE_DBCONFIG_DEFENSIVE` on and `SQLITE_DBCONFIG_TRUSTED_SCHEMA` off.
+Index writers aren't affected, because `DEFENSIVE` would block the `journal_mode=OFF` builds use. The preamble
 declares the few SQLite prototypes it needs itself. The symbols come from the SQLite that mattn compiles
 into the binary.
 
