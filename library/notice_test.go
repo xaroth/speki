@@ -1,73 +1,56 @@
-package library
+package library_test
 
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/eve-online-tools/speki/library"
 )
 
-func TestCoalescer(t *testing.T) {
-	tests := []struct {
-		name   string
-		during int  // notices while the first sync runs
-		cancel bool // ctx ends during the first sync
-		want   int32
-	}{
-		{name: "one notice", want: 1},
-		{name: "a notice during the sync", during: 1, want: 2},
-		{name: "several notices during the sync", during: 3, want: 2},
-		{name: "stopped during the sync", during: 1, cancel: true, want: 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			var c coalescer
-			var runs atomic.Int32
-			started := make(chan struct{}, 10)
-			release := make(chan struct{})
-			run := func() {
-				runs.Add(1)
-				started <- struct{}{}
-				<-release
-			}
-
-			c.notify(ctx, 1, run)
-			<-started
-			for range tt.during {
-				c.notify(ctx, 1, run)
-			}
-			if tt.cancel {
-				cancel()
-			}
-			close(release)
-			c.wg.Wait()
-
-			if got := runs.Load(); got != tt.want {
-				t.Errorf("ran %d times, want %d", got, tt.want)
-			}
-		})
-	}
+// notice sends one change notice, then ends the subscription cleanly.
+type notice struct {
+	repoID int64
+	commit string
 }
 
-func TestCoalescerRunsVaultsIndependently(t *testing.T) {
-	var c coalescer
-	started := make(chan int64, 2)
-	release := make(chan struct{})
-	for _, id := range []int64{1, 2} {
-		c.notify(t.Context(), id, func() {
-			started <- id
-			<-release
+func (n notice) Subscribe(_ context.Context, f func(int64, string)) error {
+	f(n.repoID, n.commit)
+	return nil
+}
+
+// A notice syncs the vault it names, but doesn't override a vault's backoff after failures.
+func TestFollowNotices(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name       string
+		backingOff bool
+		wantHits   int
+	}{
+		{name: "syncs the vault", wantHits: 1},
+		{name: "vault backing off", backingOff: true, wantHits: 0},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRemote(t)
+			r.push(t, map[string]string{"a.md": "# A\n"})
+			l := newLibrary(t, r, library.Options{})
+			v := serving(t, l)
+			if testCase.backingOff {
+				r.setHeadErr(errors.New("502"))
+				l.Poll(t.Context())
+			}
+			head := r.push(t, map[string]string{"a.md": "# A\n\nchanged\n"})
+
+			l.FollowNotices(t.Context(), notice{repoID: kb.RepoID, commit: head})
+			if got := search(t, v, "changed"); len(got) != testCase.wantHits {
+				t.Errorf("got %v, want %d hits", got, testCase.wantHits)
+			}
 		})
 	}
-	// Both start while neither has finished.
-	<-started
-	<-started
-	close(release)
-	c.wg.Wait()
 }
 
 // failingNotices fails Subscribe a number of times, then ends the subscription cleanly.
@@ -86,7 +69,8 @@ func (n *failingNotices) Subscribe(_ context.Context, f func(int64, string)) err
 }
 
 func TestFollowNoticesRetriesSubscribe(t *testing.T) {
-	tests := []struct {
+	t.Parallel()
+	testCases := []struct {
 		name     string
 		failures int
 		want     time.Duration // time spent backing off
@@ -95,18 +79,19 @@ func TestFollowNoticesRetriesSubscribe(t *testing.T) {
 		{name: "retries with backoff", failures: 3, want: 7 * time.Second},
 		{name: "backoff is capped", failures: 8, want: (1 + 2 + 4 + 8 + 16 + 32 + 60 + 60) * time.Second},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				l := New(nil, Options{}, discard())
-				n := &failingNotices{failures: tt.failures}
+				l := library.New(nil, library.Options{}, discard())
+				n := &failingNotices{failures: testCase.failures}
 				start := time.Now()
 				l.FollowNotices(t.Context(), n)
-				if n.calls != tt.failures+1 {
-					t.Errorf("subscribed %d times, want %d", n.calls, tt.failures+1)
+				if n.calls != testCase.failures+1 {
+					t.Errorf("got %d subscriptions, want %d", n.calls, testCase.failures+1)
 				}
-				if got := time.Since(start); got != tt.want {
-					t.Errorf("backed off for %v, want %v", got, tt.want)
+				if got := time.Since(start); got != testCase.want {
+					t.Errorf("got %v backing off, want %v", got, testCase.want)
 				}
 			})
 		})
@@ -114,9 +99,10 @@ func TestFollowNoticesRetriesSubscribe(t *testing.T) {
 }
 
 func TestFollowNoticesStopsWhileBackingOff(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
-		l := New(nil, Options{}, discard())
+		l := library.New(nil, library.Options{}, discard())
 		done := make(chan struct{})
 		go func() {
 			l.FollowNotices(ctx, &failingNotices{failures: 1000})
