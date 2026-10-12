@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	refreshLockTime      = 10 * time.Second
-	githubRefreshTimeout = 8 * time.Second // shorter than the lock
-	refreshResultTime    = 30 * time.Second
+	refreshLockTime      = 25 * time.Second
+	githubRefreshTimeout = 20 * time.Second // shorter than the lock, leaving time to keep the result
+	refreshResultTime    = time.Minute
+	unknownOutcomeTime   = 10 * time.Minute // how long a GitHub refresh without an answer is remembered
 )
 
 // refreshError is a refresh that failed with an answer for the client.
@@ -108,6 +109,7 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 	defer cancel()
 	tokens, err := s.github.Refresh(gctx, s.cfg.GitHub, rv.Refresh)
 	if errors.Is(err, gh.ErrBadGrant) {
+		s.signedOut(ctx, key, rv.Login)
 		return tokenResponse{}, &refreshError{
 			status:      http.StatusBadRequest,
 			code:        "invalid_grant",
@@ -116,6 +118,7 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 	}
 	if errors.Is(err, gh.ErrAppConfig) {
 		s.logger.ErrorContext(ctx, "GitHub refresh failed", "err", err)
+		refreshes.WithLabelValues("github_failed").Inc()
 		return tokenResponse{}, &refreshError{
 			status:      http.StatusServiceUnavailable,
 			code:        "temporarily_unavailable",
@@ -124,6 +127,14 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 	}
 	if err != nil {
 		s.logger.WarnContext(ctx, "GitHub refresh failed", "err", err)
+		refreshes.WithLabelValues("github_failed").Inc()
+		if !errors.Is(err, gh.ErrUnreached) {
+			// GitHub may have spent the refresh token without speki hearing back. The retry will then
+			// be refused; the marker lets it tell that apart from an ordinary sign-out.
+			mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			defer cancel()
+			_ = s.store.Set(mctx, "refresh-unknown:"+key, []byte(unknownOutcome), unknownOutcomeTime)
+		}
 		return tokenResponse{}, &refreshError{
 			status:      http.StatusServiceUnavailable,
 			code:        "temporarily_unavailable",
@@ -136,6 +147,7 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 	if err != nil {
 		return tokenResponse{}, err
 	}
+	refreshes.WithLabelValues("ok").Inc()
 	// Keep the result before the lock runs out, or a waiter refreshes again with the spent GitHub token.
 	// A late GitHub answer still gets a moment to be kept.
 	kctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), maxTime(lock.at.Add(refreshLockTime), time.Now().Add(2*time.Second)))
@@ -183,7 +195,28 @@ func storedResult(resp tokenResponse, scopes []string) (tokenResponse, error) {
 			description: "this refresh token was just refreshed with other scopes",
 		}
 	}
+	refreshes.WithLabelValues("shared").Inc()
 	return resp, nil
+}
+
+// unknownOutcome marks a token whose GitHub refresh ended without an answer.
+const unknownOutcome = "unknown"
+
+// signedOut counts a refresh GitHub refused, which signs the user out. When an earlier refresh with the
+// same token got no answer from GitHub, GitHub most likely spent the token then: the user is signed out
+// by that timeout, not by a revoked or expired authorization.
+func (s *Server) signedOut(ctx context.Context, key, login string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	marker := "refresh-unknown:" + key
+	_, found, err := s.store.Get(ctx, marker)
+	if err != nil || !found {
+		refreshes.WithLabelValues("signed_out").Inc()
+		return
+	}
+	s.logger.WarnContext(ctx, "refresh lost to GitHub timeout", "login", login)
+	refreshes.WithLabelValues("lost_to_timeout").Inc()
+	_ = s.store.Release(ctx, marker, []byte(unknownOutcome)) // count each lost token once
 }
 
 // sameScopes reports whether a and b hold the same scopes, in any order.

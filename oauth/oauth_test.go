@@ -24,6 +24,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/store"
@@ -37,7 +39,10 @@ type fakeGitHub struct {
 	next      int
 	slow      chan struct{} // when set, Refresh waits for it
 	entered   chan struct{} // when set, Refresh sends on it once it's called
-	down      bool          // when set, Refresh fails as if GitHub were unreachable
+	down      bool          // when set, Refresh fails as if GitHub's answer were lost
+	unreached bool          // when set, Refresh fails without reaching GitHub
+	hang      bool          // when set, GitHub spends the old token and never answers
+	gaveUp    func()        // when set, a hung Refresh calls it as speki stops waiting
 	appConfig bool          // when set, GitHub refuses the app's client secret
 	during    func()        // when set, Refresh calls it after GitHub spent the old token
 }
@@ -76,12 +81,21 @@ func (f *fakeGitHub) Refresh(ctx context.Context, _ gh.OAuthConfig, refresh stri
 	if f.appConfig {
 		return gh.UserTokens{}, fmt.Errorf("%w: incorrect_client_credentials", gh.ErrAppConfig)
 	}
+	if f.unreached {
+		return gh.UserTokens{}, fmt.Errorf("%w: dial tcp: connection refused", gh.ErrUnreached)
+	}
 	if f.refreshes[refresh] {
 		return gh.UserTokens{}, gh.ErrBadGrant // GitHub refresh tokens work once
 	}
 	f.refreshes[refresh] = true
 	if f.during != nil {
 		f.during()
+	}
+	if f.hang {
+		<-ctx.Done()
+		if f.gaveUp != nil {
+			f.gaveUp()
+		}
 	}
 	if ctx.Err() != nil { // the answer never reaches speki
 		return gh.UserTokens{}, ctx.Err()
@@ -428,6 +442,100 @@ func TestRefreshWhileGitHubIsDownIsTemporary(t *testing.T) {
 	h.github.down = false
 	if _, rec := h.tokens(form); rec.Code != http.StatusOK {
 		t.Errorf("after GitHub is back: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The GitHub call ends before the lock does, with time left to keep the result, and the result outlives
+// the lock, so a request waiting on the lock finds it.
+func TestRefreshTimings(t *testing.T) {
+	if githubRefreshTimeout+3*time.Second > refreshLockTime {
+		t.Errorf("GitHub timeout %v leaves too little of the %v lock", githubRefreshTimeout, refreshLockTime)
+	}
+	if refreshResultTime <= refreshLockTime {
+		t.Errorf("results kept %v, not longer than the %v lock", refreshResultTime, refreshLockTime)
+	}
+
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		clientID, first := h.signedIn()
+		form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
+		h.github.hang = true
+		var ended time.Duration
+		start := time.Now()
+		h.github.gaveUp = func() {
+			ended = time.Since(start)
+			if _, held, _ := h.s.store.Get(t.Context(), "refresh-lock:"+hash(first.RefreshToken)); !held {
+				t.Error("the lock ran out before the GitHub call ended")
+			}
+		}
+		_, rec := h.tokens(form)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("GitHub without an answer: %d %s", rec.Code, rec.Body)
+		}
+		if ended != githubRefreshTimeout {
+			t.Errorf("GitHub call ended after %v, want %v", ended, githubRefreshTimeout)
+		}
+	})
+}
+
+func refreshCount(result string) float64 {
+	return testutil.ToFloat64(refreshes.WithLabelValues(result))
+}
+
+// GitHub refusing a refresh token signs the user out. When an earlier refresh with that token got no
+// answer from GitHub, GitHub most likely spent it then, and the sign-out is logged and counted as lost
+// to the timeout.
+func TestRefreshLostToGitHubTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		before   func(f *fakeGitHub) // makes the first refresh fail
+		wantLost bool
+	}{
+		{"no answer from GitHub", func(f *fakeGitHub) { f.hang = true }, true},
+		{"answer lost", func(f *fakeGitHub) { f.down = true }, true},
+		{"GitHub not reached", func(f *fakeGitHub) { f.unreached = true }, false},
+		{"no earlier failure", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newHarness(t)
+				var logs strings.Builder
+				h.s.logger = slog.New(slog.NewTextHandler(&logs, nil))
+				clientID, first := h.signedIn()
+				form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {first.RefreshToken}, "client_id": {clientID}}
+				if tt.before != nil {
+					tt.before(h.github)
+					if _, rec := h.tokens(form); rec.Code != http.StatusServiceUnavailable {
+						t.Fatalf("first refresh: %d %s", rec.Code, rec.Body)
+					}
+					h.github.hang, h.github.down, h.github.unreached = false, false, false
+				}
+				var rv refreshValue
+				if err := h.s.keys.Open(seal.PurposeRefresh, first.RefreshToken, &rv); err != nil {
+					t.Fatal(err)
+				}
+				h.github.refreshes[rv.Refresh] = true // spent, by the first refresh or by someone else
+
+				lost, signedOut := refreshCount("lost_to_timeout"), refreshCount("signed_out")
+				_, rec := h.tokens(form)
+				if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid_grant") {
+					t.Errorf("refresh with a spent token: %d %s", rec.Code, rec.Body)
+				}
+				gotLost := refreshCount("lost_to_timeout") - lost
+				gotSignedOut := refreshCount("signed_out") - signedOut
+				logged := strings.Contains(logs.String(), "refresh lost to GitHub timeout")
+				if tt.wantLost && (gotLost != 1 || gotSignedOut != 0 || !logged) {
+					t.Errorf("lost %v, signed out %v, logged %v; want counted and logged as lost", gotLost, gotSignedOut, logged)
+				}
+				if !tt.wantLost && (gotLost != 0 || gotSignedOut != 1 || logged) {
+					t.Errorf("lost %v, signed out %v, logged %v; want an ordinary sign-out", gotLost, gotSignedOut, logged)
+				}
+				if strings.Contains(logs.String(), rv.Refresh) {
+					t.Error("the GitHub refresh token was logged")
+				}
+			})
+		})
 	}
 }
 

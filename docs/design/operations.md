@@ -27,8 +27,9 @@ endpoints are. They default to GitHub's own addresses and exist for the tests, w
 GitHub.
 
 `redis.url` is a secret (`redis://` or `rediss://`, password included), so it can come from
-`redis.url_file`. Without it, the store and change notices are in memory. With it, `service.New` connects
-and fails at startup when Redis doesn't answer.
+`redis.url_file`. Without it, the store and change notices are in memory, and `service.New` logs a warning
+that only one instance may run. With it, `service.New` connects and fails at startup when Redis doesn't
+answer.
 
 Zero values mean "use the default", and `service.New` fills them in before checking the result. It
 collects every problem (a missing app ID, a `public_url` that isn't `https`, a duration of zero) into one
@@ -97,6 +98,7 @@ Names:
 | `speki_vault_fresh_timestamp_seconds` | gauge | `vault`. Unix time when speki last confirmed the index matches GitHub's head |
 | `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, deferred, failed) |
 | `speki_signins_total` | counter | `result` |
+| `speki_refreshes_total` | counter | `result` (ok, shared, github_failed, signed_out, lost_to_timeout). `lost_to_timeout` is a sign-out caused by an earlier GitHub refresh that got no answer ([oauth.md](oauth.md#refreshing)) |
 
 The vault gauges are written from the library's status at startup, after every poll round and
 discovery update, and on shutdown, so they lag by a poll round at most. Alert on
@@ -107,12 +109,13 @@ Vault labels are fine at 20 vaults. User logins are never labels.
 
 ## Status page
 
-`GET /status` on the metrics port returns a JSON object with three fields. `ready` is what `/readyz`
-reports. `vaults` lists the vaults with their name, state (serving, building, failed), index commit,
-document count and size, a warning when it's larger than speki is built for, last successful sync, when
-the index was last confirmed current, and last error. `problems` lists the repositories whose
-`speki.yaml` couldn't be used, with the reason. It's the first place to look when someone says "my vault
-isn't showing up". Like `/metrics`, it's for operators only and shouldn't be exposed publicly.
+`GET /status` on the metrics port returns a JSON object with five fields. `ready` is what `/readyz`
+reports. `store` is `memory` or `redis`. `vaults` lists the vaults with their name, state (serving,
+building, failed), index commit, document count and size, a warning when it's larger than speki is built
+for, last successful sync, when the index was last confirmed current, and last error. `problems` lists
+the repositories whose `speki.yaml` couldn't be used, with the reason. `warnings` lists configuration
+warnings: today only the memory store, which allows one instance. It's the first place to look when
+someone says "my vault isn't showing up". Like `/metrics`, it's for operators only and shouldn't be exposed publicly.
 
 ## Tracing
 
