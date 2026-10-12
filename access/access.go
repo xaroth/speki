@@ -36,7 +36,7 @@ type User struct {
 	Write  bool   // signed in with write access
 }
 
-// Grant is what one user may do right now.
+// Grant is what one user may do.
 type Grant struct {
 	user     User
 	readable []vault.Vault // sorted by name

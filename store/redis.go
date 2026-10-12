@@ -112,7 +112,7 @@ type notice struct {
 	Commit string `json:"commit"`
 }
 
-// Publish tells the other instances that a vault's branch is at commit now.
+// Publish tells the other instances that a vault's branch is at commit.
 func (r *Redis) Publish(ctx context.Context, repoID int64, commit string) error {
 	msg, err := json.Marshal(notice{RepoID: repoID, Commit: commit})
 	if err != nil {
