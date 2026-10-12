@@ -99,18 +99,10 @@ func Search(ctx context.Context, sources []Source, text string, opt Options) (Re
 		return Results{}, ErrTooManyWords
 	}
 
-	gens := make([]*generation, 0, len(sources))
-	defer func() {
-		for _, g := range gens {
-			g.release()
-		}
-	}()
-	for _, s := range sources {
-		g, err := s.Index.acquire()
-		if err != nil {
-			return Results{}, fmt.Errorf("search %s: %w", s.Name, err)
-		}
-		gens = append(gens, g)
+	gens, release, err := acquireAll(sources)
+	defer release()
+	if err != nil {
+		return Results{}, fmt.Errorf("search %w", err)
 	}
 
 	corrected, err := correct(ctx, gens, terms)

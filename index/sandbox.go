@@ -89,18 +89,10 @@ func (s *Sandbox) Query(ctx context.Context, sources []Source, query string) (Ro
 		return Rows{}, err
 	}
 
-	gens := make([]*generation, 0, len(sources))
-	defer func() {
-		for _, g := range gens {
-			g.release()
-		}
-	}()
-	for _, src := range sources {
-		g, err := src.Index.acquire()
-		if err != nil {
-			return Rows{}, fmt.Errorf("query %s: %w", src.Name, err)
-		}
-		gens = append(gens, g)
+	gens, release, err := acquireAll(sources)
+	defer release()
+	if err != nil {
+		return Rows{}, fmt.Errorf("query %w", err)
 	}
 
 	conn, err := s.db.Conn(ctx)
