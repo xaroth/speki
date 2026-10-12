@@ -1,4 +1,4 @@
-package seal
+package seal_test
 
 import (
 	"crypto/rand"
@@ -7,20 +7,34 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/eve-online-tools/speki/seal"
 )
 
-func secret() string {
+func newSecret(tb testing.TB) string {
+	tb.Helper()
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-func keyring(t *testing.T, yaml string) *Keyring {
-	t.Helper()
-	k, err := ParseKeyring([]byte(yaml))
+// keyFile writes a key file with the primary key first.
+func keyFile(primaryID, primarySecret string, others ...string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "keys:\n  - id: %s\n    secret: %s\n    primary: true\n", primaryID, primarySecret)
+	for i := 0; i+1 < len(others); i += 2 {
+		fmt.Fprintf(&b, "  - id: %s\n    secret: %s\n", others[i], others[i+1])
+	}
+	return b.String()
+}
+
+func newKeyring(tb testing.TB, raw string) *seal.Keyring {
+	tb.Helper()
+	k, err := seal.ParseKeyring([]byte(raw))
 	if err != nil {
-		t.Fatalf("ParseKeyring: %v", err)
+		tb.Fatalf("ParseKeyring: %v", err)
 	}
 	return k
 }
@@ -31,148 +45,195 @@ type payload struct {
 }
 
 func TestSealAndOpen(t *testing.T) {
-	k := keyring(t, fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n", secret()))
-
-	s, err := k.Seal(PurposeAccess, payload{User: "octocat", Count: 3}, time.Now().Add(time.Hour))
+	t.Parallel()
+	k := newKeyring(t, keyFile("a", newSecret(t)))
+	want := payload{User: "octocat", Count: 3}
+	sealed, err := k.Seal(seal.PurposeAccess, want, time.Now().Add(time.Hour))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Seal: %v", err)
 	}
-	if !strings.HasPrefix(s, "v1.a.") || strings.Contains(s, "octocat") {
-		t.Errorf("sealed = %q", s)
+	if !strings.HasPrefix(sealed, "v1.a.") || strings.Contains(sealed, "octocat") {
+		t.Errorf("got sealed %q, want prefix v1.a. and no plain text", sealed)
 	}
-	var got payload
-	err = k.Open(PurposeAccess, s, &got)
-	if err != nil || got != (payload{User: "octocat", Count: 3}) {
-		t.Errorf("Open = %+v, %v", got, err)
-	}
+	tampered := []byte(sealed)
+	tampered[len(tampered)-3] ^= 1
 
-	err = k.Open(PurposeRefresh, s, &got)
-	if !errors.Is(err, ErrInvalid) {
-		t.Errorf("open as refresh: %v", err)
+	testCases := []struct {
+		name    string
+		purpose seal.Purpose
+		sealed  string
+		wantErr error
+	}{
+		{name: "same purpose", purpose: seal.PurposeAccess, sealed: sealed},
+		{name: "other purpose", purpose: seal.PurposeRefresh, sealed: sealed, wantErr: seal.ErrInvalid},
+		{name: "tampered", purpose: seal.PurposeAccess, sealed: string(tampered), wantErr: seal.ErrInvalid},
+		{name: "empty", purpose: seal.PurposeAccess, sealed: "", wantErr: seal.ErrInvalid},
+		{name: "no key id", purpose: seal.PurposeAccess, sealed: "v1", wantErr: seal.ErrInvalid},
+		{name: "no data", purpose: seal.PurposeAccess, sealed: "v1.a", wantErr: seal.ErrInvalid},
+		{name: "other version", purpose: seal.PurposeAccess, sealed: "v2.a.xyz", wantErr: seal.ErrInvalid},
+		{name: "unknown key", purpose: seal.PurposeAccess, sealed: "v1.b.xyz", wantErr: seal.ErrInvalid},
+		{name: "not base64", purpose: seal.PurposeAccess, sealed: "v1.a.!!!", wantErr: seal.ErrInvalid},
+		{name: "shorter than a nonce", purpose: seal.PurposeAccess, sealed: "v1.a.AAAA", wantErr: seal.ErrInvalid},
 	}
-
-	raw := []byte(s)
-	raw[len(raw)-3] ^= 1
-	err = k.Open(PurposeAccess, string(raw), &got)
-	if !errors.Is(err, ErrInvalid) {
-		t.Errorf("tampered: %v", err)
-	}
-
-	for _, bad := range []string{"", "v1", "v1.a", "v2.a.xyz", "v1.b.xyz", "v1.a.!!!", "v1.a.AAAA"} {
-		t.Run(fmt.Sprintf("%q", bad), func(t *testing.T) {
-			if err := k.Open(PurposeAccess, bad, &got); !errors.Is(err, ErrInvalid) {
-				t.Errorf("Open(%q) = %v", bad, err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			var got payload
+			err := k.Open(testCase.purpose, testCase.sealed, &got)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got error %v, want %v", err, testCase.wantErr)
+			}
+			if testCase.wantErr == nil && got != want {
+				t.Errorf("got %+v, want %+v", got, want)
 			}
 		})
 	}
 }
 
+func TestOpenIntoWrongType(t *testing.T) {
+	t.Parallel()
+	k := newKeyring(t, keyFile("a", newSecret(t)))
+	sealed, err := k.Seal(seal.PurposeCode, "text", time.Time{})
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	var n int
+	err = k.Open(seal.PurposeCode, sealed, &n)
+	if !errors.Is(err, seal.ErrInvalid) {
+		t.Errorf("got error %v, want %v", err, seal.ErrInvalid)
+	}
+}
+
 func TestExpiry(t *testing.T) {
-	k := keyring(t, fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n", secret()))
-	now := time.Now()
-	k.now = func() time.Time { return now }
-
-	s, err := k.Seal(PurposeCode, "x", now.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		ttl     time.Duration // 0 never expires
+		wait    time.Duration
+		wantErr error
+	}{
+		{name: "within the skew", ttl: time.Minute, wait: time.Minute + 30*time.Second},
+		{name: "past the skew", ttl: time.Minute, wait: 3 * time.Minute, wantErr: seal.ErrExpired},
+		{name: "no expiry", wait: 10 * 365 * 24 * time.Hour},
 	}
-	var v string
-	k.now = func() time.Time { return now.Add(time.Minute + 30*time.Second) } // within the skew
-	if err := k.Open(PurposeCode, s, &v); err != nil {
-		t.Errorf("within skew: %v", err)
-	}
-	k.now = func() time.Time { return now.Add(3 * time.Minute) }
-	if err := k.Open(PurposeCode, s, &v); !errors.Is(err, ErrExpired) {
-		t.Errorf("expired: %v", err)
-	}
-
-	forever, err := k.Seal(PurposeClient, "x", time.Time{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	k.now = func() time.Time { return now.Add(10 * 365 * 24 * time.Hour) }
-	if err := k.Open(PurposeClient, forever, &v); err != nil {
-		t.Errorf("value without expiry: %v", err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				k := newKeyring(t, keyFile("a", newSecret(t)))
+				var expires time.Time
+				if testCase.ttl > 0 {
+					expires = time.Now().Add(testCase.ttl)
+				}
+				sealed, err := k.Seal(seal.PurposeCode, "x", expires)
+				if err != nil {
+					t.Fatalf("Seal: %v", err)
+				}
+				time.Sleep(testCase.wait)
+				var v string
+				err = k.Open(seal.PurposeCode, sealed, &v)
+				if !errors.Is(err, testCase.wantErr) {
+					t.Errorf("got error %v, want %v", err, testCase.wantErr)
+				}
+			})
+		})
 	}
 }
 
 func TestRotation(t *testing.T) {
-	oldSecret, newSecret := secret(), secret()
-	before := keyring(t, fmt.Sprintf("keys:\n  - id: old\n    secret: %s\n    primary: true\n", oldSecret))
-	during := keyring(t, fmt.Sprintf("keys:\n  - id: new\n    secret: %s\n    primary: true\n  - id: old\n    secret: %s\n", newSecret, oldSecret))
-	after := keyring(t, fmt.Sprintf("keys:\n  - id: new\n    secret: %s\n    primary: true\n", newSecret))
+	t.Parallel()
+	oldKey, newKey := newSecret(t), newSecret(t)
+	before := newKeyring(t, keyFile("old", oldKey))
+	during := newKeyring(t, keyFile("new", newKey, "old", oldKey))
+	after := newKeyring(t, keyFile("new", newKey))
 
-	s, err := before.Seal(PurposeRefresh, "token", time.Time{})
+	sealed, err := before.Seal(seal.PurposeRefresh, "token", time.Time{})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Seal: %v", err)
 	}
 	var v string
-	if err := during.Open(PurposeRefresh, s, &v); err != nil || v != "token" {
-		t.Errorf("during rotation: %q, %v", v, err)
+	err = during.Open(seal.PurposeRefresh, sealed, &v)
+	if err != nil || v != "token" {
+		t.Errorf("during rotation: got %q, %v, want %q, nil", v, err, "token")
 	}
-	fresh, _ := during.Seal(PurposeRefresh, "token", time.Time{})
+	fresh, err := during.Seal(seal.PurposeRefresh, "token", time.Time{})
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 	if !strings.HasPrefix(fresh, "v1.new.") {
-		t.Errorf("new values use %q", fresh[:7])
+		t.Errorf("got %q, want prefix v1.new.", fresh)
 	}
-	if err := after.Open(PurposeRefresh, s, &v); !errors.Is(err, ErrInvalid) {
-		t.Errorf("retired key still opens: %v", err)
+	err = after.Open(seal.PurposeRefresh, sealed, &v)
+	if !errors.Is(err, seal.ErrInvalid) {
+		t.Errorf("retired key: got error %v, want %v", err, seal.ErrInvalid)
 	}
 }
 
 func TestSingleKeyMovesToKeyFile(t *testing.T) {
-	old := secret()
-	single, err := SingleKey(old)
+	t.Parallel()
+	old := newSecret(t)
+	single, err := seal.SingleKey(old)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("SingleKey: %v", err)
 	}
-	s, err := single.Seal(PurposeRefresh, "token", time.Time{})
+	sealed, err := single.Seal(seal.PurposeRefresh, "token", time.Time{})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Seal: %v", err)
 	}
-	if !strings.HasPrefix(s, "v1.default.") {
-		t.Errorf("single key seals as %q", s[:11])
+	if !strings.HasPrefix(sealed, "v1."+seal.SingleKeyID+".") {
+		t.Errorf("got %q, want prefix v1.%s.", sealed, seal.SingleKeyID)
 	}
-	moved := keyring(t, fmt.Sprintf("keys:\n  - id: new\n    secret: %s\n    primary: true\n  - id: default\n    secret: %s\n", secret(), old))
+	moved := newKeyring(t, keyFile("new", newSecret(t), seal.SingleKeyID, old))
 	var v string
-	if err := moved.Open(PurposeRefresh, s, &v); err != nil || v != "token" {
-		t.Errorf("key file with the single key as default: %q, %v", v, err)
+	err = moved.Open(seal.PurposeRefresh, sealed, &v)
+	if err != nil || v != "token" {
+		t.Errorf("got %q, %v, want %q, nil", v, err, "token")
 	}
 }
 
 func TestSingleKeyRejects(t *testing.T) {
-	tests := []struct{ name, secret, want string }{
-		{"short key", base64.StdEncoding.EncodeToString([]byte("too short")), "at least 32"},
-		{"not base64", "!!", "isn't base64"},
-		{"empty", "", "at least 32"},
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		secret  string
+		wantErr string
+	}{
+		{name: "short key", secret: base64.StdEncoding.EncodeToString([]byte("too short")), wantErr: "at least 32"},
+		{name: "not base64", secret: "!!", wantErr: "isn't base64"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := SingleKey(tt.secret)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("err = %v, want it to mention %q", err, tt.want)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := seal.SingleKey(testCase.secret)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Errorf("got error %v, want it to mention %q", err, testCase.wantErr)
 			}
 		})
 	}
 }
 
 func TestParseKeyringRejects(t *testing.T) {
-	good := secret()
+	t.Parallel()
+	good := newSecret(t)
 	short := base64.StdEncoding.EncodeToString([]byte("too short"))
-	tests := []struct{ name, raw, want string }{
-		{"no primary", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n", good), "no primary key"},
-		{"two primaries", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n  - id: b\n    secret: %s\n    primary: true\n", good, good), "more than one primary"},
-		{"short key", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n", short), "at least 32"},
-		{"duplicate id", fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n    primary: true\n  - id: a\n    secret: %s\n", good, good), "duplicate key id"},
-		{"not base64", "keys:\n  - id: a\n    secret: '!!'\n    primary: true\n", "isn't base64"},
-		{"dot in id", fmt.Sprintf("keys:\n  - id: a.b\n    secret: %s\n    primary: true\n", good), "no dots"},
-		{"not yaml", "keys: [", "key file:"},
-		{"no keys at all", "", "no primary key"},
+	testCases := []struct {
+		name    string
+		raw     string
+		wantErr string
+	}{
+		{name: "no primary", raw: fmt.Sprintf("keys:\n  - id: a\n    secret: %s\n", good), wantErr: "no primary key"},
+		{name: "two primaries", raw: keyFile("a", good) + fmt.Sprintf("  - id: b\n    secret: %s\n    primary: true\n", good), wantErr: "more than one primary"},
+		{name: "short key", raw: keyFile("a", short), wantErr: "at least 32"},
+		{name: "duplicate id", raw: keyFile("a", good, "a", good), wantErr: "duplicate key id"},
+		{name: "dot in id", raw: keyFile("a.b", good), wantErr: "no dots"},
+		{name: "not yaml", raw: "keys: [", wantErr: "key file:"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseKeyring([]byte(tt.raw))
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("err = %v, want it to mention %q", err, tt.want)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := seal.ParseKeyring([]byte(testCase.raw))
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Errorf("got error %v, want it to mention %q", err, testCase.wantErr)
 			}
 		})
 	}

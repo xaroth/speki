@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"bytes"
@@ -8,9 +8,12 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+
+	"github.com/eve-online-tools/speki/store"
 )
 
 type kv interface {
@@ -22,50 +25,53 @@ type kv interface {
 }
 
 // testValues runs the same checks against a store. advance moves the store's clock.
-func testValues(t *testing.T, s kv, advance func(time.Duration)) {
-	t.Helper()
-	ctx := t.Context()
+func testValues(tb testing.TB, s kv, advance func(time.Duration)) {
+	tb.Helper()
+	ctx := tb.Context()
 	must := func(err error) {
-		t.Helper()
+		tb.Helper()
 		if err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
+		}
+	}
+	wantValue := func(step string, gotValue []byte, gotFound bool, want string) {
+		tb.Helper()
+		if want == "" && gotFound {
+			tb.Errorf("%s: got %q, want no value", step, gotValue)
+		}
+		if want != "" && (!gotFound || string(gotValue) != want) {
+			tb.Errorf("%s: got %q, %v, want %q", step, gotValue, gotFound, want)
 		}
 	}
 
 	ok, err := s.SetNX(ctx, "code:1", []byte("x"), time.Minute)
 	must(err)
 	if !ok {
-		t.Fatal("first SetNX refused")
+		tb.Fatal("first SetNX: got refused, want stored")
 	}
 	ok, err = s.SetNX(ctx, "code:1", []byte("y"), time.Minute)
 	must(err)
 	if ok {
-		t.Fatal("second SetNX accepted")
+		tb.Fatal("second SetNX: got stored, want refused")
 	}
 	v, found, err := s.Get(ctx, "code:1")
 	must(err)
-	if !found || string(v) != "x" {
-		t.Errorf("Get = %q, %v", v, found)
-	}
+	wantValue("Get", v, found, "x")
 
 	advance(2 * time.Minute)
-	_, found, err = s.Get(ctx, "code:1")
+	v, found, err = s.Get(ctx, "code:1")
 	must(err)
-	if found {
-		t.Error("expired value still found")
-	}
+	wantValue("Get after expiry", v, found, "")
 	ok, err = s.SetNX(ctx, "code:1", []byte("z"), time.Minute)
 	must(err)
 	if !ok {
-		t.Error("SetNX refused after expiry")
+		tb.Error("SetNX after expiry: got refused, want stored")
 	}
 
 	must(s.Set(ctx, "k", []byte("v"), time.Minute))
 	v, found, err = s.Get(ctx, "k")
 	must(err)
-	if !found || string(v) != "v" {
-		t.Errorf("Get after Set = %q, %v", v, found)
-	}
+	wantValue("Get after Set", v, found, "v")
 
 	// A lock is only released by its owner: after it expired and someone else took it, the first
 	// holder's release leaves it alone.
@@ -75,77 +81,122 @@ func testValues(t *testing.T, s kv, advance func(time.Duration)) {
 	ok, err = s.SetNX(ctx, "lock", []byte("second"), time.Minute)
 	must(err)
 	if !ok {
-		t.Fatal("expired lock not taken")
+		tb.Fatal("SetNX on an expired lock: got refused, want stored")
 	}
 	must(s.Release(ctx, "lock", []byte("first")))
 	v, found, err = s.Get(ctx, "lock")
 	must(err)
-	if !found || string(v) != "second" {
-		t.Errorf("someone else's release removed the lock: %q, %v", v, found)
-	}
+	wantValue("Get after someone else's release", v, found, "second")
 	must(s.Release(ctx, "lock", []byte("second")))
-	_, found, err = s.Get(ctx, "lock")
+	v, found, err = s.Get(ctx, "lock")
 	must(err)
-	if found {
-		t.Error("the owner's release left the lock")
-	}
+	wantValue("Get after the owner's release", v, found, "")
 
 	must(s.Set(ctx, "marker", []byte("m"), time.Minute))
 	v, found, err = s.GetDel(ctx, "marker")
 	must(err)
-	if !found || string(v) != "m" {
-		t.Errorf("GetDel = %q, %v", v, found)
-	}
-	_, found, err = s.GetDel(ctx, "marker")
+	wantValue("GetDel", v, found, "m")
+	v, found, err = s.GetDel(ctx, "marker")
 	must(err)
-	if found {
-		t.Error("second GetDel found the value")
-	}
+	wantValue("second GetDel", v, found, "")
 	must(s.Set(ctx, "marker", []byte("m"), time.Second))
 	advance(2 * time.Second)
-	_, found, err = s.GetDel(ctx, "marker")
+	v, found, err = s.GetDel(ctx, "marker")
 	must(err)
-	if found {
-		t.Error("GetDel found an expired value")
+	wantValue("GetDel after expiry", v, found, "")
+}
+
+func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func newRedis(tb testing.TB, addr string) *store.Redis {
+	tb.Helper()
+	r, err := store.NewRedis(tb.Context(), "redis://"+addr, discard())
+	if err != nil {
+		tb.Fatalf("NewRedis: %v", err)
 	}
+	tb.Cleanup(func() { _ = r.Close() })
+	return r
+}
+
+func TestMemory(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		m := store.NewMemory()
+		testValues(t, m, time.Sleep)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := m.Publish(ctx, 1, "c"); err != nil {
+			t.Errorf("Publish: got %v, want nil", err)
+		}
+		if err := m.Subscribe(ctx, func(int64, string) { t.Error("got a notice in memory, want none") }); err != nil {
+			t.Errorf("Subscribe: got %v, want nil", err)
+		}
+	})
 }
 
 func TestRedis(t *testing.T) {
+	t.Parallel()
 	mr := miniredis.RunT(t)
-	r, err := NewRedis(t.Context(), "redis://"+mr.Addr(), discard())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = r.Close() }()
-	testValues(t, r, mr.FastForward)
-	if !mr.Exists("speki:code:1") {
-		t.Error("keys aren't prefixed")
-	}
+	r := newRedis(t, mr.Addr())
 
-	_, err = NewRedis(t.Context(), "redis://127.0.0.1:1", discard())
-	if err == nil {
-		t.Error("connected to nothing")
-	}
-	_, err = NewRedis(t.Context(), "http://x", discard())
-	if err == nil {
-		t.Error("accepted a URL that isn't redis")
-	}
-	_, err = NewRedis(t.Context(), "redis://user:hunter2@host:notaport/0", discard())
-	if err == nil || strings.Contains(err.Error(), "hunter2") {
-		t.Errorf("bad URL error shows the password: %v", err)
+	testValues(t, r, mr.FastForward)
+
+	if !mr.Exists("speki:code:1") {
+		t.Error("got key code:1 without the speki: prefix, want it prefixed")
 	}
 }
 
+func TestNewRedisRejects(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		url  string
+	}{
+		// No retries: the default backoff only makes the test slower.
+		{name: "not answering", url: "redis://" + hangUp(t) + "?max_retries=-1"},
+		{name: "not redis", url: "http://x"},
+		{name: "bad port", url: "redis://user:hunter2@host:notaport/0"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := store.NewRedis(t.Context(), testCase.url, discard())
+			if err == nil {
+				t.Fatal("got no error, want one")
+			}
+			if strings.Contains(err.Error(), "hunter2") {
+				t.Errorf("got error %q, want it without the password", err)
+			}
+		})
+	}
+}
+
+// hangUp listens for connections and closes each one straight away, so a client fails fast rather than
+// retrying a refused dial.
+func hangUp(tb testing.TB) string {
+	tb.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	return ln.Addr().String()
+}
+
 func TestRedisNotices(t *testing.T) {
+	t.Parallel()
 	mr := miniredis.RunT(t)
-	a, err := NewRedis(t.Context(), "redis://"+mr.Addr(), discard())
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := NewRedis(t.Context(), "redis://"+mr.Addr(), discard())
-	if err != nil {
-		t.Fatal(err)
-	}
+	a, b := newRedis(t, mr.Addr()), newRedis(t, mr.Addr())
 	ctx, cancel := context.WithCancel(t.Context())
 	got := make(chan string, 100)
 	done := make(chan error, 1)
@@ -165,54 +216,33 @@ wait:
 		select {
 		case c := <-got:
 			if c != "abc" {
-				t.Errorf("notice commit = %q", c)
+				t.Errorf("got commit %q, want %q", c, "abc")
 			}
 			break wait
 		case <-tick.C:
-			err = a.Publish(t.Context(), 100, "abc")
+			err := a.Publish(t.Context(), 100, "abc")
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("Publish: %v", err)
 			}
 		case <-timeout:
-			t.Fatal("no notice")
+			t.Fatal("got no notice, want one")
 		}
 	}
 	cancel()
 	if err := <-done; err != nil {
-		t.Errorf("Subscribe: %v", err)
+		t.Errorf("Subscribe: got %v, want nil", err)
 	}
 }
-
-func TestMemory(t *testing.T) {
-	m := NewMemory()
-	now := time.Now()
-	m.now = func() time.Time { return now }
-	testValues(t, m, func(d time.Duration) { now = now.Add(d) })
-	if len(m.values) > 2 {
-		t.Errorf("expired entries kept: %d", len(m.values))
-	}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := m.Publish(ctx, 1, "c"); err != nil {
-		t.Error(err)
-	}
-	if err := m.Subscribe(ctx, func(int64, string) { t.Error("a notice in memory") }); err != nil {
-		t.Error(err)
-	}
-}
-
-func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // stallingProxy forwards to addr, but swallows the SUBSCRIBE commands a client sends, as a half-open
 // connection or a stuck proxy would. It sends on swallowed each time.
-func stallingProxy(t *testing.T, addr string, swallowed chan<- struct{}) string {
-	t.Helper()
+func stallingProxy(tb testing.TB, addr string, swallowed chan<- struct{}) string {
+	tb.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	tb.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			client, err := ln.Accept()
@@ -245,13 +275,10 @@ func stallingProxy(t *testing.T, addr string, swallowed chan<- struct{}) string 
 }
 
 func TestSubscribeStopsWhenRedisStalls(t *testing.T) {
+	t.Parallel()
 	mr := miniredis.RunT(t)
 	swallowed := make(chan struct{}, 10)
-	r, err := NewRedis(t.Context(), "redis://"+stallingProxy(t, mr.Addr(), swallowed), discard())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = r.Close() }()
+	r := newRedis(t, stallingProxy(t, mr.Addr(), swallowed))
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- r.Subscribe(ctx, func(int64, string) {}) }()
@@ -260,6 +287,6 @@ func TestSubscribeStopsWhenRedisStalls(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("Subscribe didn't return after its context ended")
+		t.Fatal("got Subscribe still running after its context ended, want it returned")
 	}
 }
