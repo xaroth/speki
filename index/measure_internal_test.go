@@ -1,5 +1,7 @@
 package index
 
+// In-package: it waits for the vocabulary and reads the generation file's size.
+
 import (
 	"fmt"
 	"iter"
@@ -89,7 +91,7 @@ func generatedCorpus(seed uint64, n int) iter.Seq2[Change, error] {
 		zipf := rand.NewZipf(r, 1.05, 2, uint64(len(words)-1))
 		for i := range n {
 			p, content := generateDoc(r, zipf, words, i)
-			if !yield(Change{Path: p, Version: version(content), Content: []byte(content)}, nil) {
+			if !yield(Change{Path: p, Version: Version(content), Content: []byte(content)}, nil) {
 				return
 			}
 		}
@@ -101,13 +103,14 @@ func generatedCorpus(seed uint64, n int) iter.Seq2[Change, error] {
 //
 //	SPEKI_MEASURE=1 go test -tags sqlite_fts5 -run TestMeasure -v ./index/
 func TestMeasure(t *testing.T) {
+	// Not parallel: it measures the process's memory and timings.
 	if os.Getenv("SPEKI_MEASURE") == "" {
 		t.Skip("set SPEKI_MEASURE=1 to measure")
 	}
 	t.Logf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
 
 	build := func(seed uint64, n int) *Index {
-		x, err := Open(t.Context(), t.TempDir(), discard())
+		x, err := Open(t.Context(), t.TempDir(), Discard())
 		if err != nil {
 			t.Fatal(err)
 		}
