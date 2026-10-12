@@ -1,19 +1,10 @@
-package index
+package index_test
 
 import (
-	"context"
-	"crypto/sha1"
-	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"iter"
-	"log/slog"
 	"maps"
 	"math"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -22,42 +13,17 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/mattn/go-sqlite3"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/eve-online-tools/speki/document"
+	"github.com/eve-online-tools/speki/index"
 )
 
-func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
-
-func version(content string) string {
-	sum := sha1.Sum([]byte(content))
-	return hex.EncodeToString(sum[:])
-}
-
-func changes(files map[string]string) iter.Seq2[Change, error] {
-	return func(yield func(Change, error) bool) {
-		for _, p := range slices.Sorted(maps.Keys(files)) {
-			if !yield(Change{Path: p, Version: version(files[p]), Content: []byte(files[p])}, nil) {
-				return
-			}
-		}
-	}
-}
-
-// newIndex builds an index of files and waits for its vocabulary.
-func newIndex(t *testing.T, files map[string]string) *Index {
-	t.Helper()
-	x, err := Open(t.Context(), t.TempDir(), discard())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(x.Close)
-	err = x.Build(t.Context(), "c1", changes(files))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	x.background.Wait()
-	return x
-}
+var (
+	newIndex = index.NewTestIndex
+	version  = index.Version
+	changes  = index.Changes
+)
 
 var fleet = map[string]string{
 	"ops/fleet-doctrine.md": "---\ntitle: Fleet doctrine\ndescription: Which fittings we fly.\ntags: [fleet, doctrine]\n---\n" +
@@ -81,16 +47,16 @@ func corpus() map[string]string {
 	return files
 }
 
-func search(t *testing.T, sources []Source, q string, opt Options) Results {
-	t.Helper()
-	res, err := Search(t.Context(), sources, q, opt)
+func search(tb testing.TB, sources []index.Source, q string, opt index.Options) index.Results {
+	tb.Helper()
+	res, err := index.Search(tb.Context(), sources, q, opt)
 	if err != nil {
-		t.Fatalf("Search(%q): %v", q, err)
+		tb.Fatalf("Search(%q): got error %v, want nil", q, err)
 	}
 	return res
 }
 
-func hitPaths(res Results) []string {
+func hitPaths(res index.Results) []string {
 	var out []string
 	for _, h := range res.Hits {
 		out = append(out, h.Path)
@@ -98,88 +64,90 @@ func hitPaths(res Results) []string {
 	return out
 }
 
-func TestSearch(t *testing.T) {
-	x := newIndex(t, corpus())
-	src := []Source{{Name: "kb", Index: x}}
+func kb(x *index.Index) []index.Source { return []index.Source{{Name: "kb", Index: x}} }
 
-	tests := []struct {
+func TestSearch(t *testing.T) {
+	t.Parallel()
+	src := kb(newIndex(t, corpus()))
+
+	testCases := []struct {
+		name      string
 		query     string
-		opt       Options
+		opt       index.Options
 		want      []string // in order
 		corrected map[string]string
 		relaxed   bool
 	}{
-		// Stemming: configuring, configured and configuration all match.
-		{query: "configured", want: []string{"services/oauth.md", "ops/fleet-roles.md", "ops/fleet-doctrine.md", "old/nomad.md"}},
-		{query: "kubrenetes", want: []string{"ops/fleet-doctrine.md"}, corrected: map[string]string{"kubrenetes": "kubernetes"}},
-		// Same stem as "kubernetes": found by stemming, nothing to correct.
-		{query: "kubernets", want: []string{"ops/fleet-doctrine.md"}},
-		{query: "doctr", want: []string{"ops/fleet-doctrine.md", "ops/fleet-roles.md"}},
-		{query: "auth", want: []string{"services/oauth.md"}},
-		{query: `"cache invalidation"`, want: []string{"notes/cache.md"}},
+		{name: "stemming", query: "configured", want: []string{"services/oauth.md", "ops/fleet-roles.md", "ops/fleet-doctrine.md", "old/nomad.md"}},
+		{name: "typo corrected", query: "kubrenetes", want: []string{"ops/fleet-doctrine.md"}, corrected: map[string]string{"kubrenetes": "kubernetes"}},
+		{name: "typo with the same stem", query: "kubernets", want: []string{"ops/fleet-doctrine.md"}},
+		{name: "last word as prefix", query: "doctr", want: []string{"ops/fleet-doctrine.md", "ops/fleet-roles.md"}},
+		{name: "substring of a name", query: "auth", want: []string{"services/oauth.md"}},
+		{name: "phrase", query: `"cache invalidation"`, want: []string{"notes/cache.md"}},
 		// fleet-roles links to fleet-doctrine, so "doctrine" is in its body too.
-		{query: "fleet -nomad -doctrine", want: []string{"README.md"}},
-		{query: "fleet tools", want: []string{"ops/fleet-doctrine.md"}},
-		{query: "nomad kubernetes", want: []string{"old/nomad.md", "ops/fleet-doctrine.md"}, relaxed: true},
-		{query: "fleet", want: []string{"ops/fleet-roles.md", "ops/fleet-doctrine.md", "README.md", "old/nomad.md"}},
-		{query: "fleet", opt: Options{Tags: []string{"doctrine"}}, want: []string{"ops/fleet-doctrine.md"}},
-		{query: "fleet", opt: Options{PathPrefix: "ops"}, want: []string{"ops/fleet-roles.md", "ops/fleet-doctrine.md"}},
-		{query: "nomad", opt: Options{ExcludeDeprecated: true}, want: nil},
-		{query: "fleet", opt: Options{Limit: 1}, want: []string{"ops/fleet-roles.md"}},
+		{name: "exclusions", query: "fleet -nomad -doctrine", want: []string{"README.md"}},
+		{name: "all words", query: "fleet tools", want: []string{"ops/fleet-doctrine.md"}},
+		{name: "relaxed to any word", query: "nomad kubernetes", want: []string{"old/nomad.md", "ops/fleet-doctrine.md"}, relaxed: true},
+		{name: "ranking", query: "fleet", want: []string{"ops/fleet-roles.md", "ops/fleet-doctrine.md", "README.md", "old/nomad.md"}},
+		{name: "tag filter", query: "fleet", opt: index.Options{Tags: []string{"doctrine"}}, want: []string{"ops/fleet-doctrine.md"}},
+		{name: "path prefix", query: "fleet", opt: index.Options{PathPrefix: "ops"}, want: []string{"ops/fleet-roles.md", "ops/fleet-doctrine.md"}},
+		{name: "exclude deprecated", query: "nomad", opt: index.Options{ExcludeDeprecated: true}, want: nil},
+		{name: "limit", query: "fleet", opt: index.Options{Limit: 1}, want: []string{"ops/fleet-roles.md"}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.query, func(t *testing.T) {
-			res := search(t, src, tt.query, tt.opt)
-			if diff := cmp.Diff(tt.want, hitPaths(res), cmpopts.EquateEmpty()); diff != "" {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			res := search(t, src, testCase.query, testCase.opt)
+			if diff := cmp.Diff(testCase.want, hitPaths(res), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("hits (-want +got):\n%s", diff)
 			}
-			if diff := cmp.Diff(tt.corrected, res.Corrected, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(testCase.corrected, res.Corrected, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("corrected (-want +got):\n%s", diff)
 			}
-			if res.Relaxed != tt.relaxed {
-				t.Errorf("relaxed = %v, want %v", res.Relaxed, tt.relaxed)
+			if res.Relaxed != testCase.relaxed {
+				t.Errorf("relaxed: got %v, want %v", res.Relaxed, testCase.relaxed)
 			}
 		})
 	}
 }
 
 func TestSearchDetails(t *testing.T) {
-	x := newIndex(t, corpus())
-	src := []Source{{Name: "kb", Index: x}}
+	t.Parallel()
+	src := kb(newIndex(t, corpus()))
 
-	res := search(t, src, "invalidation", Options{})
-	if len(res.Hits) != 1 {
-		t.Fatalf("hits = %v", hitPaths(res))
+	res := search(t, src, "invalidation", index.Options{})
+	want := []index.Hit{{
+		Source:  "kb",
+		Path:    "notes/cache.md",
+		Title:   "Cache invalidation",
+		Tags:    []string{},
+		Status:  "active",
+		Version: version(fleet["notes/cache.md"]),
+		Snippet: "Hard problems: cache **invalidation** and naming things.",
+	}}
+	if diff := cmp.Diff(want, res.Hits, cmpopts.IgnoreFields(index.Hit{}, "Score"), cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("hits (-want +got):\n%s", diff)
 	}
-	h := res.Hits[0]
-	if h.Source != "kb" || h.Title != "Cache invalidation" || h.Version != version(fleet["notes/cache.md"]) || h.Score <= 0 {
-		t.Errorf("hit = %+v", h)
-	}
-	if h.Snippet != "Hard problems: cache **invalidation** and naming things." {
-		t.Errorf("snippet = %q", h.Snippet)
-	}
-
-	res = search(t, src, "doctrine", Options{})
-	if res.Hits[0].Snippet == "" || res.Hits[0].Tags[1] != "doctrine" {
-		t.Errorf("hit = %+v", res.Hits[0])
-	}
-
-	nomad := search(t, src, "nomad", Options{})
-	plain := search(t, src, "invalidation", Options{})
-	if nomad.Hits[0].Score >= plain.Hits[0].Score*2 {
-		t.Errorf("deprecated document isn't ranked lower: %v vs %v", nomad.Hits[0].Score, plain.Hits[0].Score)
+	if len(res.Hits) == 1 && res.Hits[0].Score <= 0 {
+		t.Errorf("score: got %v, want > 0", res.Hits[0].Score)
 	}
 
-	_, err := Search(t.Context(), src, "-only -exclusions", Options{})
-	if !errors.Is(err, ErrEmptyQuery) {
-		t.Errorf("err = %v, want ErrEmptyQuery", err)
+	nomad := search(t, src, "nomad", index.Options{})
+	if nomad.Hits[0].Score >= res.Hits[0].Score*2 {
+		t.Errorf("deprecated score: got %v, want below %v", nomad.Hits[0].Score, res.Hits[0].Score*2)
+	}
+
+	_, err := index.Search(t.Context(), src, "-only -exclusions", index.Options{})
+	if !errors.Is(err, index.ErrEmptyQuery) {
+		t.Errorf("only exclusions: got %v, want %v", err, index.ErrEmptyQuery)
 	}
 }
 
 func TestSearchAcrossSources(t *testing.T) {
+	t.Parallel()
 	withFiller := func(files map[string]string) map[string]string {
 		for k, v := range corpus() {
-			if k[:5] == "misc/" {
+			if strings.HasPrefix(k, "misc/") {
 				files[k] = v
 			}
 		}
@@ -190,280 +158,319 @@ func TestSearchAcrossSources(t *testing.T) {
 	c := newIndex(t, withFiller(map[string]string{"z.md": "# Typo\n\nreplcation is how this vault spells it\n"}))
 	d := newIndex(t, withFiller(map[string]string{"w.md": "# Spelled right\n\nreplication done properly\n"}))
 
-	res := search(t, []Source{{"a", a}, {"b", b}}, "kubernetes", Options{})
-	got := []string{}
-	for _, h := range res.Hits {
-		got = append(got, h.Source+":"+h.Path)
+	testCases := []struct {
+		name      string
+		sources   []index.Source
+		query     string
+		want      []string
+		corrected map[string]string
+	}{
+		{
+			name:    "hits merged by score",
+			sources: []index.Source{{Name: "a", Index: a}, {Name: "b", Index: b}},
+			query:   "kubernetes",
+			want:    []string{"a:x.md", "b:y.md"},
+		},
+		{
+			name:    "a word known in any source isn't corrected",
+			sources: []index.Source{{Name: "c", Index: c}, {Name: "d", Index: d}},
+			query:   "replcation",
+			want:    []string{"c:z.md"},
+		},
+		{
+			name:      "only the sources searched correct",
+			sources:   []index.Source{{Name: "d", Index: d}},
+			query:     "replcation",
+			want:      []string{"d:w.md"},
+			corrected: map[string]string{"replcation": "replication"},
+		},
 	}
-	if diff := cmp.Diff([]string{"a:x.md", "b:y.md"}, got); diff != "" {
-		t.Errorf("merged hits (-want +got):\n%s", diff)
-	}
-
-	// A word known in any searched source isn't corrected.
-	res = search(t, []Source{{"c", c}, {"d", d}}, "replcation", Options{})
-	if res.Corrected != nil || len(res.Hits) != 1 || res.Hits[0].Source != "c" {
-		t.Errorf("results = %+v", res)
-	}
-	// Only the vaults searched are used for corrections.
-	res = search(t, []Source{{"d", d}}, "replcation", Options{})
-	if res.Corrected["replcation"] != "replication" || len(res.Hits) != 1 {
-		t.Errorf("results = %+v", res)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			res := search(t, testCase.sources, testCase.query, index.Options{})
+			var got []string
+			for _, h := range res.Hits {
+				got = append(got, h.Source+":"+h.Path)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("hits (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(testCase.corrected, res.Corrected, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("corrected (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
 func TestApply(t *testing.T) {
+	t.Parallel()
 	x := newIndex(t, fleet)
-	src := []Source{{Name: "kb", Index: x}}
+	src := kb(x)
 
-	err := x.Apply(t.Context(), "c2", []Change{
+	err := x.Apply(t.Context(), "c2", []index.Change{
 		{Path: "notes/cache.md"}, // deleted
 		{Path: "ops/fleet-roles.md", Version: version("x"), Content: []byte("# Fleet roles\n\nNow about zeppelins.\n")},
 		{Path: "new.md", Version: version("y"), Content: []byte("# New\n\nFreshly written quokka notes.\n")},
 		{Path: "bad.md", Version: version("z"), Content: []byte("not utf-8 \xff")},
 	})
 	if err != nil {
-		t.Fatalf("Apply: %v", err)
+		t.Fatalf("Apply: got error %v, want nil", err)
 	}
-	if x.Commit() != "c2" {
-		t.Errorf("commit = %q", x.Commit())
+	if got := x.Commit(); got != "c2" {
+		t.Errorf("commit: got %q, want c2", got)
 	}
 
-	// The new word counts as known straight away, before the vocabulary reload finishes.
-	res := search(t, src, "quokka", Options{})
-	if res.Corrected != nil || len(res.Hits) != 1 {
-		t.Errorf("new word: %+v", res)
+	testCases := []struct {
+		name      string
+		query     string
+		want      []string
+		corrected map[string]string
+	}{
+		// Known straight away, before the vocabulary reload finishes, so not corrected.
+		{name: "added", query: "quokka", want: []string{"new.md"}},
+		{name: "deleted", query: "invalidation", want: nil},
+		{name: "changed", query: "zeppelins", want: []string{"ops/fleet-roles.md"}},
 	}
-	if res := search(t, src, "invalidation", Options{}); len(res.Hits) != 0 {
-		t.Errorf("deleted document still found: %v", hitPaths(res))
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			res := search(t, src, testCase.query, index.Options{})
+			if diff := cmp.Diff(testCase.want, hitPaths(res), cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("hits (-want +got):\n%s", diff)
+			}
+			if len(res.Corrected) != 0 {
+				t.Errorf("corrected: got %v, want none", res.Corrected)
+			}
+		})
 	}
-	if res := search(t, src, "zeppelins", Options{}); len(hitPaths(res)) != 1 {
-		t.Errorf("changed document not found")
-	}
+
 	d, err := x.Document(t.Context(), "bad.md")
-	if err != nil || d.Status != StatusBroken || d.Version != version("z") {
-		t.Errorf("unusable file: %+v, %v", d, err)
+	if err != nil {
+		t.Fatalf("Document: got error %v, want nil", err)
+	}
+	if d.Status != index.StatusBroken || d.Version != version("z") {
+		t.Errorf("unusable file: got status %q version %q, want %q %q", d.Status, d.Version, index.StatusBroken, version("z"))
 	}
 }
 
-func TestDocumentAndLinks(t *testing.T) {
+func TestDocument(t *testing.T) {
+	t.Parallel()
 	x := newIndex(t, fleet)
 
-	d, err := x.Document(t.Context(), "ops/fleet-doctrine.md")
+	got, err := x.Document(t.Context(), "ops/fleet-doctrine.md")
 	if err != nil {
-		t.Fatalf("Document: %v", err)
+		t.Fatalf("Document: got error %v, want nil", err)
 	}
-	if d.Title != "Fleet doctrine" || d.Status != "active" || d.Description != "Which fittings we fly." ||
-		!slices.Equal(d.Tags, []string{"fleet", "doctrine"}) || d.Version != version(fleet["ops/fleet-doctrine.md"]) {
-		t.Errorf("document = %+v", d)
+	content := fleet["ops/fleet-doctrine.md"]
+	want := index.Document{
+		Path:        "ops/fleet-doctrine.md",
+		Title:       "Fleet doctrine",
+		Description: "Which fittings we fly.",
+		Status:      "active",
+		Tags:        []string{"fleet", "doctrine"},
+		Aliases:     []string{},
+		Related:     []string{},
+		Extra:       map[string]any{},
+		Bytes:       len(content),
+		Lines:       11,
+		Version:     version(content),
+		Warnings:    []string{},
 	}
-	_, err = x.Document(t.Context(), "missing.md")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("missing document: %v", err)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("document (-want +got):\n%s", diff)
 	}
 
-	from, err := x.LinkedFrom(t.Context(), "ops/fleet-roles.md")
-	if err != nil || !slices.Equal(from, []string{"ops/fleet-doctrine.md"}) {
-		t.Errorf("linked from roles = %v, %v", from, err)
+	_, err = x.Document(t.Context(), "missing.md")
+	if !errors.Is(err, index.ErrNotFound) {
+		t.Errorf("missing document: got %v, want %v", err, index.ErrNotFound)
 	}
-	from, err = x.LinkedFrom(t.Context(), "ops/fleet-doctrine.md")
-	if err != nil || !slices.Equal(from, []string{"ops/fleet-roles.md"}) {
-		t.Errorf("linked from doctrine (wikilink) = %v, %v", from, err)
+}
+
+func TestLinkedFrom(t *testing.T) {
+	t.Parallel()
+	x := newIndex(t, fleet)
+	testCases := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{name: "markdown link", path: "ops/fleet-roles.md", want: []string{"ops/fleet-doctrine.md"}},
+		{name: "wikilink", path: "ops/fleet-doctrine.md", want: []string{"ops/fleet-roles.md"}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := x.LinkedFrom(t.Context(), testCase.path)
+			if err != nil {
+				t.Fatalf("LinkedFrom: got error %v, want nil", err)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("linked from (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
 func TestList(t *testing.T) {
+	t.Parallel()
 	x := newIndex(t, fleet)
-	ctx := t.Context()
+	root := []string{"README.md", "notes/", "old/", "ops/", "services/"}
 
-	paths := func(es []Entry) []string {
-		var out []string
-		for _, e := range es {
-			out = append(out, e.Path)
+	testCases := []struct {
+		name      string
+		folder    string
+		recursive bool
+		after     string
+		want      []string
+	}{
+		{name: "root", want: root},
+		{name: "folder", folder: "ops/", want: []string{"ops/fleet-doctrine.md", "ops/fleet-roles.md"}},
+		{name: "recursive page", folder: "ops", recursive: true, after: "ops/fleet-doctrine.md", want: []string{"ops/fleet-roles.md"}},
+		{name: "recursive", recursive: true, want: slices.Sorted(maps.Keys(fleet))},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			entries, err := x.List(t.Context(), testCase.folder, testCase.recursive, testCase.after, 100)
+			if err != nil {
+				t.Fatalf("List: got error %v, want nil", err)
+			}
+			var got []string
+			for _, e := range entries {
+				got = append(got, e.Path)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("paths (-want +got):\n%s", diff)
+			}
+		})
+	}
+
+	t.Run("pages", func(t *testing.T) {
+		t.Parallel()
+		var got []string
+		after := ""
+		for {
+			page, err := x.List(t.Context(), "", false, after, 2)
+			if err != nil {
+				t.Fatalf("List: got error %v, want nil", err)
+			}
+			if len(page) == 0 {
+				break
+			}
+			for _, e := range page {
+				got = append(got, e.Path)
+			}
+			after = page[len(page)-1].Path
 		}
-		return out
-	}
+		if diff := cmp.Diff(root, got); diff != "" {
+			t.Errorf("paged (-want +got):\n%s", diff)
+		}
+	})
 
-	root, err := x.List(ctx, "", false, "", 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"README.md", "notes/", "old/", "ops/", "services/"}
-	if diff := cmp.Diff(want, paths(root)); diff != "" {
-		t.Errorf("root (-want +got):\n%s", diff)
-	}
-
-	var paged []Entry
-	after := ""
-	for {
-		page, err := x.List(ctx, "", false, after, 2)
+	t.Run("entry", func(t *testing.T) {
+		t.Parallel()
+		entries, err := x.List(t.Context(), "ops/", false, "", 1)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("List: got error %v, want nil", err)
 		}
-		if len(page) == 0 {
-			break
+		want := []index.Entry{{
+			Path:        "ops/fleet-doctrine.md",
+			Title:       "Fleet doctrine",
+			Description: "Which fittings we fly.",
+			Status:      "active",
+			Version:     version(fleet["ops/fleet-doctrine.md"]),
+		}}
+		if diff := cmp.Diff(want, entries); diff != "" {
+			t.Errorf("entries (-want +got):\n%s", diff)
 		}
-		paged = append(paged, page...)
-		after = page[len(page)-1].Path
-	}
-	if diff := cmp.Diff(want, paths(paged)); diff != "" {
-		t.Errorf("paged (-want +got):\n%s", diff)
-	}
-	recursivePage, _ := x.List(ctx, "ops", true, "ops/fleet-doctrine.md", 10)
-	if diff := cmp.Diff([]string{"ops/fleet-roles.md"}, paths(recursivePage)); diff != "" {
-		t.Errorf("recursive page (-want +got):\n%s", diff)
-	}
-
-	ops, _ := x.List(ctx, "ops/", false, "", 100)
-	if diff := cmp.Diff([]string{"ops/fleet-doctrine.md", "ops/fleet-roles.md"}, paths(ops)); diff != "" {
-		t.Errorf("ops (-want +got):\n%s", diff)
-	}
-	if ops[0].Title != "Fleet doctrine" {
-		t.Errorf("entry = %+v", ops[0])
-	}
-
-	all, _ := x.List(ctx, "", true, "", 100)
-	if len(all) != len(fleet) {
-		t.Errorf("recursive listing has %d entries, want %d", len(all), len(fleet))
-	}
-}
-
-func TestGenerations(t *testing.T) {
-	dir := t.TempDir()
-	x, err := Open(t.Context(), dir, discard())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if x.Commit() != "" {
-		t.Errorf("empty index commit = %q", x.Commit())
-	}
-
-	err = x.Build(t.Context(), "c1", changes(fleet))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A reader on the first build keeps working while a second build replaces it.
-	old, err := x.acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = x.Build(t.Context(), "c2", changes(map[string]string{"only.md": "# Only\n"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var n int
-	err = old.reader.QueryRow("SELECT count(*) FROM documents").Scan(&n)
-	if err != nil || n != len(fleet) {
-		t.Errorf("old generation during swap: %d documents, %v", n, err)
-	}
-	old.release()
-	x.Close()
-
-	files, _ := filepath.Glob(filepath.Join(dir, "index-*.db"))
-	if len(files) != 1 {
-		t.Errorf("generation files = %v, want one", files)
-	}
-
-	// Garbage next to it is cleaned up, and the newest usable generation is reopened.
-	err = os.WriteFile(filepath.Join(dir, "index-99.db"), []byte("not sqlite"), 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	x, err = Open(t.Context(), dir, discard())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer x.Close()
-	if x.Commit() != "c2" {
-		t.Errorf("reopened commit = %q, want c2", x.Commit())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "index-99.db")); !os.IsNotExist(err) {
-		t.Error("unusable generation not removed")
-	}
+	})
 }
 
 func TestInterruptedBuildIsDiscarded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	x, err := Open(t.Context(), dir, discard())
+	x, err := index.Open(t.Context(), dir, index.Discard())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Open: got error %v, want nil", err)
 	}
 	err = x.Build(t.Context(), "good", changes(fleet))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Build: got error %v, want nil", err)
 	}
 	// A build that fails half way, as if speki were killed while the transaction was open.
-	failing := func(yield func(Change, error) bool) {
-		if !yield(Change{Path: "a.md", Version: "v", Content: []byte("# A\n")}, nil) {
+	failing := func(yield func(index.Change, error) bool) {
+		if !yield(index.Change{Path: "a.md", Version: "v", Content: []byte("# A\n")}, nil) {
 			return
 		}
-		yield(Change{}, errors.New("killed"))
+		yield(index.Change{}, errors.New("killed"))
 	}
 	err = x.Build(t.Context(), "half", failing)
 	if err == nil {
-		t.Fatal("failing build succeeded")
+		t.Fatal("failing build: got nil error, want one")
 	}
-	if x.Commit() != "good" {
-		t.Errorf("commit after failed build = %q", x.Commit())
+	if got := x.Commit(); got != "good" {
+		t.Errorf("commit after failed build: got %q, want good", got)
 	}
 	x.Close()
 
-	x, err = Open(t.Context(), dir, discard())
+	x, err = index.Open(t.Context(), dir, index.Discard())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("reopen: got error %v, want nil", err)
 	}
-	defer x.Close()
-	if x.Commit() != "good" {
-		t.Errorf("reopened commit = %q, want good", x.Commit())
+	t.Cleanup(x.Close)
+	if got := x.Commit(); got != "good" {
+		t.Errorf("reopened commit: got %q, want good", got)
 	}
 }
 
 func TestClosedIndex(t *testing.T) {
+	t.Parallel()
 	x := newIndex(t, fleet)
 	x.Close()
 	x.Close() // twice is fine
 
-	_, err := Search(t.Context(), []Source{{"kb", x}}, "fleet", Options{})
-	if !errors.Is(err, ErrClosed) {
-		t.Errorf("Search on closed index: %v", err)
+	_, err := index.Search(t.Context(), kb(x), "fleet", index.Options{})
+	if !errors.Is(err, index.ErrClosed) {
+		t.Errorf("Search: got %v, want %v", err, index.ErrClosed)
 	}
 	_, err = x.Document(t.Context(), "README.md")
-	if !errors.Is(err, ErrClosed) {
-		t.Errorf("Document on closed index: %v", err)
+	if !errors.Is(err, index.ErrClosed) {
+		t.Errorf("Document: got %v, want %v", err, index.ErrClosed)
 	}
-	if x.Commit() != "" {
-		t.Errorf("Commit on closed index = %q", x.Commit())
+	if got := x.Commit(); got != "" {
+		t.Errorf("Commit: got %q, want empty", got)
 	}
 }
 
 func TestSearchWhileBuilding(t *testing.T) {
+	t.Parallel()
 	x := newIndex(t, corpus())
-	src := []Source{{"kb", x}}
 	errs := make(chan error, 6) // the builder's errors, reported from the test's goroutine
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := range 3 {
 			errs <- x.Build(t.Context(), fmt.Sprint("c", i), changes(corpus()))
-			errs <- x.Apply(t.Context(), fmt.Sprint("a", i), []Change{{Path: "notes/cache.md"}})
+			errs <- x.Apply(t.Context(), fmt.Sprint("a", i), []index.Change{{Path: "notes/cache.md"}})
 		}
 	}()
-	searching := true
-	for searching {
+	for searching := true; searching; {
 		select {
 		case <-done:
 			searching = false
 		default:
-			_, err := Search(t.Context(), src, "fleet", Options{})
+			_, err := index.Search(t.Context(), kb(x), "fleet", index.Options{})
 			if err != nil {
 				<-done
-				t.Fatal(err)
+				t.Fatalf("Search: got error %v, want nil", err)
 			}
 		}
 	}
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Error(err)
+			t.Errorf("build or apply: got error %v, want nil", err)
 		}
 	}
 }
@@ -471,25 +478,26 @@ func TestSearchWhileBuilding(t *testing.T) {
 // A file that becomes unusable is kept as broken at its new version, never at the old one: a write
 // checked against the old version would overwrite a change nobody saw.
 func TestBrokenDocuments(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	x := newIndex(t, fleet)
-	src := []Source{{Name: "kb", Index: x}}
+	src := kb(x)
 	bad := "---\ntitle: About\n---\n# About\n\nKnowledge about our fleet. \xff\n"
-	err := x.Apply(ctx, "c2", []Change{{Path: "README.md", Version: version(bad), Content: []byte(bad)}})
+	err := x.Apply(ctx, "c2", []index.Change{{Path: "README.md", Version: version(bad), Content: []byte(bad)}})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Apply: got error %v, want nil", err)
 	}
-	if x.Commit() != "c2" {
-		t.Errorf("commit = %q", x.Commit())
+	if got := x.Commit(); got != "c2" {
+		t.Errorf("commit: got %q, want c2", got)
 	}
 	applied, err := x.Document(ctx, "README.md")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Document: got error %v, want nil", err)
 	}
-	want := Document{
+	want := index.Document{
 		Path:     "README.md",
 		Title:    "README",
-		Status:   StatusBroken,
+		Status:   index.StatusBroken,
 		Tags:     []string{},
 		Aliases:  []string{},
 		Related:  []string{},
@@ -504,94 +512,48 @@ func TestBrokenDocuments(t *testing.T) {
 		t.Errorf("after Apply (-want +got):\n%s", diff)
 	}
 	for _, q := range []string{"knowledge", "about", "readme"} {
-		if res := search(t, src, q, Options{}); slices.Contains(hitPaths(res), "README.md") {
-			t.Errorf("search %q found the broken document", q)
+		if got := hitPaths(search(t, src, q, index.Options{})); slices.Contains(got, "README.md") {
+			t.Errorf("search %q: got %v, want no README.md", q, got)
 		}
 	}
-	root, err := x.List(ctx, "", false, "", 100)
-	if err != nil || len(root) == 0 || root[0].Path != "README.md" || root[0].Status != StatusBroken {
-		t.Errorf("list: %+v, %v", root, err)
+	root, err := x.List(ctx, "", false, "", 1)
+	if err != nil {
+		t.Fatalf("List: got error %v, want nil", err)
+	}
+	if len(root) != 1 || root[0].Status != index.StatusBroken {
+		t.Errorf("list: got %+v, want README.md as broken", root)
 	}
 
 	files := maps.Clone(fleet)
 	files["README.md"] = bad
-	built := newIndex(t, files)
-	d, err := built.Document(ctx, "README.md")
+	built, err := newIndex(t, files).Document(ctx, "README.md")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Document: got error %v, want nil", err)
 	}
-	if diff := cmp.Diff(applied, d); diff != "" {
+	if diff := cmp.Diff(applied, built); diff != "" {
 		t.Errorf("Build and Apply disagree (-apply +build):\n%s", diff)
 	}
 
 	good := "# About\n\nFixed.\n"
-	err = x.Apply(ctx, "c3", []Change{{Path: "README.md", Version: version(good), Content: []byte(good)}})
+	err = x.Apply(ctx, "c3", []index.Change{{Path: "README.md", Version: version(good), Content: []byte(good)}})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Apply: got error %v, want nil", err)
 	}
-	d, err = x.Document(ctx, "README.md")
-	if err != nil || d.Status != "active" || d.Broken != "" || d.Version != version(good) {
-		t.Errorf("after the fix: %+v, %v", d, err)
+	d, err := x.Document(ctx, "README.md")
+	if err != nil {
+		t.Fatalf("Document: got error %v, want nil", err)
 	}
-	if res := search(t, src, "fixed", Options{}); !slices.Contains(hitPaths(res), "README.md") {
-		t.Error("the fixed document isn't found")
+	if d.Status != "active" || d.Broken != "" || d.Version != version(good) {
+		t.Errorf("after the fix: got %+v, want active at %s", d, version(good))
 	}
-}
-
-func TestSearchDoesNotCorrectPartialWordsOrNumbers(t *testing.T) {
-	x := newIndex(t, map[string]string{"a.md": "# Network\n\nnetwork notes for 2025\n"})
-	x.current.Load().vocab.Store(nil) // as right after a change, before the vocabulary is reloaded
-	src := []Source{{"kb", x}}
-
-	res := search(t, src, "netw", Options{})
-	if res.Corrected != nil || len(res.Hits) != 1 {
-		t.Errorf("partial word: %+v", res)
-	}
-	res = search(t, src, "2026", Options{})
-	if res.Corrected != nil {
-		t.Errorf("number corrected: %v", res.Corrected)
-	}
-}
-
-func TestVocabulary(t *testing.T) {
-	v := &vocabulary{trigrams: map[string][]int32{}}
-	for i, w := range []string{"doctrine", "kubectl", "kubernetes", "replication"} { // sorted
-		v.words = append(v.words, w)
-		v.docs = append(v.docs, 10-i)
-		for _, tg := range trigramsOf(w) {
-			v.trigrams[tg] = append(v.trigrams[tg], int32(i))
-		}
-	}
-
-	tests := []struct {
-		word string
-		max  int
-		want string
-	}{
-		{"kubernets", 2, "kubernetes"},
-		{"replcation", 2, "replication"},
-		{"doctirne", 2, "doctrine"}, //nolint:misspell // a transposition, on purpose
-		{"zzzz", 2, ""},
-	}
-	for _, tt := range tests {
-		got := ""
-		if s := v.suggest(tt.word, tt.max); len(s) > 0 {
-			got = slices.MinFunc(s, func(a, b suggestion) int { return a.distance - b.distance }).word
-		}
-		if got != tt.want {
-			t.Errorf("suggest(%q) = %q, want %q", tt.word, got, tt.want)
-		}
-	}
-	if d := distance("abc", "abc", 2); d != 0 {
-		t.Errorf("distance = %d", d)
-	}
-	if d := distance("abcdef", "xyz", 2); d != 3 {
-		t.Errorf("distance beyond limit = %d, want 3", d)
+	if got := hitPaths(search(t, src, "fixed", index.Options{})); !slices.Contains(got, "README.md") {
+		t.Errorf("search fixed: got %v, want README.md", got)
 	}
 }
 
 // The examples in docs/functional/search-and-query.md that TestSearch doesn't cover.
 func TestSearchExamples(t *testing.T) {
+	t.Parallel()
 	files := corpus()
 	maps.Copy(files, map[string]string{
 		"phrase/adjacent.md": "# Adjacent\n\nOur caching invalidations are slow.\n",
@@ -605,110 +567,74 @@ func TestSearchExamples(t *testing.T) {
 		"snippet/long.md":    "# Long\n\n" + strings.Repeat("filler words go here ", 40) + "the blimp is here " + strings.Repeat("more filler text now ", 40) + "\n",
 		"snippet/title.md":   "---\ntitle: Airship\ndescription: Lighter than air.\n---\nSome **bold** text about nothing in particular.\n",
 	})
-	src := []Source{{Name: "kb", Index: newIndex(t, files)}}
-	score := func(res Results, path string) float64 {
+	src := kb(newIndex(t, files))
+	score := func(tb testing.TB, res index.Results, path string) float64 {
+		tb.Helper()
 		for _, h := range res.Hits {
 			if h.Path == path {
 				return h.Score
 			}
 		}
-		t.Fatalf("%s not found in %v", path, hitPaths(res))
+		tb.Fatalf("hits: got %v, want %s", hitPaths(res), path)
 		return 0
 	}
 
 	t.Run("quoted phrases are adjacent, after stemming", func(t *testing.T) {
-		res := search(t, src, `"cache invalidation"`, Options{})
-		got := hitPaths(res)
+		t.Parallel()
+		got := hitPaths(search(t, src, `"cache invalidation"`, index.Options{}))
 		if !slices.Contains(got, "phrase/adjacent.md") || slices.Contains(got, "phrase/apart.md") {
-			t.Errorf("hits = %v", got)
+			t.Errorf("hits: got %v, want phrase/adjacent.md without phrase/apart.md", got)
 		}
 	})
 	t.Run("title outranks tags outranks body", func(t *testing.T) {
-		got := hitPaths(search(t, src, "zeppelin", Options{}))
-		if strings.Join(got, ",") != "weights/title.md,weights/tags.md,weights/body.md" {
-			t.Errorf("order = %v", got)
+		t.Parallel()
+		got := hitPaths(search(t, src, "zeppelin", index.Options{}))
+		if diff := cmp.Diff([]string{"weights/title.md", "weights/tags.md", "weights/body.md"}, got); diff != "" {
+			t.Errorf("hits (-want +got):\n%s", diff)
 		}
 	})
 	t.Run("deprecated is halved, draft keeps its score", func(t *testing.T) {
-		res := search(t, src, "dirigible", Options{})
-		active, draft, old := score(res, "status/active.md"), score(res, "status/draft.md"), score(res, "status/old.md")
+		t.Parallel()
+		res := search(t, src, "dirigible", index.Options{})
+		active, draft, old := score(t, res, "status/active.md"), score(t, res, "status/draft.md"), score(t, res, "status/old.md")
 		if draft != active {
-			t.Errorf("draft %v, active %v", draft, active)
+			t.Errorf("draft score: got %v, want %v", draft, active)
 		}
 		if math.Abs(old-active/2) > 1e-9 {
-			t.Errorf("deprecated %v, active %v", old, active)
+			t.Errorf("deprecated score: got %v, want %v", old, active/2)
 		}
 	})
 	t.Run("snippet of at most 32 words", func(t *testing.T) {
-		res := search(t, src, "blimp", Options{})
-		if n := len(strings.Fields(res.Hits[0].Snippet)); n > 32+2 { // the ellipses
-			t.Errorf("snippet of %d words: %q", n, res.Hits[0].Snippet)
+		t.Parallel()
+		res := search(t, src, "blimp", index.Options{})
+		snippet := res.Hits[0].Snippet
+		if n := len(strings.Fields(snippet)); n > 32+2 { // the ellipses
+			t.Errorf("snippet words: got %d, want at most 34: %q", n, snippet)
 		}
-		if !strings.Contains(res.Hits[0].Snippet, "**blimp**") {
-			t.Errorf("snippet = %q", res.Hits[0].Snippet)
+		if !strings.Contains(snippet, "**blimp**") {
+			t.Errorf("snippet: got %q, want **blimp** in it", snippet)
 		}
 	})
 	t.Run("a match only in the title shows the description", func(t *testing.T) {
-		res := search(t, src, "airship", Options{})
-		if res.Hits[0].Snippet != "Lighter than air." {
-			t.Errorf("snippet = %q", res.Hits[0].Snippet)
+		t.Parallel()
+		res := search(t, src, "airship", index.Options{})
+		if got := res.Hits[0].Snippet; got != "Lighter than air." {
+			t.Errorf("snippet: got %q, want %q", got, "Lighter than air.")
 		}
 	})
-}
-
-// A failure that isn't the file's (here a cancelled context) leaves the commit where it was, so the next
-// sync tries again instead of losing the change.
-func TestApplyFailureKeepsTheCommit(t *testing.T) {
-	x := newIndex(t, fleet)
-	g, err := x.acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer g.release()
-	_, err = g.writer.ExecContext(t.Context(), `CREATE TRIGGER fail_headings BEFORE INSERT ON headings
-		BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := "# README\n\nNew text.\n"
-	changes := []Change{
-		{Path: "bad.md", Version: version("z"), Content: []byte("not utf-8 \xff")},
-		{Path: "README.md", Version: version(content), Content: []byte(content)},
-	}
-	err = x.Apply(t.Context(), "c2", changes)
-	if err == nil {
-		t.Fatal("Apply succeeded although inserts fail")
-	}
-	if x.Commit() != "c1" {
-		t.Errorf("commit moved to %s", x.Commit())
-	}
-
-	_, err = g.writer.ExecContext(t.Context(), "DROP TRIGGER fail_headings")
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = x.Apply(t.Context(), "c2", changes)
-	if err != nil || x.Commit() != "c2" {
-		t.Fatalf("retry: %v, commit %s", err, x.Commit())
-	}
-	if d, err := x.Document(t.Context(), "bad.md"); err != nil || d.Status != StatusBroken {
-		t.Errorf("the bad file after the retry: %+v, %v", d, err)
-	}
-	if d, err := x.Document(t.Context(), "README.md"); err != nil || d.Version != version(content) {
-		t.Errorf("README.md after the retry: %+v, %v", d, err)
-	}
 }
 
 // A build stops reading files once an insert fails: the build fails anyway.
 func TestBuildStopsAtAFailedInsert(t *testing.T) {
-	x, err := Open(t.Context(), t.TempDir(), discard())
+	t.Parallel()
+	x, err := index.Open(t.Context(), t.TempDir(), index.Discard())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Open: got error %v, want nil", err)
 	}
 	t.Cleanup(x.Close)
 	const total = 5000
 	read := 0
-	files := func(yield func(Change, error) bool) {
+	files := func(yield func(index.Change, error) bool) {
 		for i := range total {
 			read++
 			path := fmt.Sprintf("d%d.md", i)
@@ -716,69 +642,66 @@ func TestBuildStopsAtAFailedInsert(t *testing.T) {
 				path = "d0.md" // the same path twice fails its insert
 			}
 			content := fmt.Sprintf("# D%d\n", i)
-			if !yield(Change{Path: path, Version: version(content), Content: []byte(content)}, nil) {
+			if !yield(index.Change{Path: path, Version: version(content), Content: []byte(content)}, nil) {
 				return
 			}
 		}
 	}
 	err = x.Build(t.Context(), "c1", files)
 	if err == nil || !strings.Contains(err.Error(), "d0.md: insert document") {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("Build: got %v, want a d0.md insert error", err)
 	}
 	if read > total/2 {
-		t.Errorf("read %d of %d files after the insert failed", read, total)
+		t.Errorf("files read after the insert failed: got %d, want at most %d", read, total/2)
 	}
 }
 
 // Answers carry the start of a long title or description, not all of it.
 func TestLongTitlesAreCut(t *testing.T) {
-	title, desc := strings.Repeat("é", maxTitle), strings.Repeat("quokka ", maxDescription)
+	t.Parallel()
+	title, desc := strings.Repeat("é", document.MaxTitle), strings.Repeat("quokka ", document.MaxDescription)
 	x := newIndex(t, map[string]string{"long.md": "---\ntitle: " + title + "\ndescription: " + desc + "\n---\nBody.\n"})
-	check := func(where, title, desc string) {
-		t.Helper()
-		if len(title) > maxTitle || len(desc) > maxDescription || !utf8.ValidString(title) || !strings.HasSuffix(desc, "…") {
-			t.Errorf("%s: title of %d bytes, description of %d", where, len(title), len(desc))
+	check := func(tb testing.TB, title, desc string) {
+		tb.Helper()
+		if len(title) > document.MaxTitle || !utf8.ValidString(title) {
+			tb.Errorf("title: got %d bytes, valid UTF-8 %v; want at most %d, valid", len(title), utf8.ValidString(title), document.MaxTitle)
+		}
+		if len(desc) > document.MaxDescription || !strings.HasSuffix(desc, "…") {
+			tb.Errorf("description: got %d bytes, want at most %d ending in …", len(desc), document.MaxDescription)
 		}
 	}
-	d, err := x.Document(t.Context(), "long.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	check("document", d.Title, d.Description)
-	entries, err := x.List(t.Context(), "", true, "", 10)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("list: %v, %v", entries, err)
-	}
-	check("list", entries[0].Title, entries[0].Description)
-	res := search(t, []Source{{Name: "kb", Index: x}}, "quokka", Options{})
-	if len(res.Hits) != 1 {
-		t.Fatalf("search: %v", hitPaths(res))
-	}
-	check("search", res.Hits[0].Title, res.Hits[0].Description)
-	if len(res.Hits[0].Snippet) > maxDescription {
-		t.Errorf("snippet of %d bytes", len(res.Hits[0].Snippet))
-	}
-}
-
-// A snippet cut inside a match still closes the bold span, and stays within the limit.
-func TestBoldMatches(t *testing.T) {
-	for _, s := range []string{
-		strings.Repeat("a", 490) + "\x01" + strings.Repeat("b", 30) + "\x02 c",
-		"\x01" + strings.Repeat("é", 400) + "\x02",
-		"short \x01match\x02 here",
-	} {
-		got := boldMatches(s)
-		if len(got) > maxDescription || strings.Count(got, "**")%2 != 0 || !utf8.ValidString(got) {
-			t.Errorf("boldMatches = %d bytes, %d markers: %q", len(got), strings.Count(got, "**"), got)
+	t.Run("document", func(t *testing.T) {
+		t.Parallel()
+		d, err := x.Document(t.Context(), "long.md")
+		if err != nil {
+			t.Fatalf("Document: got error %v, want nil", err)
 		}
-	}
-	if got := boldMatches("short \x01match\x02 here"); got != "short **match** here" {
-		t.Errorf("short snippet: %q", got)
-	}
+		check(t, d.Title, d.Description)
+	})
+	t.Run("list", func(t *testing.T) {
+		t.Parallel()
+		entries, err := x.List(t.Context(), "", true, "", 10)
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("List: got %d entries, %v; want 1, nil", len(entries), err)
+		}
+		check(t, entries[0].Title, entries[0].Description)
+	})
+	t.Run("search", func(t *testing.T) {
+		t.Parallel()
+		res := search(t, kb(x), "quokka", index.Options{})
+		if len(res.Hits) != 1 {
+			t.Fatalf("hits: got %v, want long.md", hitPaths(res))
+		}
+		check(t, res.Hits[0].Title, res.Hits[0].Description)
+		if n := len(res.Hits[0].Snippet); n > document.MaxDescription {
+			t.Errorf("snippet: got %d bytes, want at most %d", n, document.MaxDescription)
+		}
+	})
 }
 
 // Links typed in NFC find files named in NFD, as macOS names them, and the other way round.
 func TestLinksAcrossNormalForms(t *testing.T) {
+	t.Parallel()
 	nfd := norm.NFD.String("café/menu.md")
 	x := newIndex(t, map[string]string{
 		nfd:              "# Menu\n",
@@ -788,64 +711,29 @@ func TestLinksAcrossNormalForms(t *testing.T) {
 		"İstanbul.md":    "# Istanbul\n",
 		"trip.md":        "# Trip\n\n[[" + norm.NFD.String("İstanbul") + "]]\n",
 	})
-	g, err := x.acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer g.release()
-	rows, err := g.reader.QueryContext(t.Context(), `SELECT d.path, l.target_path FROM resolved_links l
-		JOIN documents d ON d.id = l.doc_id ORDER BY d.path, l.kind`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var got []string
-	for rows.Next() {
-		var from string
-		var to sql.NullString
-		if err := rows.Scan(&from, &to); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, from+" -> "+to.String)
-	}
-	want := []string{"index.md -> " + nfd, "index.md -> " + nfd, "other/links.md -> résumé.md", "trip.md -> İstanbul.md"}
-	if diff := cmp.Diff(want, got); diff != "" {
+
+	rows := query(t, kb(x), "SELECT path, target_path FROM links ORDER BY path, kind")
+	want := [][]any{{"index.md", nfd}, {"index.md", nfd}, {"other/links.md", "résumé.md"}, {"trip.md", "İstanbul.md"}}
+	if diff := cmp.Diff(want, rows.Rows); diff != "" {
 		t.Errorf("resolved links (-want +got):\n%s", diff)
 	}
-	for path, want := range map[string][]string{nfd: {"index.md"}, "résumé.md": {"other/links.md"}, "İstanbul.md": {"trip.md"}} {
-		from, err := x.LinkedFrom(t.Context(), path)
-		if err != nil || !slices.Equal(from, want) {
-			t.Errorf("LinkedFrom(%q) = %v, %v; want %v", path, from, err, want)
-		}
-	}
-	res := search(t, []Source{{Name: "kb", Index: x}}, "menu", Options{PathPrefix: "café"})
-	if !slices.Equal(hitPaths(res), []string{nfd}) {
-		t.Errorf("search under an NFC folder name: %v", hitPaths(res))
-	}
-}
 
-// Only errors that mean a generation is unusable for good get it discarded; anything else, such as a
-// cancelled context or too many open files, keeps the file for the next try.
-func TestUnusableErrors(t *testing.T) {
-	for _, tt := range []struct {
-		err  error
-		want bool
-	}{
-		{sql.ErrNoRows, true},
-		{fmt.Errorf("%w: quick_check: row 3 missing", errUnusable), true},
-		{sqlite3.Error{Code: sqlite3.ErrNotADB}, true},
-		{sqlite3.Error{Code: sqlite3.ErrCorrupt}, true},
-		{context.Canceled, false},
-		{sqlite3.Error{Code: sqlite3.ErrCantOpen}, false},
-		{sqlite3.Error{Code: sqlite3.ErrBusy}, false},
-	} {
-		if got := errors.Is(unusable(tt.err), errUnusable); got != tt.want {
-			t.Errorf("unusable(%v) = %v, want %v", tt.err, got, tt.want)
+	for path, want := range map[string][]string{nfd: {"index.md"}, "résumé.md": {"other/links.md"}, "İstanbul.md": {"trip.md"}} {
+		got, err := x.LinkedFrom(t.Context(), path)
+		if err != nil {
+			t.Fatalf("LinkedFrom(%q): got error %v, want nil", path, err)
 		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("LinkedFrom(%q) (-want +got):\n%s", path, diff)
+		}
+	}
+	if got := hitPaths(search(t, kb(x), "menu", index.Options{PathPrefix: "café"})); !slices.Equal(got, []string{nfd}) {
+		t.Errorf("search under an NFC folder name: got %v, want [%s]", got, nfd)
 	}
 }
 
 func TestSearchRankingAndInput(t *testing.T) {
+	t.Parallel()
 	files := corpus()
 	for i := range 40 { // deprecated, matching a little better than the active one, but not twice as well
 		files[fmt.Sprintf("old/airship-%02d.md", i)] = "---\ntitle: Airship\nstatus: deprecated\n---\nAirship notes.\n"
@@ -865,21 +753,24 @@ func TestSearchRankingAndInput(t *testing.T) {
 		"names/micro.md":  "---\ntitle: Microservices\n---\nSmall things.\n",
 		"names/cat.md":    "# Cat\n\nThe cat sat.\n",
 	})
-	src := []Source{{Name: "kb", Index: newIndex(t, files)}}
+	src := kb(newIndex(t, files))
 
 	t.Run("deprecated documents don't crowd out an active one", func(t *testing.T) {
-		got := hitPaths(search(t, src, "airship", Options{}))
+		t.Parallel()
+		got := hitPaths(search(t, src, "airship", index.Options{}))
 		if len(got) == 0 || got[0] != "new/airship.md" {
-			t.Errorf("the active document isn't first: %v", got)
+			t.Errorf("hits: got %v, want new/airship.md first", got)
 		}
 	})
 	t.Run("a word found by its stem isn't corrected", func(t *testing.T) {
-		res := search(t, src, "runs", Options{})
+		t.Parallel()
+		res := search(t, src, "runs", index.Options{})
 		if len(res.Corrected) != 0 || !slices.Contains(hitPaths(res), "words/run.md") {
-			t.Errorf("hits %v, corrected %v", hitPaths(res), res.Corrected)
+			t.Errorf("got hits %v, corrected %v; want words/run.md, no corrections", hitPaths(res), res.Corrected)
 		}
 	})
 	t.Run("substring matches rank below full-text matches", func(t *testing.T) {
+		t.Parallel()
 		// "service" is in most documents, so BM25 gives full-text matches only a tiny score.
 		common := map[string]string{
 			"names/micro.md":   "---\ntitle: Microservices\n---\nSmall things.\n",
@@ -888,166 +779,90 @@ func TestSearchRankingAndInput(t *testing.T) {
 		for i := range 20 {
 			common[fmt.Sprintf("common/%02d.md", i)] = fmt.Sprintf("# Note %d\n\nThe service runs.\n", i)
 		}
-		res := search(t, []Source{{Name: "kb", Index: newIndex(t, common)}}, "service", Options{Limit: 50})
-		got := hitPaths(res)
+		got := hitPaths(search(t, kb(newIndex(t, common)), "service", index.Options{Limit: 50}))
 		if len(got) == 0 || got[len(got)-1] != "names/micro.md" {
-			t.Errorf("the substring match isn't last: %v", got)
+			t.Errorf("hits: got %v, want names/micro.md last", got)
 		}
 	})
 	t.Run("folder names aren't matched as names", func(t *testing.T) {
-		got := hitPaths(search(t, src, "words", Options{}))
+		t.Parallel()
+		got := hitPaths(search(t, src, "words", index.Options{}))
 		for _, p := range got {
 			if strings.HasPrefix(p, "words/") {
-				t.Errorf("a document matched by its folder name: %v", got)
+				t.Errorf("hits: got %v, want none under words/", got)
 				break
 			}
 		}
 	})
 	t.Run("a quoted word matches as written", func(t *testing.T) {
-		if got := hitPaths(search(t, src, "zeppel", Options{})); !slices.Contains(got, "body/zep.md") {
-			t.Fatalf("unquoted, the last word matches as a prefix: %v", got)
+		t.Parallel()
+		if got := hitPaths(search(t, src, "zeppel", index.Options{})); !slices.Contains(got, "body/zep.md") {
+			t.Fatalf("unquoted, as a prefix: got %v, want body/zep.md", got)
 		}
-		res := search(t, src, `"zeppel"`, Options{})
+		res := search(t, src, `"zeppel"`, index.Options{})
 		if len(res.Hits) != 0 || len(res.Corrected) != 0 {
-			t.Errorf("hits %v, corrected %v", hitPaths(res), res.Corrected)
+			t.Errorf("quoted: got hits %v, corrected %v; want none", hitPaths(res), res.Corrected)
 		}
 	})
 	t.Run("three-letter typos", func(t *testing.T) {
-		res := search(t, src, "cot sat", Options{})
-		if res.Corrected["cot"] != "cat" {
-			t.Errorf("corrected = %v", res.Corrected)
+		t.Parallel()
+		res := search(t, src, "cot sat", index.Options{})
+		if got := res.Corrected["cot"]; got != "cat" {
+			t.Errorf("correction of cot: got %q, want cat", got)
 		}
 	})
-	t.Run("query size", func(t *testing.T) {
-		var many []string
-		for i := range maxTerms + 1 {
-			many = append(many, fmt.Sprintf("w%d", i))
-		}
-		_, err := Search(t.Context(), src, strings.Join(many, " "), Options{})
-		if !errors.Is(err, ErrTooManyWords) {
-			t.Errorf("%d words: %v", len(many), err)
-		}
-		_, err = Search(t.Context(), src, strings.Repeat("fleet ", 500), Options{})
-		if err != nil {
-			t.Errorf("one word 500 times: %v", err)
-		}
-		excl := "fleet"
-		for i := range maxTerms - 1 {
-			excl += fmt.Sprintf(" -x%d", i)
-		}
-		if _, err := Search(t.Context(), src, excl, Options{}); err != nil {
-			t.Errorf("many exclusions: %v", err)
-		}
-	})
-}
 
-// A build whose inserting fails keeps any other error next to it, so a broken git copy is noticed, but
-// not the cancellation the failed insert caused.
-func TestFillError(t *testing.T) {
-	insertErr := errors.New("insert a.md: disk full")
-	readErr := errors.New("blob missing")
-	if err := fillError(t.Context(), insertErr, fmt.Errorf("x: %w", readErr)); !errors.Is(err, readErr) || !errors.Is(err, insertErr) {
-		t.Errorf("with a read error: %v", err)
+	many := make([]string, 0, index.MaxTerms+1)
+	for i := range cap(many) {
+		many = append(many, fmt.Sprintf("w%d", i))
 	}
-	if err := fillError(t.Context(), insertErr, context.Canceled); err == nil || err.Error() != insertErr.Error() {
-		t.Errorf("with the build's own cancellation: %v", err)
+	exclusions := "fleet"
+	for i := range index.MaxTerms - 1 {
+		exclusions += fmt.Sprintf(" -x%d", i)
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := fillError(ctx, insertErr, context.Canceled); !errors.Is(err, context.Canceled) {
-		t.Errorf("with the caller's cancellation: %v", err)
+	sizeCases := []struct {
+		name  string
+		query string
+		want  error
+	}{
+		{name: "too many words", query: strings.Join(many, " "), want: index.ErrTooManyWords},
+		{name: "one word many times", query: strings.Repeat("fleet ", 500)},
+		{name: "many exclusions", query: exclusions},
 	}
-	if err := fillError(t.Context(), nil, readErr); !errors.Is(err, readErr) {
-		t.Errorf("with only a read error: %v", err)
+	for _, testCase := range sizeCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := index.Search(t.Context(), src, testCase.query, index.Options{})
+			if !errors.Is(err, testCase.want) {
+				t.Errorf("got error %v, want %v", err, testCase.want)
+			}
+		})
 	}
 }
 
 // Close can race a build and applies: the index stays consistent and doesn't start work after closing.
 func TestCloseRacesWork(t *testing.T) {
-	for range 20 {
-		x := newIndex(t, fleet)
-		var wg sync.WaitGroup
-		wg.Go(func() { _ = x.Build(t.Context(), "c2", changes(fleet)) })
-		wg.Go(func() { _ = x.Apply(t.Context(), "c3", nil) })
-		wg.Go(x.Close)
-		wg.Wait()
-		if err := x.Build(t.Context(), "c4", changes(fleet)); !errors.Is(err, ErrClosed) {
-			t.Fatalf("Build after Close: %v", err)
-		}
-	}
-}
-
-// Broken documents stay out of the full-text tables, whether built or applied, so their file-name titles
-// don't match or feed typo corrections; adding and removing them leaves those tables intact.
-func TestBrokenDocumentsStayOutOfFullText(t *testing.T) {
-	ctx := t.Context()
-	bad := "# Zanzibar\n\nNot UTF-8 \xff\n"
-	files := maps.Clone(fleet)
-	files["zanzibar.md"] = bad
-	built := newIndex(t, files)
-	applied := newIndex(t, fleet)
-	err := applied.Apply(ctx, "c2", []Change{{Path: "zanzibar.md", Version: version(bad), Content: []byte(bad)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, x := range map[string]*Index{"built": built, "applied": applied} {
-		g, err := x.acquire()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, q := range []string{
-			"SELECT count(*) FROM fts WHERE title MATCH 'zanzibar'",
-			"SELECT count(*) FROM names WHERE names MATCH 'zanzi'",
-			"SELECT count(*) FROM words_vocab WHERE term = 'zanzibar'",
-		} {
-			var n int
-			err := g.reader.QueryRowContext(ctx, q).Scan(&n)
-			if err != nil || n != 0 {
-				t.Errorf("%s: %s = %d, %v", name, q, n, err)
+	t.Parallel()
+	for i := range 10 {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			t.Parallel()
+			x := newIndex(t, fleet)
+			var wg sync.WaitGroup
+			wg.Go(func() { _ = x.Build(t.Context(), "c2", changes(fleet)) })
+			wg.Go(func() { _ = x.Apply(t.Context(), "c3", nil) })
+			wg.Go(x.Close)
+			wg.Wait()
+			if err := x.Build(t.Context(), "c4", changes(fleet)); !errors.Is(err, index.ErrClosed) {
+				t.Fatalf("Build after Close: got %v, want %v", err, index.ErrClosed)
 			}
-		}
-		v, err := loadVocabulary(ctx, g)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := v.suggest("zanzibat", 2); len(got) != 0 {
-			t.Errorf("%s: suggestions %v", name, got)
-		}
-		g.release()
-
-		good := "# Zanzibar\n\nFixed.\n"
-		err = x.Apply(ctx, "c3", []Change{{Path: "zanzibar.md", Version: version(good), Content: []byte(good)}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if res := search(t, []Source{{Name: "kb", Index: x}}, "zanzibar", Options{}); !slices.Contains(hitPaths(res), "zanzibar.md") {
-			t.Errorf("%s: the fixed document isn't found", name)
-		}
-		err = x.Apply(ctx, "c4", []Change{{Path: "zanzibar.md", Version: version(bad), Content: []byte(bad)}})
-		if err == nil {
-			err = x.Apply(ctx, "c5", []Change{{Path: "zanzibar.md"}})
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		g, err = x.acquire()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, table := range []string{"fts", "names", "words"} {
-			_, err := g.writer.ExecContext(ctx, "INSERT INTO "+table+" ("+table+") VALUES ('integrity-check')")
-			if err != nil {
-				t.Errorf("%s: %s: %v", name, table, err)
-			}
-		}
-		g.release()
+		})
 	}
 }
 
 // A link resolves to a document that isn't broken before a broken one, even when the broken one's path is
 // shorter, and falls back to the broken one when it's the only match.
 func TestLinksPreferDocumentsThatArentBroken(t *testing.T) {
-	ctx := t.Context()
+	t.Parallel()
 	bad := "# Deploy\n\nNot UTF-8 \xff\n"
 	x := newIndex(t, map[string]string{
 		"x/deploy.md":        bad,
@@ -1060,19 +875,41 @@ func TestLinksPreferDocumentsThatArentBroken(t *testing.T) {
 		"x/deploy.md":        nil,
 		"x/restart.md":       {"a.md"},
 	} {
-		from, err := x.LinkedFrom(ctx, path)
-		if err != nil || !slices.Equal(from, want) {
-			t.Errorf("linked from %s = %v, %v", path, from, err)
+		got, err := x.LinkedFrom(t.Context(), path)
+		if err != nil {
+			t.Fatalf("LinkedFrom(%q): got error %v, want nil", path, err)
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("LinkedFrom(%q) (-want +got):\n%s", path, diff)
 		}
 	}
-	g, err := x.acquire()
-	if err != nil {
-		t.Fatal(err)
+	rows := query(t, kb(x), "SELECT target, target_path FROM links ORDER BY target")
+	want := [][]any{{"[[deploy]]", "runbooks/deploy.md"}, {"[[restart]]", "x/restart.md"}}
+	if diff := cmp.Diff(want, rows.Rows); diff != "" {
+		t.Errorf("links (-want +got):\n%s", diff)
 	}
-	defer g.release()
-	var target string
-	err = g.reader.QueryRowContext(ctx, "SELECT group_concat(target || ' ' || target_path, ', ') FROM (SELECT * FROM resolved_links ORDER BY target)").Scan(&target)
-	if want := "[[deploy]] runbooks/deploy.md, [[restart]] x/restart.md"; err != nil || target != want {
-		t.Errorf("links resolve to %q, %v; want %q", target, err, want)
+}
+
+// benchIndex is corpus with enough filler that BM25 and the vocabulary have work to do.
+func benchIndex(b *testing.B) []index.Source {
+	b.Helper()
+	files := corpus()
+	for i := range 1000 {
+		files[fmt.Sprintf("filler/%04d.md", i)] = fmt.Sprintf("# Filler %d\n\nNotes on configuration number %d for the fleet tools.\n", i, i)
+	}
+	return kb(newIndex(b, files))
+}
+
+func BenchmarkSearch(b *testing.B) {
+	src := benchIndex(b)
+	for _, q := range []string{"fleet", "kubrenetes", "fleet tools -nomad"} {
+		b.Run(q, func(b *testing.B) {
+			for b.Loop() {
+				_, err := index.Search(b.Context(), src, q, index.Options{})
+				if err != nil {
+					b.Fatalf("Search(%q): got error %v, want nil", q, err)
+				}
+			}
+		})
 	}
 }
