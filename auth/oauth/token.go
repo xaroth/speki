@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eve-online-tools/speki/auth/seal"
 	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/seal"
 )
 
 // accessValue is what a speki access token holds.

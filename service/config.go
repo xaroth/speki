@@ -11,9 +11,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/eve-online-tools/speki/auth/seal"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/index"
-	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/telemetry"
 )
 

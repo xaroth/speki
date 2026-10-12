@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/index"

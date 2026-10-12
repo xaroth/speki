@@ -25,9 +25,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/eve-online-tools/speki/auth/oauth"
+	"github.com/eve-online-tools/speki/auth/seal"
 	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/oauth"
-	"github.com/eve-online-tools/speki/seal"
 	"github.com/eve-online-tools/speki/store"
 )
 

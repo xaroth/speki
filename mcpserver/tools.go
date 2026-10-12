@@ -10,7 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/knowledge"
 	"github.com/eve-online-tools/speki/telemetry"
 

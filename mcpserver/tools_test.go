@@ -19,7 +19,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/knowledge"

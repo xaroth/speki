@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/index"
 )
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/auth/access"
 	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/index"
 )

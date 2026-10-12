@@ -45,15 +45,16 @@ Speki keeps two kinds of state, and both can be thrown away:
 
 ## Packages
 
-One module, `github.com/eve-online-tools/speki`. The command lives in `cmd/speki`, and every other package
-sits at the top level, named after what it does. No `internal/`, no `util`, no layers named `repository`.
+One module, `github.com/eve-online-tools/speki`. The command lives in `cmd/speki`. Every other package is
+named after what it does and sits at the top level, except sign-in and permissions, which share the `auth`
+folder. No `internal/`, no `util`, no layers named `repository`.
 
 | Package | Owns | Imports from speki |
 |---|---|---|
 | `cmd/speki` | The process: flags, reading the config file and environment, the logger, signals, exit codes | `service`, `telemetry` |
 | `service` | Speki as one runnable thing: `service.Config`, validation and defaults, building every component, the HTTP servers, startup and shutdown order | everything below |
 | `telemetry` | slog handler with redaction and request IDs, OpenTelemetry tracer and server spans. Each package declares its own metrics with `promauto` on the default registry | |
-| `seal` | Keyring, sealing and opening typed blobs with AES-256-GCM | |
+| `auth/seal` | Keyring, sealing and opening typed blobs with AES-256-GCM | |
 | `store` | `Memory` and `Redis`: single-use codes, refresh locks and results, and change notices between instances | |
 | `gh` | GitHub API: app JWT, installation tokens, user OAuth, user and installation lookups, commits, history | |
 | `document` | Parsing and writing documents: frontmatter, core fields, validation, links, headings, path rules | |
@@ -61,8 +62,8 @@ sits at the top level, named after what it does. No `internal/`, no `util`, no l
 | `gitsync` | A shallow git copy of one repository: clone, fetch, tree diff, blobs | `document` |
 | `index` | One SQLite index file: schema, build, apply changes, search, listing, and the query sandbox over several index files | `document` |
 | `library` | The local copy of every vault (a `gitsync` mirror plus an `index`), keeping them in step with GitHub: the poll loop, sync locks, syncing after change notices | `vault`, `gitsync`, `index`, `gh` |
-| `access` | Turning a signed-in user into a `Grant`: org gate, readable and writable vaults, caching | `gh`, `vault` |
-| `oauth` | Authorization server endpoints, consent page, speki tokens, bearer token check | `gh`, `seal` |
+| `auth/access` | Turning a signed-in user into a `Grant`: org gate, readable and writable vaults, caching | `gh`, `vault` |
+| `auth/oauth` | Authorization server endpoints, consent page, speki tokens, bearer token check | `gh`, `seal` |
 | `knowledge` | What the tools do: list, search, read, write, edit, move, delete, history, query. Enforces the `Grant`. Reaches the vaults' copies through interfaces that `service` fills with `library` | `access`, `document`, `gh`, `index`, `vault` |
 | `mcpserver` | The `/mcp` HTTP stack, tool definitions, instructions text, mapping results and errors. Gets the signed-in user through an interface that `service` fills with `oauth` | `knowledge`, `access` |
 
