@@ -189,3 +189,46 @@ func graphqlErrors(errs []graphqlError) error {
 func tidy(msg string) string {
 	return strings.Join(strings.Fields(msg), " ")
 }
+
+// Commit is one commit in a repository's history.
+type Commit struct {
+	SHA     string
+	Author  string // GitHub login, or the git author name when the commit isn't linked to an account
+	Date    time.Time
+	Message string
+}
+
+// Commits returns the newest commits on branch, at most limit, as the token's user sees them. With a
+// path, only commits that changed it.
+func (c *Client) Commits(ctx context.Context, token, repo, branch, path string, limit int) ([]Commit, error) {
+	client, err := c.userClient(token)
+	if err != nil {
+		return nil, err
+	}
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	page, _, err := client.Repositories.ListCommits(ctx, owner, name, &github.CommitsListOptions{
+		SHA:     branch,
+		Path:    path,
+		PerPage: limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("commits of %s: %w", repo, userError(err))
+	}
+	out := make([]Commit, 0, len(page))
+	for _, rc := range page {
+		author := rc.GetAuthor().GetLogin()
+		if author == "" {
+			author = rc.GetCommit().GetAuthor().GetName()
+		}
+		out = append(out, Commit{
+			SHA:     rc.GetSHA(),
+			Author:  author,
+			Date:    rc.GetCommit().GetAuthor().GetDate().Time,
+			Message: rc.GetCommit().GetMessage(),
+		})
+	}
+	return out, nil
+}
