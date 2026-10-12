@@ -40,9 +40,13 @@ Access follows GitHub, per vault:
 
 | On GitHub, the user can | In speki, they can |
 |---|---|
-| read the repository | `list`, `search`, `query`, `read` and `history` in that vault |
+| read the repository, with at least the vault's `read_role` | `list`, `search`, `query`, `read` and `history` in that vault |
 | push to the repository | also `write`, `edit`, `move` and `delete`, if they signed in with read and write |
 | nothing | nothing. The vault doesn't exist for them |
+
+A vault's `speki.yaml` can raise the role needed to see it with `read_role` (see
+[vaults.md](vaults.md#limiting-who-sees-a-vault)). Below that role the user can't see the vault, even with
+read access on GitHub.
 
 A vault the user can't read behaves like a vault that doesn't exist. Errors don't tell the two apart.
 

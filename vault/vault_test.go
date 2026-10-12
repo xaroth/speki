@@ -29,6 +29,12 @@ func TestParseConfig(t *testing.T) {
 			raw:  "title: Infra\ndescription: >\n  How we run things.\nguidelines: |\n  One doc per service.\nfuture_key: ignored\n",
 			want: Config{Title: "Infra", Description: "How we run things.", Guidelines: "One doc per service."},
 		},
+		{
+			name: "read role",
+			raw:  "title: Infra\ndescription: How we run things.\nread_role: triage\n",
+			want: Config{Title: "Infra", Description: "How we run things.", ReadRole: gh.RoleTriage},
+		},
+		{name: "unknown read role", raw: "title: T\ndescription: D\nread_role: owner\n", wantErr: []string{`unknown role "owner"`}},
 		{name: "missing fields", raw: "guidelines: x\n", wantErr: []string{"title is required", "description is required"}},
 		{name: "too long", raw: "title: T\ndescription: " + strings.Repeat("d", 301) + "\n", wantErr: []string{"description is 301 characters"}},
 		{name: "not yaml", raw: "title: [\n", wantErr: []string{"speki.yaml"}},
