@@ -264,7 +264,7 @@ Installation tokens get 5,000 to 12,500 requests an hour. Speki's own background
 | Repository ID checks | one per sync, so only for vaults that changed |
 | Installation tokens | a few |
 
-User tokens carry the per-user calls: access checks (at most once a minute while active, mostly 304),
+User tokens carry the per-user calls: access checks (at most once a minute per token while active, shared by every instance),
 commits and history.
 
 `gh` records `x-ratelimit-remaining` per token kind as a metric and logs a warning below 10%, at most

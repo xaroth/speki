@@ -1,18 +1,21 @@
 // Package access decides what a signed-in user may do: whether they get in at all, and which vaults they
 // may read and write. GitHub is the source of truth, narrowed by each vault's readers and writers; answers
-// are cached for a minute.
+// are cached for a minute, in a cache every instance shares.
 package access
 
 import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/vault"
@@ -86,35 +89,41 @@ type githubAPI interface {
 	TeamMember(ctx context.Context, token, org, slug, login string) (bool, error)
 }
 
+// cache holds GitHub's answers, shared by every instance when there are several.
+type cache interface {
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+}
+
 // Resolver turns users into grants.
 type Resolver struct {
 	github       githubAPI
 	vaults       func() []vault.Vault // the vaults speki serves
 	requiredOrgs []string
+	cache        cache // by GitHub token, never by user: tokens can differ in scope or be revoked
 	ttl          time.Duration
 	now          func() time.Time
-
-	mu    sync.Mutex
-	cache map[[sha256.Size]byte]answer // by GitHub token, never by user: tokens can differ in scope or be revoked
+	flight       singleflight.Group // one lookup per key at a time, shared by its callers
 }
 
-// answer is what GitHub said about one token.
-type answer struct {
-	repos   map[int64]gh.RepoAccess
-	teams   map[string]bool // by lower-case org/slug, filled in as vaults ask
-	expires time.Time
+// cached is one answer as the cache holds it. Expires is checked as well as the cache's own TTL, so a
+// clock that tests move counts.
+type cached struct {
+	Repos   []gh.RepoAccess `json:"repos,omitempty"`
+	Member  bool            `json:"member,omitempty"`
+	Expires time.Time       `json:"expires"`
 }
 
 // NewResolver returns a resolver. vaults returns the vaults speki currently serves; requiredOrgs may be
 // empty.
-func NewResolver(github githubAPI, vaults func() []vault.Vault, requiredOrgs []string) *Resolver {
+func NewResolver(github githubAPI, vaults func() []vault.Vault, requiredOrgs []string, c cache) *Resolver {
 	return &Resolver{
 		github:       github,
 		vaults:       vaults,
 		requiredOrgs: requiredOrgs,
+		cache:        c,
 		ttl:          time.Minute,
 		now:          time.Now,
-		cache:        make(map[[sha256.Size]byte]answer),
 	}
 }
 
@@ -166,37 +175,68 @@ func (r *Resolver) CheckMember(ctx context.Context, token string) error {
 // lookup returns the repositories the token's user can see, after the organisation gate, from the cache
 // when it's fresh.
 func (r *Resolver) lookup(ctx context.Context, token string) (map[int64]gh.RepoAccess, error) {
-	key := sha256.Sum256([]byte(token))
-	now := r.now()
-	r.mu.Lock()
-	a, ok := r.cache[key]
-	r.mu.Unlock()
-	if ok && now.Before(a.expires) {
-		return a.repos, nil
-	}
-
-	err := r.checkOrgs(ctx, token)
+	c, err := r.cached(ctx, "access:repos:"+tokenKey(token), func(ctx context.Context) (cached, error) {
+		err := r.checkOrgs(ctx, token)
+		if err != nil {
+			return cached{}, err
+		}
+		list, err := r.github.UserRepositories(ctx, token)
+		if err != nil {
+			return cached{}, githubError(err)
+		}
+		return cached{Repos: list}, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	list, err := r.github.UserRepositories(ctx, token)
-	if err != nil {
-		return nil, githubError(err)
-	}
-	repos := make(map[int64]gh.RepoAccess, len(list))
-	for _, a := range list {
+	repos := make(map[int64]gh.RepoAccess, len(c.Repos))
+	for _, a := range c.Repos {
 		repos[a.RepoID] = a
 	}
+	return repos, nil
+}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for k, old := range r.cache { // drop stale answers so the cache doesn't grow without bound
-		if !now.Before(old.expires) {
-			delete(r.cache, k)
+// cached returns the answer under key, asking GitHub with ask when the cache has none. Callers asking for
+// the same key share one ask. A cache that fails counts as empty: GitHub still answers.
+func (r *Resolver) cached(ctx context.Context, key string, ask func(context.Context) (cached, error)) (cached, error) {
+	now := r.now()
+	raw, ok, err := r.cache.Get(ctx, key)
+	if err == nil && ok {
+		var c cached
+		if json.Unmarshal(raw, &c) == nil && now.Before(c.Expires) {
+			return c, nil
 		}
 	}
-	r.cache[key] = answer{repos: repos, teams: make(map[string]bool), expires: now.Add(r.ttl)}
-	return repos, nil
+
+	// The ask is the resolver's, not the request's: a caller that leaves mustn't fail it for the others.
+	ch := r.flight.DoChan(key, func() (any, error) {
+		actx := context.WithoutCancel(ctx)
+		c, err := ask(actx)
+		if err != nil {
+			return cached{}, err
+		}
+		c.Expires = r.now().Add(r.ttl)
+		raw, err := json.Marshal(c)
+		if err == nil {
+			_ = r.cache.Set(actx, key, raw, r.ttl)
+		}
+		return c, nil
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return cached{}, res.Err
+		}
+		return res.Val.(cached), nil
+	case <-ctx.Done():
+		return cached{}, ctx.Err()
+	}
+}
+
+// tokenKey names a token in cache keys without revealing it.
+func tokenKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // listed reports whether u is one of ps, directly or through a team. A nil list lists everyone.
@@ -223,25 +263,15 @@ func (r *Resolver) listed(ctx context.Context, u User, ps []vault.Principal) (bo
 
 // teamMember asks GitHub whether u is in team, once per token until the cached answer expires.
 func (r *Resolver) teamMember(ctx context.Context, u User, team vault.Principal) (bool, error) {
-	key := sha256.Sum256([]byte(u.Token))
-	name := strings.ToLower(team.String())
-	r.mu.Lock()
-	member, known := r.cache[key].teams[name]
-	r.mu.Unlock()
-	if known {
-		return member, nil
-	}
-
-	member, err := r.github.TeamMember(ctx, u.Token, team.Org, team.Team, u.Login)
-	if err != nil {
-		return false, githubError(err)
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if a, ok := r.cache[key]; ok {
-		a.teams[name] = member
-	}
-	return member, nil
+	key := "access:team:" + tokenKey(u.Token) + ":" + strings.ToLower(team.String())
+	c, err := r.cached(ctx, key, func(ctx context.Context) (cached, error) {
+		member, err := r.github.TeamMember(ctx, u.Token, team.Org, team.Team, u.Login)
+		if err != nil {
+			return cached{}, githubError(err)
+		}
+		return cached{Member: member}, nil
+	})
+	return c.Member, err
 }
 
 func (r *Resolver) checkOrgs(ctx context.Context, token string) error {

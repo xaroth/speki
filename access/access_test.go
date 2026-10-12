@@ -3,14 +3,18 @@ package access
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/store"
 	"github.com/eve-online-tools/speki/vault"
 )
 
@@ -73,7 +77,7 @@ func setup() (*fakeGitHub, *Resolver) {
 		},
 		revoked: map[string]bool{},
 	}
-	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{kb, infra, other} }, []string{"ours", "partners"})
+	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{kb, infra, other} }, []string{"ours", "partners"}, store.NewMemory())
 	return f, r
 }
 
@@ -110,7 +114,7 @@ func TestReadRole(t *testing.T) {
 	}}
 	gated := vault.Vault{RepoID: 100, Name: "ours/gated", Config: vault.Config{ReadRole: gh.RoleTriage}}
 	open := vault.Vault{RepoID: 101, Name: "ours/open"}
-	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{gated, open} }, nil)
+	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{gated, open} }, nil, store.NewMemory())
 	tests := []struct {
 		token    string
 		readable []string
@@ -162,7 +166,7 @@ func TestReadersAndWriters(t *testing.T) {
 		Writers: []vault.Principal{{Org: "ours", Team: "leads"}},
 	}}
 	open := vault.Vault{RepoID: 101, Name: "ours/open"}
-	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{gated, open} }, nil)
+	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{gated, open} }, nil, store.NewMemory())
 	tests := []struct {
 		login    string
 		readable []string
@@ -287,7 +291,7 @@ func TestCachePerToken(t *testing.T) {
 
 func TestNoRequiredOrgs(t *testing.T) {
 	f, _ := setup()
-	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{kb} }, nil)
+	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{kb} }, nil, store.NewMemory())
 	_, err := r.Resolve(t.Context(), User{Token: "eve"})
 	if err != nil {
 		t.Errorf("without required orgs: %v", err)
@@ -301,5 +305,107 @@ func TestVaultNamesFoldASCIIOnly(t *testing.T) {
 	}
 	if _, ok := g.Vault("ours/\u212ab"); ok { // a Kelvin sign
 		t.Error("a Kelvin sign matched a k")
+	}
+}
+
+func TestCacheShared(t *testing.T) {
+	mr := miniredis.RunT(t)
+	shared, err := store.NewRedis(t.Context(), "redis://"+mr.Addr(), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	f, _ := setup()
+	vaults := func() []vault.Vault { return []vault.Vault{kb} }
+	one := NewResolver(f, vaults, []string{"ours"}, shared)
+	two := NewResolver(f, vaults, []string{"ours"}, shared)
+
+	_, err = one.Resolve(t.Context(), User{Token: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := f.calls
+	g, err := two.Resolve(t.Context(), User{Token: "alice", Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.calls != calls {
+		t.Error("second instance asked GitHub again")
+	}
+	if !g.CanWrite(kb.RepoID) {
+		t.Error("cached role lost write access")
+	}
+	for _, k := range mr.Keys() {
+		if strings.Contains(k, "alice") {
+			t.Errorf("cache key %q contains the token", k)
+		}
+	}
+}
+
+type failingCache struct{}
+
+func (failingCache) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, errors.New("down")
+}
+
+func (failingCache) Set(context.Context, string, []byte, time.Duration) error {
+	return errors.New("down")
+}
+
+func TestCacheDownAsksGitHub(t *testing.T) {
+	f, _ := setup()
+	r := NewResolver(f, func() []vault.Vault { return []vault.Vault{kb} }, nil, failingCache{})
+	_, err := r.Resolve(t.Context(), User{Token: "alice"})
+	if err != nil {
+		t.Errorf("with the cache down: %v", err)
+	}
+}
+
+// blockingGitHub holds UserRepositories until release is closed.
+type blockingGitHub struct {
+	*fakeGitHub
+	release chan struct{}
+}
+
+func (b blockingGitHub) UserRepositories(ctx context.Context, token string) ([]gh.RepoAccess, error) {
+	<-b.release
+	return b.fakeGitHub.UserRepositories(ctx, token)
+}
+
+func TestConcurrentMissesShareOneLookup(t *testing.T) {
+	f, _ := setup()
+	b := blockingGitHub{fakeGitHub: f, release: make(chan struct{})}
+	r := NewResolver(b, func() []vault.Vault { return []vault.Vault{kb} }, nil, store.NewMemory())
+
+	// A caller that leaves doesn't fail the lookup for the others.
+	gone, cancel := context.WithCancel(t.Context())
+	left := make(chan error)
+	go func() {
+		_, err := r.Resolve(gone, User{Token: "alice"})
+		left <- err
+	}()
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for range 10 {
+		wg.Go(func() {
+			_, err := r.Resolve(t.Context(), User{Token: "alice"})
+			errs <- err
+		})
+	}
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if err := <-left; !errors.Is(err, context.Canceled) {
+		t.Errorf("caller that left: %v", err)
+	}
+	close(b.release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if f.calls != 1 {
+		t.Errorf("GitHub asked %d times, want 1", f.calls)
 	}
 }
