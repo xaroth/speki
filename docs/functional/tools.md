@@ -46,7 +46,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | `conflict` | The document changed since the given version. Includes the current version (none when creating a document the vault keeps changing under) |
 | `already_exists` | `write` without a version, or `move` onto a path that's taken. Includes the current version when the path is a document; a file speki doesn't index, a folder, or the same name in another Unicode normalisation has none |
 | `invalid` | Bad path, bad frontmatter, `old_text` not found or not unique, bad SQL. Says what and where |
-| `broken` | The file can't be parsed (not UTF-8, or frontmatter over 64 KiB), so speki can't read or change it. Includes the reason and the current version. Ask the user to fix it in git; `delete` with that version is the only change allowed |
+| `broken` | The file can't be parsed, so speki can't read or change it. Includes the reason (see below) and the current version. Ask the user to fix it in git; `delete` with that version is the only change allowed |
 | `no_write_access` | The user can read this vault but not write to it: they can't push to it on GitHub, or the vault's `writers` doesn't list them |
 | `read_only_session` | The user signed in read-only. Ask them to reconnect speki with write access |
 | `vault_read_only` | GitHub refused the commit because the branch requires pull requests or checks |
@@ -55,6 +55,14 @@ A failed tool call returns an error text that starts with a code, then says what
 | `timeout` | A query ran longer than 3 seconds |
 | `rate_limited` | GitHub asked speki to slow down during a write. Says how long to wait. Speki's own per-user limit answers with HTTP 429 instead, before any tool runs |
 | `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, the vault is rebuilding its index, or the named vault is still building its first index or failed to open. Says which, with a request ID for the operator |
+
+A `broken` error and the `broken` column (see [search-and-query.md](search-and-query.md)) give one of
+these reasons. Their text is stable, so a client may match on it:
+
+| Reason | Meaning |
+|---|---|
+| `unusable document: not UTF-8` | The file isn't valid UTF-8 |
+| `unusable document: frontmatter is larger than 65536 bytes` | The frontmatter block is over 64 KiB |
 
 A user who isn't allowed in at all (not in a required organisation, or no vaults) doesn't get as far as a
 tool. Their client gets an HTTP 403 with the reason. A user whose vaults are still being cloned or

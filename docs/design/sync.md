@@ -216,8 +216,9 @@ disagree there; this check keeps a bug in the index from turning into an overwri
 
 A broken document (see [index.md](index.md)) can't be read through speki, so no agent can have seen its
 content: `read`, `write` (creating or replacing), `edit` and `move` on it answer `broken`. `delete` with
-its current version is allowed, so an agent can clear out a file that was never meant to be a document. One write runs at a time per vault on
-an instance; between instances, the expected head keeps commits from overwriting each other.
+its current version is allowed, so an agent can clear out a file that was never meant to be a document.
+One write runs at a time per vault on an instance; between instances, the expected head keeps commits
+from overwriting each other.
 
 When GitHub's answer to a commit is lost (a dropped connection, a timeout, a 5xx), the commit may have
 landed anyway. Every commit carries a random `Speki-Request:` trailer, so before reporting a failure,

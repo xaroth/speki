@@ -177,15 +177,20 @@ func TestParseUnusable(t *testing.T) {
 	tests := []struct {
 		name string
 		raw  []byte
+		want string
 	}{
-		{"not UTF-8", []byte("title \xff\xfe")},
-		{"huge frontmatter", []byte("---\nx: " + strings.Repeat("a", maxFrontmatterSize) + "\n---\n")},
+		{"not UTF-8", []byte("title \xff\xfe"), "unusable document: not UTF-8"},
+		{"huge frontmatter", []byte("---\nx: " + strings.Repeat("a", maxFrontmatterSize) + "\n---\n"), "unusable document: frontmatter is larger than 65536 bytes"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Parse("x.md", tt.raw)
 			if !errors.Is(err, errUnusable) {
 				t.Errorf("err = %v, want errUnusable", err)
+			}
+			// Agents see this text in the broken error and the broken column; docs/functional/tools.md lists it.
+			if err != nil && err.Error() != tt.want {
+				t.Errorf("err = %q, want %q", err, tt.want)
 			}
 		})
 	}
