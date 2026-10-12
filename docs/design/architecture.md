@@ -64,7 +64,7 @@ sits at the top level, named after what it does. No `internal/`, no `util`, no l
 | `access` | Turning a signed-in user into a `Grant`: org gate, readable and writable vaults, caching | `gh`, `vault` |
 | `oauth` | Authorization server endpoints, consent page, speki tokens, bearer token check | `gh`, `seal` |
 | `knowledge` | What the tools do: list, search, read, write, edit, move, delete, history, query. Enforces the `Grant`. Reaches the vaults' copies through interfaces that `service` fills with `library` | `access`, `document`, `gh`, `index`, `vault` |
-| `mcpserver` | The `/mcp` HTTP stack, tool definitions, instructions text, mapping results and errors | `knowledge`, `access`, `oauth` |
+| `mcpserver` | The `/mcp` HTTP stack, tool definitions, instructions text, mapping results and errors. Gets the signed-in user through an interface that `service` fills with `oauth` | `knowledge`, `access` |
 
 `gitsync` and `index` know nothing about vaults or users. Each works on one repository or one database
 file, which makes them easy to test on their own. `library` is where a vault's git copy and index meet,

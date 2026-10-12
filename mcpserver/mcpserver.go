@@ -15,7 +15,6 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/eve-online-tools/speki/access"
-	"github.com/eve-online-tools/speki/oauth"
 )
 
 const maxBody = 2 << 20
@@ -26,9 +25,10 @@ const (
 	rateBurst     = 30
 )
 
-// authenticator puts the signed-in identity on the context (see oauth.NewContext).
+// authenticator signs requests in.
 type authenticator interface {
 	Middleware(next http.Handler) http.Handler
+	User(ctx context.Context) (access.User, bool) // who Middleware signed in
 	Unauthorized(w http.ResponseWriter, reason string)
 }
 
@@ -136,18 +136,12 @@ func GrantFrom(ctx context.Context) (*access.Grant, bool) {
 // makes the client refresh or sign in again, 403 says why the user isn't allowed in.
 func (s *Server) grant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := oauth.IdentityFrom(r.Context())
+		u, ok := s.auth.User(r.Context())
 		if !ok {
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
 		}
-		g, err := s.grants.Resolve(r.Context(), access.User{
-			ID:     id.UserID,
-			Login:  id.Login,
-			Token:  id.GitHubToken,
-			Client: id.Client,
-			Write:  id.Write,
-		})
+		g, err := s.grants.Resolve(r.Context(), u)
 		switch {
 		case errors.Is(err, access.ErrUnauthorized):
 			s.auth.Unauthorized(w, "GitHub no longer accepts this sign-in: sign in again")
@@ -156,7 +150,7 @@ func (s *Server) grant(next http.Handler) http.Handler {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		case err != nil:
-			s.logger.ErrorContext(r.Context(), "resolving access failed", "login", id.Login, "err", err)
+			s.logger.ErrorContext(r.Context(), "resolving access failed", "login", u.Login, "err", err)
 			http.Error(w, "speki couldn't check your access with GitHub; try again", http.StatusBadGateway)
 			return
 		}
@@ -167,8 +161,8 @@ func (s *Server) grant(next http.Handler) http.Handler {
 // rateLimit is per instance, not cluster-wide.
 func (s *Server) rateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, _ := oauth.IdentityFrom(r.Context())
-		if !s.limiter(id.UserID).Allow() {
+		u, _ := s.auth.User(r.Context())
+		if !s.limiter(u.ID).Allow() {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "too many requests: slow down", http.StatusTooManyRequests)
 			return
