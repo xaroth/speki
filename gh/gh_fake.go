@@ -42,6 +42,7 @@ type Fake struct {
 	issued       int // tokens and SHAs handed out, to keep them unique
 	routes       map[string]func(http.Handler) http.Handler
 	commitErrors []map[string]string
+	commitHooks  map[string]func(FakeCommit) string // by repository full name
 	requests     []string
 }
 
@@ -90,17 +91,18 @@ func NewFake(tb testing.TB, opts ...FakeOption) *Fake {
 		tb.Fatalf("fake GitHub key: %v", err)
 	}
 	f := &Fake{
-		AppID:      1,
-		PrivateKey: key,
-		tb:         tb,
-		repos:      map[string]*fakeRepo{},
-		users:      map[string]*fakeUser{},
-		teams:      map[string]string{},
-		codes:      map[string]fakeCode{},
-		refresh:    map[string]string{},
-		budgets:    map[string]int{},
-		pageSize:   100,
-		routes:     map[string]func(http.Handler) http.Handler{},
+		AppID:       1,
+		PrivateKey:  key,
+		tb:          tb,
+		repos:       map[string]*fakeRepo{},
+		users:       map[string]*fakeUser{},
+		teams:       map[string]string{},
+		codes:       map[string]fakeCode{},
+		refresh:     map[string]string{},
+		budgets:     map[string]int{},
+		pageSize:    100,
+		routes:      map[string]func(http.Handler) http.Handler{},
+		commitHooks: map[string]func(FakeCommit) string{},
 	}
 	for _, opt := range opts {
 		opt(tb, f)
@@ -114,6 +116,17 @@ func NewFake(tb testing.TB, opts ...FakeOption) *Fake {
 		tb.Fatalf("fake GitHub client: %v", err)
 	}
 	return f
+}
+
+// Apply applies opts to a running fake, for changes in the middle of a test, such as a push someone
+// made on GitHub. The options apply together: no request sees some of them without the others.
+func (f *Fake) Apply(opts ...FakeOption) {
+	f.tb.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, opt := range opts {
+		opt(f.tb, f)
+	}
 }
 
 // ExpectAppOwner sets the ID of the account that owns the app.
@@ -139,12 +152,18 @@ func ExpectInstallation(in Installation, repos ...Repository) FakeOption {
 }
 
 // ExpectInstallation_Refused makes GitHub refuse the installation's tokens with a 403, as it does when
-// rate limited. An installation that was never added is gone: its tokens are a 404.
+// rate limited. Add the installation with ExpectInstallation first. An installation that was never
+// added is gone: its tokens are a 404.
 //
 //nolint:revive // Expect<Thing>_<Case> is the naming for shared expectations
 func ExpectInstallation_Refused(id int64) FakeOption {
-	return func(_ testing.TB, f *Fake) {
-		f.install(id).refused = true
+	return func(tb testing.TB, f *Fake) {
+		tb.Helper()
+		in := f.install(id)
+		if in == nil {
+			tb.Fatalf("fake GitHub: no installation %d; add it with ExpectInstallation first", id)
+		}
+		in.refused = true
 	}
 }
 
@@ -203,7 +222,7 @@ func ExpectRole(token, repo string, role Role) FakeOption {
 }
 
 // ExpectOAuthCode makes an authorization code, with its PKCE verifier, good for accessToken. The code
-// works any number of times. Each answer carries a new refresh token, which works once and is good for
+// works any number of times. An empty verifier accepts any, for callers that make their own. Each answer carries a new refresh token, which works once and is good for
 // the same access token.
 func ExpectOAuthCode(code, verifier, accessToken string) FakeOption {
 	return func(_ testing.TB, f *Fake) { f.codes[code] = fakeCode{verifier: verifier, token: accessToken} }
@@ -215,6 +234,27 @@ func ExpectOAuthCode(code, verifier, accessToken string) FakeOption {
 func ExpectCommit_Error(typ, message string) FakeOption {
 	return func(_ testing.TB, f *Fake) {
 		f.commitErrors = append(f.commitErrors, map[string]string{"type": typ, "message": message})
+	}
+}
+
+// FakeCommit is a commit made through the fake's GraphQL API, as an ExpectCommitHook hook sees it.
+type FakeCommit struct {
+	Repo    string
+	Branch  string
+	Author  string // the committing user's login
+	Message string
+	Changes []FileChange // deletions first; nil Content deletes the path
+}
+
+// ExpectCommitHook calls hook for every commit made to repo, before it lands, and moves the branch to
+// the SHA hook returns rather than a made-up one. It lets the branch follow a real repository that
+// clients fetch from: hook commits the changes there and returns that commit's SHA. It runs with the
+// fake locked, so hooks never run at once.
+func ExpectCommitHook(repo string, hook func(FakeCommit) string) FakeOption {
+	return func(tb testing.TB, f *Fake) {
+		tb.Helper()
+		f.repo(tb, repo)
+		f.commitHooks[repo] = hook
 	}
 }
 
@@ -710,6 +750,10 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 		return
 	}
 	changes := map[string][]byte{}
+	var ordered []FileChange
+	for _, d := range in.FileChanges.Deletions {
+		ordered = append(ordered, FileChange{Path: d.Path})
+	}
 	for _, a := range in.FileChanges.Additions {
 		if a.Contents == nil {
 			fail("", "Variable $input of type CreateCommitOnBranchInput! was provided invalid value for fileChanges.additions.contents")
@@ -721,6 +765,18 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 			return
 		}
 		changes[a.Path] = content
+		ordered = append(ordered, FileChange{Path: a.Path, Content: content})
+	}
+	msg := in.Message.Headline
+	if in.Message.Body != "" {
+		msg += "\n\n" + in.Message.Body
+	}
+	var sha string
+	if hook := f.commitHooks[in.Branch.Repo]; hook != nil {
+		sha = hook(FakeCommit{Repo: in.Branch.Repo, Branch: in.Branch.Branch, Author: c.user.Login, Message: msg, Changes: ordered})
+	} else {
+		f.issued++
+		sha = fmt.Sprintf("%040x", f.issued)
 	}
 	for _, d := range in.FileChanges.Deletions {
 		delete(repo.files, d.Path)
@@ -728,13 +784,7 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 	for path, content := range changes {
 		repo.files[path] = content
 	}
-	f.issued++
-	sha := fmt.Sprintf("%040x", f.issued)
 	repo.heads[in.Branch.Branch] = sha
-	msg := in.Message.Headline
-	if in.Message.Body != "" {
-		msg += "\n\n" + in.Message.Body
-	}
 	repo.history = append([]Commit{{SHA: sha, Author: c.user.Login, Date: time.Now().UTC().Truncate(time.Second), Message: msg}}, repo.history...)
 	w.json(http.StatusOK, map[string]any{"data": map[string]any{"createCommitOnBranch": map[string]any{"commit": map[string]any{"oid": sha}}}})
 }
@@ -757,7 +807,7 @@ func (f *Fake) serveOAuthToken(w *fakeWriter, r *http.Request, _ credential) {
 		delete(f.refresh, old)
 	} else {
 		code, ok := f.codes[r.Form.Get("code")]
-		if !ok || code.verifier != r.Form.Get("code_verifier") {
+		if !ok || (code.verifier != "" && code.verifier != r.Form.Get("code_verifier")) {
 			fail("bad_verification_code")
 			return
 		}

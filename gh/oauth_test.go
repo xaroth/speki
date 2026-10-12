@@ -34,6 +34,17 @@ func TestExchange(t *testing.T) {
 				RefreshExpires: time.Now().Add(184 * 24 * time.Hour),
 			},
 		},
+		{
+			name: "code for any verifier",
+			opts: []gh.FakeOption{gh.ExpectOAuthCode("any", "", writer)},
+			code: "any",
+			want: gh.UserTokens{
+				AccessToken:    writer,
+				AccessExpires:  time.Now().Add(8 * time.Hour),
+				RefreshToken:   "ghr_fake_1",
+				RefreshExpires: time.Now().Add(184 * 24 * time.Hour),
+			},
+		},
 		{name: "bad code", code: "bad", wantErr: true, wantBadGrant: true},
 		{name: "wrong client secret", code: "good", wrongSecret: true, wantErr: true, wantConfig: true},
 		{
