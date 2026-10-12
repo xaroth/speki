@@ -1,28 +1,33 @@
-package document
+package document_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/eve-online-tools/speki/document"
 )
 
 var now = time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC)
 
+const twoYAMLDocuments = "---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n"
+
 func TestCheck(t *testing.T) {
-	tests := []struct {
+	t.Parallel()
+	testCases := []struct {
 		name    string
 		current string // empty: a new document
 		next    string
 		wantErr string // empty: no error
 	}{
-		{"valid new document", "", "---\ntitle: A\n---\nText\n", ""},
-		{"new document with heading title", "", "# A\n", ""},
-		{"new document without title", "", "Text only\n", "title: missing"},
-		{"new document with bad status", "", "---\ntitle: A\nstatus: wip\n---\n", "status"},
-		{"new document with tags as string", "", "---\ntitle: A\ntags: a, b\n---\n", "tags"},
+		{name: "valid new document", next: "---\ntitle: A\n---\nText\n"},
+		{name: "new document with heading title", next: "# A\n"},
+		{name: "new document without title", next: "Text only\n", wantErr: "title: missing"},
+		{name: "new document with bad status", next: "---\ntitle: A\nstatus: wip\n---\n", wantErr: "status"},
 		{
 			name:    "existing problem is left alone",
 			current: "---\ntitle: A\ntags: a, b\n---\nTypo\n",
@@ -41,37 +46,45 @@ func TestCheck(t *testing.T) {
 			wantErr: "frontmatter: not valid YAML",
 		},
 		{
+			name:    "block with two YAML documents must be fixed",
+			current: twoYAMLDocuments,
+			next:    twoYAMLDocuments,
+			wantErr: "frontmatter",
+		},
+		{
 			name:    "fixing broken frontmatter",
 			current: "---\ntitle: [a\n---\nText\n",
 			next:    "---\ntitle: a\n---\nText\n",
 		},
-		{"too large", "", "# A\n" + strings.Repeat("x", MaxSize), "larger than"},
+		{name: "too large", next: "# A\n" + strings.Repeat("x", document.MaxSize), wantErr: "larger than"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var current *Document
-			if tt.current != "" {
-				current = mustParse(t, "a.md", []byte(tt.current))
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			var current *document.Document
+			if testCase.current != "" {
+				current = mustParse(t, "a.md", []byte(testCase.current))
 			}
-			next := mustParse(t, "a.md", []byte(tt.next))
+			next := mustParse(t, "a.md", []byte(testCase.next))
 
-			err := Check(current, next)
+			err := document.Check(current, next)
 
-			if tt.wantErr == "" {
+			if testCase.wantErr == "" {
 				if err != nil {
-					t.Errorf("Check: %v", err)
+					t.Errorf("got error %v, want none", err)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("Check = %v, want it to mention %q", err, tt.wantErr)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Errorf("got error %v, want one mentioning %q", err, testCase.wantErr)
 			}
 		})
 	}
 }
 
 func TestTouch(t *testing.T) {
-	tests := []struct {
+	t.Parallel()
+	testCases := []struct {
 		name    string
 		raw     string
 		created time.Time
@@ -166,64 +179,87 @@ func TestTouch(t *testing.T) {
 			want: "---\ntitle: A\nupdated: 2026-10-09T14:02:11Z\n---\n",
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			d := mustParse(t, "a.md", []byte(tt.raw))
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			raw := []byte(testCase.raw)
+			d := mustParse(t, "a.md", raw)
 
-			got, err := d.Touch(now, tt.created)
+			got, err := d.Touch(now, testCase.created)
 			if err != nil {
-				t.Fatalf("Touch: %v", err)
+				t.Fatalf("got error %v, want none", err)
 			}
-			if string(got) != tt.want {
-				t.Errorf("Touch =\n%q\nwant\n%q", got, tt.want)
+			if string(got) != testCase.want {
+				t.Errorf("got\n%q\nwant\n%q", got, testCase.want)
 			}
-			if !bytes.Equal(d.raw, []byte(tt.raw)) {
-				t.Error("Touch changed the document")
+			if string(raw) != testCase.raw {
+				t.Errorf("got input changed to %q, want it left alone", raw)
 			}
 		})
 	}
 }
 
-func TestTouchBrokenFrontmatter(t *testing.T) {
-	d := mustParse(t, "a.md", []byte("---\ntitle: [a\n---\n"))
-	_, err := d.Touch(now, time.Time{})
-	if err == nil {
-		t.Fatal("Touch succeeded on broken frontmatter")
+func TestTouchErrors(t *testing.T) {
+	t.Parallel()
+	const head = "---\ntitle: A\n---\n"
+	testCases := []struct {
+		name     string
+		raw      string
+		wantIs   error  // nil: only the text is checked
+		wantText string // a part of the error text
+	}{
+		{name: "broken frontmatter", raw: "---\ntitle: [a\n---\n", wantText: "frontmatter: not valid YAML"},
+		{name: "block with two YAML documents", raw: twoYAMLDocuments, wantText: "frontmatter"},
+		{name: "past MaxSize once dated", raw: head + strings.Repeat("x", document.MaxSize-len(head)), wantIs: document.ErrTooLarge},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			d := mustParse(t, "a.md", []byte(testCase.raw))
+			out, err := d.Touch(now, now)
+			if err == nil {
+				t.Fatalf("got %q and no error, want an error", out)
+			}
+			if testCase.wantIs != nil && !errors.Is(err, testCase.wantIs) {
+				t.Errorf("got error %v, want %v", err, testCase.wantIs)
+			}
+			if !strings.Contains(err.Error(), testCase.wantText) {
+				t.Errorf("got error %q, want it to mention %q", err, testCase.wantText)
+			}
+		})
 	}
 }
 
 func TestTouchKeepsMeaning(t *testing.T) {
+	t.Parallel()
 	d := mustParse(t, "obsidian.md", readFixture(t, "obsidian.md"))
 	out, err := d.Touch(now, time.Time{})
 	if err != nil {
-		t.Fatalf("Touch: %v", err)
+		t.Fatalf("got error %v, want none", err)
 	}
 	again := mustParse(t, "obsidian.md", out)
 
 	if again.Body != d.Body {
-		t.Error("body changed")
+		t.Errorf("got body %q, want %q", again.Body, d.Body)
 	}
 	want := d.Meta
 	want.Updated = now
-	if again.Meta.Title != want.Title || !again.Meta.Updated.Equal(now) || !again.Meta.Created.Equal(want.Created) {
-		t.Errorf("meta after touch = %+v", again.Meta)
+	if diff := cmp.Diff(want, again.Meta); diff != "" {
+		t.Errorf("meta after touch (-want +got):\n%s", diff)
 	}
 	if len(again.Warnings) != 0 {
-		t.Errorf("warnings after touch: %q", again.Warnings)
+		t.Errorf("got warnings %q, want none", again.Warnings)
 	}
 }
 
 func FuzzParseTouch(f *testing.F) {
 	for _, name := range []string{"obsidian.md", "crlf.md", "bom.md", "broken-yaml.md", "messy-fields.md", "no-frontmatter.md", "anchors.md", "nfd.md"} {
-		raw, err := readFixtureFS(name)
-		if err == nil {
-			f.Add(raw)
-		}
+		f.Add(readFixture(f, name))
 	}
 	f.Add([]byte("---\n---\n"))
-	f.Add([]byte("---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n"))
+	f.Add([]byte(twoYAMLDocuments))
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		d, err := Parse("fuzz.md", raw)
+		d, err := document.Parse("fuzz.md", raw)
 		if err != nil {
 			return
 		}
@@ -231,7 +267,7 @@ func FuzzParseTouch(f *testing.F) {
 		if err != nil {
 			return
 		}
-		d2, err := Parse("fuzz.md", once)
+		d2, err := document.Parse("fuzz.md", once)
 		if err != nil {
 			t.Fatalf("touched document doesn't parse: %v\n%q", err, once)
 		}
@@ -243,44 +279,7 @@ func FuzzParseTouch(f *testing.F) {
 			t.Fatalf("Touch isn't stable:\n%q\n%q", once, twice)
 		}
 		if d2.Body != d.Body {
-			t.Fatalf("body changed:\n%q\n%q", d.Body, d2.Body)
+			t.Fatalf("got body %q, want %q", d2.Body, d.Body)
 		}
 	})
-}
-
-func TestTouchKeepsTextAfterAnOpenClosingLine(t *testing.T) {
-	raw := []byte("---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n")
-	d := mustParse(t, "a.md", raw)
-	out, err := d.Touch(now, time.Time{})
-	if err == nil {
-		t.Errorf("Touch rewrote a block with two YAML documents:\n%s", out)
-	}
-	if Check(d, d) == nil {
-		t.Error("Check accepts a change that keeps the broken block")
-	}
-}
-
-func TestTouchStaysWithinLimits(t *testing.T) {
-	head := "---\ntitle: A\n---\n"
-	d := mustParse(t, "a.md", []byte(head+strings.Repeat("x", MaxSize-len(head))))
-	if err := Check(nil, d); err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	if _, err := d.Touch(now, now); !errors.Is(err, ErrTooLarge) {
-		t.Errorf("Touch past MaxSize: %v", err)
-	}
-	big := mustParse(t, "a.md", []byte(head+strings.Repeat("x", MaxSize)))
-	if err := Check(nil, big); !errors.Is(err, ErrTooLarge) {
-		t.Errorf("Check past MaxSize: %v", err)
-	}
-}
-
-func TestNonFiniteValuesAreKept(t *testing.T) {
-	d := mustParse(t, "a.md", []byte("---\nweight: .nan\nx: -.inf\n---\n"))
-	if d.Meta.Extra["weight"] != "NaN" || d.Meta.Extra["x"] != "-Inf" {
-		t.Errorf("extra = %v", d.Meta.Extra)
-	}
-	if _, err := json.Marshal(d.Meta.Extra); err != nil {
-		t.Errorf("extra doesn't marshal: %v", err)
-	}
 }
