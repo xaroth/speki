@@ -1,827 +1,619 @@
-package knowledge
+package knowledge_test
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
-	"iter"
-	"log/slog"
-	"maps"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/eve-online-tools/speki/access"
+	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/gh"
 	"github.com/eve-online-tools/speki/index"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/eve-online-tools/speki/knowledge"
 )
 
-// fakeCopy is a vault copy with a real index, and the git tree and blobs in memory.
-type fakeCopy struct {
-	mu    sync.Mutex
-	info  vault.Vault
-	idx   *index.Index
-	blobs map[string][]byte
-	trees map[string]map[string][]byte // commit -> path -> content
-
-	blobFailures int
-}
-
-func (c *fakeCopy) Index() *index.Index { return c.idx }
-
-func (c *fakeCopy) Info() vault.Vault {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.info
-}
-
-// failBlobs makes the next n blob reads fail, as after a fresh clone dropped old objects.
-func (c *fakeCopy) failBlobs(n int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.blobFailures = n
-}
-
-func (c *fakeCopy) Blob(sha string) ([]byte, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.blobFailures > 0 {
-		c.blobFailures--
-		return nil, errors.New("object not found")
-	}
-	b, ok := c.blobs[sha]
-	if !ok {
-		return nil, errors.New("object not found")
-	}
-	return b, nil
-}
-
-func (c *fakeCopy) Paths(commit string) ([]string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	tree, ok := c.trees[commit]
-	if !ok {
-		return nil, fmt.Errorf("commit %s not in the copy", commit)
-	}
-	return slices.Sorted(maps.Keys(tree)), nil
-}
-
-func (c *fakeCopy) Version(commit, path string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	tree, ok := c.trees[commit]
-	if !ok {
-		return "", fmt.Errorf("commit %s not in the copy", commit)
-	}
-	content, ok := tree[path]
-	if !ok {
-		return "", nil
-	}
-	return blobID(content), nil
-}
-
-// tree returns the files at the index's commit.
-func (c *fakeCopy) tree() map[string][]byte {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.trees[c.idx.Commit()]
-}
-
-// setFile changes one file in the tree at commit without touching the index; nil content deletes it.
-// The commit starts from the tree at the index's commit when the copy doesn't have it yet.
-func (c *fakeCopy) setFile(commit, path string, content []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	tree, ok := c.trees[commit]
-	if !ok {
-		tree = c.trees[c.idx.Commit()]
-	}
-	tree = maps.Clone(tree)
-	if content == nil {
-		delete(tree, path)
-	} else {
-		tree[path] = content
-		c.blobs[blobID(content)] = content
-	}
-	c.trees[commit] = tree
-}
-
-// load rebuilds the copy at commit with files. Files that aren't markdown are in the tree but not indexed.
-func (c *fakeCopy) load(t *testing.T, commit string, files map[string][]byte) {
-	t.Helper()
-	c.mu.Lock()
-	c.trees[commit] = maps.Clone(files)
-	for _, content := range files {
-		c.blobs[blobID(content)] = content
-	}
-	c.mu.Unlock()
-	changes := func(yield func(index.Change, error) bool) {
-		for _, p := range slices.Sorted(maps.Keys(files)) {
-			if !strings.HasSuffix(p, ".md") {
-				continue
-			}
-			if !yield(index.Change{Path: p, Version: blobID(files[p]), Content: files[p]}, nil) {
-				return
-			}
-		}
-	}
-	err := c.idx.Build(t.Context(), commit, iter.Seq2[index.Change, error](changes))
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func newCopy(t *testing.T, files map[string]string) *fakeCopy {
-	t.Helper()
-	idx, err := index.Open(t.Context(), t.TempDir(), discard())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(idx.Close)
-	c := &fakeCopy{idx: idx, blobs: map[string][]byte{}, trees: map[string]map[string][]byte{}}
-	raw := map[string][]byte{}
-	for p, content := range files {
-		raw[p] = []byte(content)
-	}
-	c.load(t, "c1", raw)
-	return c
-}
-
-func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
-
-// fakeRepo is a repository on the fake GitHub.
-type fakeRepo struct {
-	head  string
-	files map[string][]byte
-}
-
-// fakeGitHub keeps repositories that start out as their copies, and takes commits to them.
-type fakeGitHub struct {
-	mu      sync.Mutex
-	t       *testing.T
-	f       *fixture
-	repos   map[string]*fakeRepo
-	commits int
-	// Commit
-	requests []gh.CommitRequest
-	before   func(repo *fakeRepo) // runs before a commit is checked, to change the repository under it
-	err      error                // returned by Commit when set
-	lostErr  error                // when set, Commit makes the commit and then fails with it, as when the answer is lost
-	log      []gh.Commit          // the commits made, newest first
-	// Commits (history)
-	token, repo, branch, path string
-	limit                     int
-	history                   []gh.Commit
-	historyErr                error
-}
-
-func (f *fakeGitHub) Commits(_ context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.history == nil && f.historyErr == nil { // nothing set up: what was committed
-		return f.log, nil
-	}
-	f.token, f.repo, f.branch, f.path, f.limit = token, repo, branch, path, limit
-	return f.history, f.historyErr
-}
-
-// repoOf returns the repository behind a vault, starting it from the vault's copy.
-func (f *fakeGitHub) repoOf(name string) *fakeRepo {
-	r, ok := f.repos[name]
-	if ok {
-		return r
-	}
-	for _, v := range []vault.Vault{ours, shared, secret} {
-		if v.Name == name {
-			c := f.f.copies[v.RepoID]
-			r = &fakeRepo{head: c.idx.Commit(), files: maps.Clone(c.tree())}
-		}
-	}
-	f.repos[name] = r
-	return r
-}
-
-func (f *fakeGitHub) Commit(_ context.Context, _ string, req gh.CommitRequest) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.requests = append(f.requests, req)
-	if f.err != nil {
-		return "", f.err
-	}
-	r := f.repoOf(req.Repo)
-	if f.before != nil {
-		f.before(r)
-	}
-	if req.ExpectedHead != r.head {
-		return "", gh.ErrHeadMoved
-	}
-	r.files = maps.Clone(r.files)
-	for _, ch := range req.Changes {
-		if ch.Content == nil {
-			delete(r.files, ch.Path)
-		} else {
-			r.files[ch.Path] = ch.Content
-		}
-	}
-	f.commits++
-	r.head = fmt.Sprintf("commit-%d", f.commits)
-	f.log = append([]gh.Commit{{SHA: r.head, Message: req.Message}}, f.log...)
-	if f.lostErr != nil {
-		return "", f.lostErr
-	}
-	return r.head, nil
-}
-
-// push changes a repository behind speki's back, as a push from elsewhere would.
-func (f *fakeGitHub) push(name, path string, content []byte) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	r := f.repoOf(name)
-	r.files = maps.Clone(r.files)
-	r.files[path] = content
-	f.commits++
-	r.head = fmt.Sprintf("push-%d", f.commits)
-}
-
-// fakeVaults serves the fixture's copies. Sync brings a copy up to date with its fake repository.
-type fakeVaults struct {
-	f       *fixture
-	syncs   atomic.Int32
-	syncErr error
-	hold    chan struct{} // when set, Sync waits for it to close or ctx to end
-}
-
-func (v *fakeVaults) Copy(id int64) (Copy, bool) {
-	c, ok := v.f.copies[id]
-	if !ok {
-		return nil, false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.info.RepoID == 0 {
-		for _, vv := range []vault.Vault{ours, shared, secret} {
-			if vv.RepoID == id {
-				c.info = vv
-			}
-		}
-	}
-	return c, true
-}
-
-func (v *fakeVaults) Sync(ctx context.Context, id int64) error {
-	v.syncs.Add(1)
-	if v.hold != nil {
-		select {
-		case <-v.hold:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	if v.syncErr != nil {
-		return v.syncErr
-	}
-	gh := v.f.github
-	gh.mu.Lock()
-	var r *fakeRepo
-	for _, vv := range []vault.Vault{ours, shared, secret} {
-		if vv.RepoID == id {
-			r = gh.repos[vv.Name]
-		}
-	}
-	var head string
-	var files map[string][]byte
-	if r != nil {
-		head, files = r.head, maps.Clone(r.files)
-	}
-	gh.mu.Unlock()
-	c := v.f.copies[id]
-	if r == nil || c.idx.Commit() == head {
-		return nil
-	}
-	c.load(v.f.t, head, files)
-	return nil
-}
-
-var ours = vault.Vault{RepoID: 1, Name: "ours/kb", DefaultBranch: "main", Config: vault.Config{Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service."}}
-var shared = vault.Vault{RepoID: 2, Name: "ours/shared", DefaultBranch: "main"}
-var secret = vault.Vault{RepoID: 3, Name: "ours/secret", DefaultBranch: "main"}
-
-// fixture serves three vaults. The test user may read ours and shared, and write ours; secret holds a
-// document only others may read.
-type fixture struct {
-	t       *testing.T
-	base    *Base
-	grant   *access.Grant
-	copies  map[int64]*fakeCopy
-	github  *fakeGitHub
-	vaults  *fakeVaults
-	notices *fakeNotices
-}
-
-// fakeNotices records the change notices sent.
-type fakeNotices struct {
-	mu   sync.Mutex
-	sent []string // repo id:commit
-}
-
-func (n *fakeNotices) Publish(_ context.Context, repoID int64, commit string) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.sent = append(n.sent, fmt.Sprintf("%d:%s", repoID, commit))
-	return nil
-}
-
-var fixedNow = time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC)
-
-func newFixture(t *testing.T) *fixture {
-	t.Helper()
-	f := &fixture{
-		t: t,
-		copies: map[int64]*fakeCopy{
-			1: newCopy(t, map[string]string{
-				"README.md":             "---\ntitle: About\n---\n# About\n\nThis vault holds zeppelin notes.\n",
-				"services/esi-proxy.md": "---\ntitle: ESI proxy\ntags: [esi]\n---\n# ESI proxy\n\nThe proxy caches zeppelin responses.\n\n## Deploying\n\nRun the job.\n",
-				"services/db/pg.md":     "# Postgres\n\nZeppelin database.\n",
-			}),
-			2: newCopy(t, map[string]string{"zeppelin.md": "# Zeppelin\n\nShared zeppelin facts.\n"}),
-			3: newCopy(t, map[string]string{"services/esi-proxy.md": "# Hidden\n\nThe secret zeppelin plan.\n"}),
-		},
-	}
-	f.github = &fakeGitHub{t: t, f: f, repos: map[string]*fakeRepo{}}
-	f.vaults = &fakeVaults{f: f}
-	sandbox, err := index.NewSandbox()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = sandbox.Close() })
-	f.notices = &fakeNotices{}
-	f.base = New(f.vaults, f.github, sandbox, f.notices, discard())
-	f.base.now = func() time.Time { return fixedNow }
-	f.grant = access.NewGrant(access.User{ID: 7, Login: "octocat", Token: "ghu_x", Client: "Claude Code", Write: true},
-		[]vault.Vault{ours, shared}, []int64{1})
-	return f
-}
-
-func wantCode(t *testing.T, err error, code Code) {
-	t.Helper()
-	var kerr *Error
-	if !errors.As(err, &kerr) || kerr.Code != code {
-		t.Fatalf("error = %v, want %s", err, code)
-	}
-}
-
 func TestVaults(t *testing.T) {
-	f := newFixture(t)
-	got, err := f.base.Vaults(t.Context(), f.grant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []VaultInfo{
-		{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", CanWrite: true, Documents: 3},
-		{Name: "ours/shared", Documents: 1},
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("vaults (-want +got):\n%s", diff)
-	}
-
-	delete(f.copies, 2) // served when the grant was made, but not any more
-	got, _ = f.base.Vaults(t.Context(), f.grant)
-	if len(got) != 2 || got[1].Name != "ours/shared" || got[1].State != access.StateGone || got[1].Documents != 0 {
-		t.Errorf("vault gone since the grant: %+v", got)
-	}
-}
-
-var building = vault.Vault{RepoID: 4, Name: "ours/new", DefaultBranch: "main", Config: vault.Config{Title: "New"}}
-var failed = vault.Vault{RepoID: 5, Name: "ours/old", DefaultBranch: "main"}
-
-// withUnavailable gives f's user a grant that also knows building and failed, which they may read but
-// speki doesn't serve. building has a copy with matching documents, which must stay out of every answer.
-func withUnavailable(t *testing.T, f *fixture) {
-	t.Helper()
-	f.copies[building.RepoID] = newCopy(t, map[string]string{"zeppelin.md": "# Zeppelin\n\nNew zeppelin facts.\n"})
-	f.grant = access.NewGrant(f.grant.User(), []vault.Vault{ours, shared}, []int64{1},
-		access.Unavailable{Vault: failed, State: access.StateFailed},
-		access.Unavailable{Vault: building, State: access.StateBuilding},
-	)
-}
-
-func TestUnavailableVaultsSkipped(t *testing.T) {
-	f := newFixture(t)
-	withUnavailable(t, f)
-	ctx := t.Context()
-	want := []Skipped{
-		{Name: "ours/new", State: access.StateBuilding},
-		{Name: "ours/old", State: access.StateFailed},
-	}
-
-	res, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, h := range res.Hits {
-		if h.Source != "ours/kb" && h.Source != "ours/shared" {
-			t.Errorf("hit from a vault that isn't served: %+v", h)
-		}
-	}
-	if len(res.Hits) != 4 {
-		t.Errorf("hits = %+v", res.Hits)
-	}
-	if diff := cmp.Diff(want, res.Skipped); diff != "" {
-		t.Errorf("search skipped (-want +got):\n%s", diff)
-	}
-
-	q, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT vault, count(*) FROM documents GROUP BY vault ORDER BY vault"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fmt.Sprint(q.Rows.Rows) != "[[ours/kb 3] [ours/shared 1]]" {
-		t.Errorf("rows = %v", q.Rows.Rows)
-	}
-	if diff := cmp.Diff(want, q.Skipped); diff != "" {
-		t.Errorf("query skipped (-want +got):\n%s", diff)
-	}
-
-	// Naming vaults covers exactly those, so nothing was skipped.
-	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared"}})
-	if err != nil || res.Skipped != nil {
-		t.Errorf("named vault: skipped %v, %v", res.Skipped, err)
-	}
-	q, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/kb"}})
-	if err != nil || q.Skipped != nil {
-		t.Errorf("named vault: skipped %v, %v", q.Skipped, err)
-	}
-
-	vaults, err := f.base.Vaults(ctx, f.grant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantVaults := []VaultInfo{
+	t.Parallel()
+	kb := knowledge.VaultInfo{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", CanWrite: true, Documents: 3}
+	testCases := []struct {
+		name  string
+		setup func(testing.TB, *fixture)
+		want  []knowledge.VaultInfo
+	}{
 		{
-			Name:        "ours/kb",
-			Title:       "KB",
-			Description: "Our knowledge.",
-			Guidelines:  "One page per service.",
-			CanWrite:    true,
-			Documents:   3,
+			name: "served",
+			want: []knowledge.VaultInfo{kb, {Name: "ours/shared", Documents: 1}},
 		},
-		{Name: "ours/new", Title: "New", State: access.StateBuilding},
-		{Name: "ours/old", State: access.StateFailed},
-		{Name: "ours/shared", Documents: 1},
+		{
+			name: "unavailable, and gone since the grant",
+			setup: func(tb testing.TB, f *fixture) {
+				withUnavailable(tb, f)
+				f.setCopy(shared.RepoID, nil)
+			},
+			want: []knowledge.VaultInfo{
+				kb,
+				{Name: "ours/new", Title: "New", State: access.StateBuilding},
+				{Name: "ours/old", State: access.StateFailed},
+				{Name: "ours/shared", State: access.StateGone},
+			},
+		},
+		{
+			name:  "index closed",
+			setup: func(_ testing.TB, f *fixture) { f.copy(ours.RepoID).idx.Close() },
+			want: []knowledge.VaultInfo{
+				{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", State: access.StateGone},
+				{Name: "ours/shared", Documents: 1},
+			},
+		},
 	}
-	if diff := cmp.Diff(wantVaults, vaults); diff != "" {
-		t.Errorf("vaults (-want +got):\n%s", diff)
-	}
-
-	// A served vault that goes away after the grant was made is skipped too, not silently left out.
-	delete(f.copies, shared.RepoID)
-	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, h := range res.Hits {
-		if h.Source != "ours/kb" {
-			t.Errorf("hit from a vault that isn't served: %+v", h)
-		}
-	}
-	want = []Skipped{
-		{Name: "ours/new", State: access.StateBuilding},
-		{Name: "ours/old", State: access.StateFailed},
-		{Name: "ours/shared", State: access.StateGone},
-	}
-	if diff := cmp.Diff(want, res.Skipped); diff != "" {
-		t.Errorf("search skipped (-want +got):\n%s", diff)
-	}
-	q, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff(want, q.Skipped); diff != "" {
-		t.Errorf("query skipped (-want +got):\n%s", diff)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			if testCase.setup != nil {
+				testCase.setup(t, f)
+			}
+			got, err := f.base.Vaults(t.Context(), f.grant)
+			if err != nil {
+				t.Fatalf("Vaults: %v", err)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("vaults (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
+// Every tool answers a vault the user may read but speki doesn't serve as unavailable, and one they
+// can't read as not found, without asking GitHub.
 func TestUnavailableVaultNamed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	withUnavailable(t, f)
-	delete(f.copies, ours.RepoID) // in the grant, but not served any more: list shows it as gone
-	ctx := t.Context()
-	calls := map[string]func(name string) error{
-		"list": func(name string) error {
-			_, err := f.base.List(ctx, f.grant, ListRequest{Vault: name})
+	f.setCopy(ours.RepoID, nil) // in the grant, but not served any more: list shows it as gone
+	tools := []struct {
+		name string
+		call func(t *testing.T, name string) error
+	}{
+		{name: "list", call: func(t *testing.T, name string) error {
+			_, err := f.base.List(t.Context(), f.grant, knowledge.ListRequest{Vault: name})
 			return err
-		},
-		"search": func(name string) error {
-			_, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared", name}})
+		}},
+		{name: "search", call: func(t *testing.T, name string) error {
+			_, err := f.base.Search(t.Context(), f.grant, knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared", name}})
 			return err
-		},
-		"query": func(name string) error {
-			_, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{name}})
+		}},
+		{name: "query", call: func(t *testing.T, name string) error {
+			_, err := f.base.Query(t.Context(), f.grant, knowledge.QueryRequest{SQL: "SELECT 1", Vaults: []string{name}})
 			return err
-		},
-		"read": func(name string) error {
-			_, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: name, Path: "zeppelin.md"})
+		}},
+		{name: "read", call: func(t *testing.T, name string) error {
+			_, err := f.base.Read(t.Context(), f.grant, knowledge.ReadRequest{Vault: name, Path: "zeppelin.md"})
 			return err
-		},
-		"history": func(name string) error {
-			_, err := f.base.History(ctx, f.grant, HistoryRequest{Vault: name})
+		}},
+		{name: "history", call: func(t *testing.T, name string) error {
+			_, err := f.base.History(t.Context(), f.grant, knowledge.HistoryRequest{Vault: name})
 			return err
-		},
-		"write": func(name string) error {
-			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: name, Path: "a.md", Content: "# A\n"})
+		}},
+		{name: "write", call: func(t *testing.T, name string) error {
+			_, err := f.base.Write(t.Context(), f.grant, knowledge.WriteRequest{Vault: name, Path: "a.md", Content: "# A\n"})
 			return err
-		},
-		"edit": func(name string) error {
-			_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: name, Path: "zeppelin.md", OldText: "New", NewText: "Old"})
-			return err
-		},
-		"move": func(name string) error {
-			_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: name, From: "zeppelin.md", To: "z.md", Version: "x"})
-			return err
-		},
-		"delete": func(name string) error {
-			_, err := f.base.Delete(ctx, f.grant, DeleteRequest{Vault: name, Path: "zeppelin.md", Version: "x"})
-			return err
-		},
+		}},
 	}
-	tests := []struct {
+	testCases := []struct {
 		name    string
-		code    Code
+		vault   string
+		code    knowledge.Code
 		message string
 	}{
-		{name: "OURS/new", code: CodeUnavailable, message: "unavailable: ours/new is still building its index. Try again in a minute"},
-		{name: "ours/old", code: CodeUnavailable, message: "unavailable: ours/old failed to open"},
-		{name: "OURS/kb", code: CodeUnavailable, message: "unavailable: ours/kb was just removed or is reopening. Try again shortly"},
-		{name: "ours/nothing", code: CodeNotFound, message: `not_found: there's no vault named "ours/nothing"`},
-		{name: secret.Name, code: CodeNotFound, message: `not_found: there's no vault named "ours/secret"`},
+		{name: "building", vault: "OURS/new", code: knowledge.CodeUnavailable, message: "unavailable: ours/new is still building its index. Try again in a minute"},
+		{name: "failed", vault: "ours/old", code: knowledge.CodeUnavailable, message: "unavailable: ours/old failed to open"},
+		{name: "gone", vault: "OURS/kb", code: knowledge.CodeUnavailable, message: "unavailable: ours/kb was just removed or is reopening. Try again shortly"},
+		{name: "unknown", vault: "ours/nothing", code: knowledge.CodeNotFound, message: `not_found: there's no vault named "ours/nothing"`},
 	}
-	for tool, call := range calls {
-		for _, tt := range tests {
-			t.Run(tool+" "+tt.name, func(t *testing.T) {
-				err := call(tt.name)
-				wantCode(t, err, tt.code)
-				if !strings.HasPrefix(err.Error(), tt.message) {
-					t.Errorf("error = %q, want it to start with %q", err, tt.message)
+	for _, tool := range tools {
+		for _, testCase := range testCases {
+			t.Run(tool.name+" "+testCase.name, func(t *testing.T) {
+				t.Parallel()
+				err := tool.call(t, testCase.vault)
+				wantCode(t, err, testCase.code)
+				if !strings.HasPrefix(err.Error(), testCase.message) {
+					t.Errorf("got error %q, want it to start with %q", err, testCase.message)
+				}
+				if n := len(f.github.sent()); n != 0 {
+					t.Errorf("got %d commits, want none", n)
 				}
 			})
 		}
-	}
-	if f.github.commits != 0 || f.github.repo != "" {
-		t.Error("asked GitHub about a vault that isn't served")
 	}
 }
 
 // A vault whose index closes under a request answers as gone, the way list shows it.
 func TestClosedIndex(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	ctx := t.Context()
-	f.copies[ours.RepoID].idx.Close()
-
-	vaults, err := f.base.Vaults(ctx, f.grant)
-	if err != nil || len(vaults) != 2 || vaults[0].Name != "ours/kb" || vaults[0].State != access.StateGone {
-		t.Errorf("vaults = %+v, %v", vaults, err)
+	f.copy(ours.RepoID).idx.Close()
+	testCases := []struct {
+		name    string
+		call    func(t *testing.T) error
+		message string
+	}{
+		{name: "read", call: func(t *testing.T) error {
+			_, err := f.base.Read(t.Context(), f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: "README.md"})
+			return err
+		}},
+		{name: "list", call: func(t *testing.T) error {
+			_, err := f.base.List(t.Context(), f.grant, knowledge.ListRequest{Vault: "ours/kb"})
+			return err
+		}},
+		{name: "search", message: "just removed or is reopening", call: func(t *testing.T) error {
+			_, err := f.base.Search(t.Context(), f.grant, knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}})
+			return err
+		}},
+		{name: "query", message: "just removed or is reopening", call: func(t *testing.T) error {
+			_, err := f.base.Query(t.Context(), f.grant, knowledge.QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/kb"}})
+			return err
+		}},
+		{name: "delete", call: func(t *testing.T) error {
+			_, err := f.base.Delete(t.Context(), f.grant, knowledge.DeleteRequest{Vault: "ours/kb", Path: "README.md", Version: "x"})
+			return err
+		}},
 	}
-	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "README.md"})
-	wantCode(t, err, CodeUnavailable)
-	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb"})
-	wantCode(t, err, CodeUnavailable)
-	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}})
-	wantCode(t, err, CodeUnavailable)
-	if !strings.Contains(err.Error(), "just removed or is reopening") {
-		t.Errorf("error = %v", err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			err := testCase.call(t)
+			wantCode(t, err, knowledge.CodeUnavailable)
+			if !strings.Contains(err.Error(), testCase.message) {
+				t.Errorf("got error %v, want it to contain %q", err, testCase.message)
+			}
+			if n := len(f.github.sent()); n != 0 {
+				t.Errorf("got %d commits, want none", n)
+			}
+		})
 	}
-	_, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/kb"}})
-	wantCode(t, err, CodeUnavailable)
-	if !strings.Contains(err.Error(), "just removed or is reopening") {
-		t.Errorf("error = %v", err)
-	}
-	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: "README.md", Version: "x"})
-	wantCode(t, err, CodeUnavailable)
-	if len(f.github.requests) != 0 {
-		t.Errorf("committed %d times", len(f.github.requests))
-	}
-}
-
-func paths(entries []index.Entry) []string {
-	var out []string
-	for _, e := range entries {
-		out = append(out, e.Path)
-	}
-	return out
 }
 
 func TestList(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	ctx := t.Context()
-
-	root, err := f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb"})
-	if err != nil {
-		t.Fatal(err)
+	testCases := []struct {
+		name string
+		req  knowledge.ListRequest
+		want knowledge.Listing
+		code knowledge.Code
+	}{
+		{
+			name: "root",
+			req:  knowledge.ListRequest{Vault: "ours/kb"},
+			want: knowledge.Listing{
+				Folders:    []string{"services/"},
+				Documents:  []index.Entry{{Path: "README.md", Title: "About", Status: document.StatusActive, Version: blobID(readme)}},
+				Guidelines: "One page per service.",
+			},
+		},
+		{
+			name: "folder, recursive",
+			req:  knowledge.ListRequest{Vault: "ours/kb", Path: "/services", Recursive: true},
+			want: knowledge.Listing{Documents: []index.Entry{
+				{Path: "services/db/pg.md", Title: "Postgres", Status: document.StatusActive, Version: blobID(postgres)},
+				{Path: "services/esi-proxy.md", Title: "ESI proxy", Status: document.StatusActive, Version: blobID(esiProxy)},
+			}},
+		},
+		{name: "no such folder", req: knowledge.ListRequest{Vault: "ours/kb", Path: "nothing"}, code: knowledge.CodeNotFound},
+		{name: "cursor of another listing", req: knowledge.ListRequest{Vault: "ours/kb", Path: "services", Cursor: "README.md"}, code: knowledge.CodeInvalid},
 	}
-	if !slices.Equal(root.Folders, []string{"services/"}) || !slices.Equal(paths(root.Documents), []string{"README.md"}) {
-		t.Errorf("root = %+v", root)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := f.base.List(t.Context(), f.grant, testCase.req)
+			if testCase.code != "" {
+				wantCode(t, err, testCase.code)
+				return
+			}
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("listing (-want +got):\n%s", diff)
+			}
+		})
 	}
-	if root.Guidelines != "One page per service." || root.NextCursor != "" {
-		t.Errorf("root guidelines or cursor = %q, %q", root.Guidelines, root.NextCursor)
-	}
-
-	sub, err := f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb", Path: "/services", Recursive: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sub.Folders) != 0 || !slices.Equal(paths(sub.Documents), []string{"services/db/pg.md", "services/esi-proxy.md"}) {
-		t.Errorf("recursive = %+v", sub)
-	}
-	if sub.Guidelines != "" {
-		t.Error("guidelines outside the root")
-	}
-
-	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb", Path: "nothing"})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb", Path: "services", Cursor: "README.md"})
-	wantCode(t, err, CodeInvalid)
 }
 
 func TestListPages(t *testing.T) {
+	t.Parallel()
 	files := map[string]string{}
-	for i := range listLimit + 5 {
+	for i := range knowledge.ListLimit + 5 {
 		files[fmt.Sprintf("n/%03d.md", i)] = "# Note\n"
 	}
-	f := newFixture(t)
-	f.copies[1] = newCopy(t, files)
+	f := newFixture(t, withKB(files))
 
 	var seen []string
-	req := ListRequest{Vault: "ours/kb", Path: "n"}
-	for pages := 0; ; pages++ {
+	req := knowledge.ListRequest{Vault: "ours/kb", Path: "n"}
+	for pages := 1; ; pages++ {
 		page, err := f.base.List(t.Context(), f.grant, req)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("List: %v", err)
 		}
-		seen = append(seen, paths(page.Documents)...)
+		for _, d := range page.Documents {
+			seen = append(seen, d.Path)
+		}
 		if page.NextCursor == "" {
 			break
 		}
-		if pages > 2 {
-			t.Fatal("too many pages")
+		if pages == 2 {
+			t.Fatalf("got a cursor on page %d, want 2 pages", pages)
 		}
 		req.Cursor = page.NextCursor
 	}
-	if len(seen) != listLimit+5 || !slices.IsSorted(seen) || len(slices.Compact(seen)) != len(seen) {
-		t.Errorf("paged through %d documents", len(seen))
+	want := slices.Sorted(func(yield func(string) bool) {
+		for p := range files {
+			if !yield(p) {
+				return
+			}
+		}
+	})
+	if diff := cmp.Diff(want, seen); diff != "" {
+		t.Errorf("paged through (-want +got):\n%s", diff)
 	}
 }
 
 func TestSearch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
-	ctx := t.Context()
+	withUnavailable(t, f)
+	notServed := []knowledge.Skipped{
+		{Name: "ours/new", State: access.StateBuilding},
+		{Name: "ours/old", State: access.StateFailed},
+	}
+	testCases := []struct {
+		name        string
+		req         knowledge.SearchRequest
+		wantHits    []string // vault:path, sorted
+		wantSkipped []knowledge.Skipped
+		code        knowledge.Code
+	}{
+		{
+			name:        "every vault",
+			req:         knowledge.SearchRequest{Query: "zeppelin"},
+			wantHits:    []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/esi-proxy.md", "ours/shared:zeppelin.md"},
+			wantSkipped: notServed,
+		},
+		{
+			name:     "one vault, named twice in another letter case",
+			req:      knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared", "OURS/SHARED"}},
+			wantHits: []string{"ours/shared:zeppelin.md"},
+		},
+		{
+			name:     "path and tags",
+			req:      knowledge.SearchRequest{Query: "zeppelin", Path: "services", Tags: []string{"esi"}},
+			wantHits: []string{"ours/kb:services/esi-proxy.md"}, wantSkipped: notServed,
+		},
+		{name: "empty", req: knowledge.SearchRequest{Query: "  "}, code: knowledge.CodeInvalid},
+		{name: "only exclusions", req: knowledge.SearchRequest{Query: "-zeppelin"}, code: knowledge.CodeInvalid},
+		{name: "limit too high", req: knowledge.SearchRequest{Query: "x", Limit: 51}, code: knowledge.CodeInvalid},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := f.base.Search(t.Context(), f.grant, testCase.req)
+			if testCase.code != "" {
+				wantCode(t, err, testCase.code)
+				return
+			}
+			if err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			var hits []string
+			for _, h := range got.Hits {
+				hits = append(hits, h.Source+":"+h.Path)
+			}
+			slices.Sort(hits)
+			if diff := cmp.Diff(testCase.wantHits, hits); diff != "" {
+				t.Errorf("hits (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(testCase.wantSkipped, got.Skipped); diff != "" {
+				t.Errorf("skipped (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
 
-	res, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin"})
+// A served vault that goes away after the grant was made is skipped, not silently left out.
+func TestSearchSkipsAVaultGoneSinceTheGrant(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.setCopy(shared.RepoID, nil)
+	got, err := f.base.Search(t.Context(), f.grant, knowledge.SearchRequest{Query: "zeppelin"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Search: %v", err)
 	}
-	vaults := map[string]bool{}
-	for _, h := range res.Hits {
-		vaults[h.Source] = true
-	}
-	if len(res.Hits) != 4 || !vaults["ours/kb"] || !vaults["ours/shared"] {
-		t.Errorf("hits = %+v", res.Hits)
-	}
-
-	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared"}})
-	if err != nil || len(res.Hits) != 1 || res.Hits[0].Path != "zeppelin.md" {
-		t.Errorf("one vault: %+v, %v", res.Hits, err)
-	}
-	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Path: "services", Tags: []string{"esi"}})
-	if err != nil || len(res.Hits) != 1 || res.Hits[0].Path != "services/esi-proxy.md" {
-		t.Errorf("path and tags: %+v, %v", res.Hits, err)
-	}
-
-	for name, req := range map[string]SearchRequest{
-		"empty":           {Query: "  "},
-		"only exclusions": {Query: "-zeppelin"},
-		"limit":           {Query: "x", Limit: 51},
-	} {
-		_, err := f.base.Search(ctx, f.grant, req)
-		var kerr *Error
-		if !errors.As(err, &kerr) || kerr.Code != CodeInvalid {
-			t.Errorf("%s: %v", name, err)
+	for _, h := range got.Hits {
+		if h.Source != "ours/kb" {
+			t.Errorf("got a hit from %s, want only ours/kb", h.Source)
 		}
+	}
+	want := []knowledge.Skipped{{Name: "ours/shared", State: access.StateGone}}
+	if diff := cmp.Diff(want, got.Skipped); diff != "" {
+		t.Errorf("skipped (-want +got):\n%s", diff)
 	}
 }
 
 func TestRead(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	raw := "---\ntitle: ESI proxy\ntags: [esi]\n---\n# ESI proxy\n\nThe proxy caches zeppelin responses.\n\n## Deploying\n\nRun the job.\n"
-
-	p, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Content != raw || p.FromLine != 1 || p.LineCount != 11 || p.TotalLines != 11 || p.Outline != nil {
-		t.Errorf("whole document = %+v", p)
-	}
-	if p.Document.Title != "ESI proxy" || p.Document.Version != blobID([]byte(raw)) {
-		t.Errorf("metadata = %+v", p.Document)
-	}
-
-	p, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "/services/esi-proxy.md", FromLine: 9, LineCount: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Content != "## Deploying\n" || p.LineCount != 1 || p.TotalLines != 11 {
-		t.Errorf("one line = %+v", p)
-	}
-	if len(p.Outline) != 2 || p.Outline[1].Text != "Deploying" || p.Outline[1].Line != 9 {
-		t.Errorf("outline = %+v", p.Outline)
-	}
-
-	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", FromLine: 12})
-	wantCode(t, err, CodeInvalid)
-	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "nope.md"})
-	wantCode(t, err, CodeNotFound)
-}
-
-func TestReadCaps(t *testing.T) {
-	f := newFixture(t)
+	t.Parallel()
 	long := strings.Repeat("x", 1000) + "\n"
-	huge := "é" + strings.Repeat("y", maxReadBytes+10) + "\n"
-	f.copies[1] = newCopy(t, map[string]string{
-		"lines.md": strings.Repeat("a\n", 1500),
-		"bytes.md": strings.Repeat(long, 100),
-		"huge.md":  huge + "tail\n",
-	})
-	ctx := t.Context()
-
-	p, _ := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "lines.md"})
-	if p.LineCount != maxReadLines || p.TotalLines != 1500 {
-		t.Errorf("line cap: %d of %d", p.LineCount, p.TotalLines)
+	var outlined strings.Builder
+	for range knowledge.MaxOutline {
+		outlined.WriteString("# " + strings.Repeat("é", 2500) + "\n" + strings.Repeat("text ", 200) + "\n")
 	}
-	p, _ = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "bytes.md"})
-	if len(p.Content) > maxReadBytes || p.LineCount != maxReadBytes/len(long) {
-		t.Errorf("byte cap: %d bytes, %d lines", len(p.Content), p.LineCount)
+	f := newFixture(t, withKB(map[string]string{
+		"services/esi-proxy.md": esiProxy,
+		"lines.md":              strings.Repeat("a\n", 1500),
+		"bytes.md":              strings.Repeat(long, 100),
+		"huge.md":               "é" + strings.Repeat("y", knowledge.MaxReadBytes+10) + "\ntail\n",
+		"crlf.md":               "# A\r\n\r\nb\r\n",
+		"empty.md":              "",
+		"headings.md":           strings.Repeat("# H\n", knowledge.MaxOutline+5),
+		"straddle.md":           strings.Repeat("y", knowledge.MaxReadBytes-1) + "é\n",
+		"outlined.md":           outlined.String(),
+	}))
+	testCases := []struct {
+		name  string
+		req   knowledge.ReadRequest
+		code  knowledge.Code
+		check func(t *testing.T, p knowledge.Page)
+	}{
+		{
+			name: "whole document",
+			req:  knowledge.ReadRequest{Vault: "Ours/KB", Path: "services/esi-proxy.md"},
+			check: func(t *testing.T, p knowledge.Page) {
+				want := knowledge.Page{
+					Vault: "ours/kb",
+					Document: index.Document{
+						Path:    "services/esi-proxy.md",
+						Title:   "ESI proxy",
+						Status:  document.StatusActive,
+						Tags:    []string{"esi"},
+						Bytes:   len(esiProxy),
+						Lines:   12, // the index counts the empty line after the last line ending
+						Version: blobID(esiProxy),
+					},
+					Content:    esiProxy,
+					FromLine:   1,
+					LineCount:  11,
+					TotalLines: 11,
+				}
+				if diff := cmp.Diff(want, p, cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("page (-want +got):\n%s", diff)
+				}
+			},
+		},
+		{
+			name: "one line, with the outline",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "/services/esi-proxy.md", FromLine: 9, LineCount: 1},
+			check: func(t *testing.T, p knowledge.Page) {
+				if p.Content != "## Deploying\n" || p.LineCount != 1 || p.TotalLines != 11 {
+					t.Errorf("got %q, line count %d of %d, want line 9 of 11", p.Content, p.LineCount, p.TotalLines)
+				}
+				want := []document.Heading{{Level: 1, Text: "ESI proxy", Line: 5}, {Level: 2, Text: "Deploying", Line: 9}}
+				if diff := cmp.Diff(want, p.Outline); diff != "" {
+					t.Errorf("outline (-want +got):\n%s", diff)
+				}
+			},
+		},
+		{
+			name: "line cap",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "lines.md"},
+			check: func(t *testing.T, p knowledge.Page) {
+				if p.LineCount != knowledge.MaxReadLines || p.TotalLines != 1500 {
+					t.Errorf("got %d of %d lines, want %d of 1500", p.LineCount, p.TotalLines, knowledge.MaxReadLines)
+				}
+			},
+		},
+		{
+			name: "byte cap",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "bytes.md"},
+			check: func(t *testing.T, p knowledge.Page) {
+				if want := knowledge.MaxReadBytes / len(long); p.LineCount != want || len(p.Content) != want*len(long) {
+					t.Errorf("got %d lines, %d bytes, want %d whole lines", p.LineCount, len(p.Content), want)
+				}
+			},
+		},
+		{
+			name: "line longer than the cap",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "huge.md"},
+			check: func(t *testing.T, p knowledge.Page) {
+				if p.LineCount != 1 || len(p.Content) > knowledge.MaxReadBytes || !strings.HasPrefix(p.Content, "é") || len(p.Warnings) != 1 {
+					t.Errorf("got %d lines, %d bytes, warnings %v, want the start of line 1 and a warning", p.LineCount, len(p.Content), p.Warnings)
+				}
+			},
+		},
+		{
+			name: "cut before a character the cap would split",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "straddle.md"},
+			check: func(t *testing.T, p knowledge.Page) {
+				if len(p.Content) != knowledge.MaxReadBytes-1 || !utf8.ValidString(p.Content) {
+					t.Errorf("got %d bytes, valid UTF-8 %t, want %d valid bytes", len(p.Content), utf8.ValidString(p.Content), knowledge.MaxReadBytes-1)
+				}
+			},
+		},
+		{
+			name: "CRLF",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "crlf.md", FromLine: 2},
+			check: func(t *testing.T, p knowledge.Page) {
+				if p.Content != "\r\nb\r\n" || p.TotalLines != 3 {
+					t.Errorf("got %q of %d lines, want %q of 3", p.Content, p.TotalLines, "\r\nb\r\n")
+				}
+			},
+		},
+		{
+			name: "empty document",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "empty.md"},
+			check: func(t *testing.T, p knowledge.Page) {
+				if p.Content != "" || p.TotalLines != 0 || p.LineCount != 0 {
+					t.Errorf("got %q, %d of %d lines, want nothing", p.Content, p.LineCount, p.TotalLines)
+				}
+			},
+		},
+		{
+			name: "outline cap",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "headings.md", LineCount: 1},
+			check: func(t *testing.T, p knowledge.Page) {
+				if len(p.Outline) != knowledge.MaxOutline || len(p.Warnings) != 1 {
+					t.Errorf("got an outline of %d, warnings %v, want %d and a warning", len(p.Outline), p.Warnings, knowledge.MaxOutline)
+				}
+			},
+		},
+		{
+			// Long headings can't make a read much bigger than 64 KiB: they're cut, and the outline
+			// counts against the cap.
+			name: "long headings",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "outlined.md"},
+			check: func(t *testing.T, p knowledge.Page) {
+				for _, h := range p.Outline {
+					if len(h.Text) > knowledge.MaxHeading || !utf8.ValidString(h.Text) || !strings.HasSuffix(h.Text, "…") {
+						t.Fatalf("got a heading of %d bytes: %q, want it cut to %d with …", len(h.Text), h.Text, knowledge.MaxHeading)
+					}
+				}
+				if size := knowledge.OutlineSize(p.Outline); size > knowledge.MaxOutlineLen || len(p.Content)+size > knowledge.MaxReadBytes {
+					t.Errorf("got %d bytes of content and %d of outline, want at most %d in all", len(p.Content), size, knowledge.MaxReadBytes)
+				}
+				if len(p.Outline) == 0 || len(p.Outline) == knowledge.MaxOutline || len(p.Warnings) != 1 {
+					t.Errorf("got an outline of %d, warnings %v, want a shortened outline and a warning", len(p.Outline), p.Warnings)
+				}
+			},
+		},
+		{name: "past the end", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", FromLine: 12}, code: knowledge.CodeInvalid},
+		{name: "negative line count", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", LineCount: -1}, code: knowledge.CodeInvalid},
+		{name: "no such document", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "nope.md"}, code: knowledge.CodeNotFound},
 	}
-	p, _ = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "huge.md"})
-	if p.LineCount != 1 || len(p.Content) > maxReadBytes || !strings.HasPrefix(p.Content, "é") || len(p.Warnings) != 1 {
-		t.Errorf("overlong line: %d lines, %d bytes, warnings %v", p.LineCount, len(p.Content), p.Warnings)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := f.base.Read(t.Context(), f.grant, testCase.req)
+			if testCase.code != "" {
+				wantCode(t, err, testCase.code)
+				return
+			}
+			if err != nil {
+				t.Fatalf("Read: %v", err)
+			}
+			testCase.check(t, p)
+		})
 	}
 }
 
+// A blob the copy lacks is read again once, as a sync may have replaced it between the lookups; when
+// it's still missing, that's speki's problem, not the agent's.
 func TestReadMissingBlob(t *testing.T) {
-	f := newFixture(t)
-	c := f.copies[1]
-	doc, _ := c.idx.Document(t.Context(), "README.md")
-	gone := c.blobs[doc.Version]
-	delete(c.blobs, doc.Version)
-	_, err := f.base.Read(t.Context(), f.grant, ReadRequest{Vault: "ours/kb", Path: "README.md"})
-	if err == nil {
-		t.Fatal("read a blob the copy doesn't have")
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		failures int
+		wantErr  bool
+	}{
+		{name: "found the second time", failures: 1},
+		{name: "missing", failures: 2, wantErr: true},
 	}
-	if _, ok := errors.AsType[*Error](err); ok {
-		t.Errorf("a missing blob is speki's problem, not the agent's: %v", err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.copy(ours.RepoID).failBlobs(testCase.failures)
+			p, err := f.base.Read(t.Context(), f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: "README.md"})
+			if !testCase.wantErr {
+				if err != nil || p.Content != readme {
+					t.Errorf("got %q, %v, want the document", p.Content, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("got no error, want one")
+			}
+			if _, ok := errors.AsType[*knowledge.Error](err); ok {
+				t.Errorf("got %v, want a plain error", err)
+			}
+		})
 	}
-	c.blobs[doc.Version] = gone
 }
 
 func TestHistory(t *testing.T) {
-	f := newFixture(t)
-	f.github.history = []gh.Commit{
-		{SHA: "c2", Author: "octocat", Date: time.Unix(2, 0), Message: "Update a.md\n\nWhy.\n\nSpeki-Client: Claude Code\n"},
-		{SHA: "c1", Author: "someone", Date: time.Unix(1, 0), Message: "Create a.md\n\nSpeki-Client: fake\nin the body\n\nSigned-off-by: x\n"},
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		history []gh.Commit
+		err     error
+		req     knowledge.HistoryRequest
+		want    []knowledge.Commit
+		code    knowledge.Code
+	}{
+		{
+			name: "document",
+			history: []gh.Commit{
+				{SHA: "c2", Author: "octocat", Date: time.Unix(2, 0), Message: "Update a.md\n\nWhy.\n\nSpeki-Client: Claude Code\n"},
+				{SHA: "c1", Author: "someone", Date: time.Unix(1, 0), Message: "Create a.md\n\nSpeki-Client: fake\nin the body\n\nSigned-off-by: x\n"},
+			},
+			req: knowledge.HistoryRequest{Vault: "ours/kb", Path: "/a.md"},
+			want: []knowledge.Commit{
+				{SHA: "c2", Author: "octocat", Date: time.Unix(2, 0), Message: "Update a.md", Client: "Claude Code"},
+				{SHA: "c1", Author: "someone", Date: time.Unix(1, 0), Message: "Create a.md"},
+			},
+		},
+		{
+			name: "long fields are cut",
+			history: []gh.Commit{{
+				SHA:     "c1",
+				Author:  strings.Repeat("a", 1000),
+				Message: strings.Repeat("é", 1000) + "\n\nSpeki-Client: " + strings.Repeat("é", 100),
+			}},
+			req: knowledge.HistoryRequest{Vault: "ours/kb", Path: "a.md"},
+			want: []knowledge.Commit{{
+				SHA:     "c1",
+				Author:  strings.Repeat("a", knowledge.MaxAuthor-len("…")) + "…",
+				Message: strings.Repeat("é", (knowledge.MaxSubject-len("…"))/2) + "…",
+				Client:  strings.Repeat("é", knowledge.MaxClient/2),
+			}},
+		},
+		{name: "repository gone", err: gh.ErrNotFound, req: knowledge.HistoryRequest{Vault: "ours/kb"}, code: knowledge.CodeNotFound},
+		{name: "signed out", err: fmt.Errorf("commits: %w", gh.ErrUnauthorized), req: knowledge.HistoryRequest{Vault: "ours/kb"}, code: knowledge.CodeUnavailable},
+		{name: "limit too high", req: knowledge.HistoryRequest{Vault: "ours/kb", Limit: 51}, code: knowledge.CodeInvalid},
 	}
-	got, err := f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb", Path: "/a.md"})
-	if err != nil {
-		t.Fatal(err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.github.history, f.github.historyErr = testCase.history, testCase.err
+			got, err := f.base.History(t.Context(), f.grant, testCase.req)
+			if testCase.code != "" {
+				wantCode(t, err, testCase.code)
+				return
+			}
+			if err != nil {
+				t.Fatalf("History: %v", err)
+			}
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("history (-want +got):\n%s", diff)
+			}
+			h := f.github
+			if h.token != "ghu_x" || h.repo != "ours/kb" || h.branch != "main" || h.path != "a.md" || h.limit != 10 {
+				t.Errorf("got a request for token %q, %s@%s, %q, limit %d, want ghu_x, ours/kb@main, a.md, 10", h.token, h.repo, h.branch, h.path, h.limit)
+			}
+		})
 	}
-	want := []Commit{
-		{SHA: "c2", Author: "octocat", Date: time.Unix(2, 0), Message: "Update a.md", Client: "Claude Code"},
-		{SHA: "c1", Author: "someone", Date: time.Unix(1, 0), Message: "Create a.md"},
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("history (-want +got):\n%s", diff)
-	}
-	h := f.github
-	if h.token != "ghu_x" || h.repo != "ours/kb" || h.branch != "main" || h.path != "a.md" || h.limit != 10 {
-		t.Errorf("asked GitHub for %+v", h)
-	}
-
-	f.github.historyErr = gh.ErrNotFound
-	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb", Limit: 51})
-	wantCode(t, err, CodeInvalid)
 }
 
 // TestOtherVaultsStayHidden tries every read path on a vault the user can't read, which has a document
 // at a path that also exists in a vault they can.
 func TestOtherVaultsStayHidden(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ctx := t.Context()
 	const hidden = "secret"
@@ -832,158 +624,76 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 			t.Error("Vaults lists the secret vault")
 		}
 	}
-	res, err := f.base.Search(ctx, f.grant, SearchRequest{Query: hidden})
+	res, err := f.base.Search(ctx, f.grant, knowledge.SearchRequest{Query: hidden})
 	if err != nil || len(res.Hits) != 0 {
-		t.Errorf("search all: %+v, %v", res.Hits, err)
+		t.Errorf("search all: got %+v, %v, want no hits", res.Hits, err)
 	}
-	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin"})
+	res, err = f.base.Search(ctx, f.grant, knowledge.SearchRequest{Query: "zeppelin"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Search: %v", err)
 	}
 	for _, h := range res.Hits {
 		if h.Source == secret.Name || strings.Contains(h.Snippet, hidden) {
-			t.Errorf("search hit from the secret vault: %+v", h)
+			t.Errorf("got a search hit from the secret vault: %+v", h)
 		}
 	}
-	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: hidden, Vaults: []string{secret.Name}})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: hidden, Vaults: []string{"ours/kb", secret.Name}})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: secret.Name})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: secret.Name, Path: "services/esi-proxy.md"})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.History(ctx, f.grant, HistoryRequest{Vault: secret.Name})
-	wantCode(t, err, CodeNotFound)
+	// Spelling correction only knows the user's vaults: "secrut" is close to a word only the secret
+	// vault has, so it isn't corrected to it.
+	res, err = f.base.Search(ctx, f.grant, knowledge.SearchRequest{Query: "secrut"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	for word, instead := range res.Corrected {
+		if instead == hidden {
+			t.Errorf("got %q corrected to %q, a word only the secret vault has", word, instead)
+		}
+	}
+	// A readable vault's document at the same path is that vault's, not the secret one.
+	p, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md"})
+	if err != nil || strings.Contains(p.Content, hidden) {
+		t.Errorf("read: got %q, %v, want ours/kb's document", p.Content, err)
+	}
+
+	calls := map[string]func() error{
+		"search": func() error {
+			_, err := f.base.Search(ctx, f.grant, knowledge.SearchRequest{Query: hidden, Vaults: []string{"ours/kb", secret.Name}, Path: "services", Tags: []string{"x"}})
+			return err
+		},
+		"list": func() error {
+			_, err := f.base.List(ctx, f.grant, knowledge.ListRequest{Vault: secret.Name, Path: "services"})
+			return err
+		},
+		"read": func() error {
+			_, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: secret.Name, Path: "services/esi-proxy.md"})
+			return err
+		},
+		"read in another letter case": func() error {
+			_, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: "OURS/SECRET", Path: "services/esi-proxy.md"})
+			return err
+		},
+		"history": func() error {
+			_, err := f.base.History(ctx, f.grant, knowledge.HistoryRequest{Vault: secret.Name})
+			return err
+		},
+		"query": func() error {
+			_, err := f.base.Query(ctx, f.grant, knowledge.QueryRequest{SQL: "SELECT 1", Vaults: []string{secret.Name}})
+			return err
+		},
+	}
+	for name, call := range calls {
+		err := call()
+		if kerr, ok := errors.AsType[*knowledge.Error](err); !ok || kerr.Code != knowledge.CodeNotFound {
+			t.Errorf("%s: got %v, want not_found", name, err)
+		}
+	}
 	if f.github.repo != "" {
 		t.Error("asked GitHub about the secret vault")
 	}
 
-	// A readable vault's document at the same path is that vault's, not the secret one.
-	p, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md"})
-	if err != nil || strings.Contains(p.Content, hidden) {
-		t.Errorf("read: %q, %v", p.Content, err)
-	}
-	// Names match without regard to case, which doesn't open the secret vault either.
-	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "OURS/SECRET", Path: "services/esi-proxy.md"})
-	wantCode(t, err, CodeNotFound)
-
-	// Filters aimed at the secret vault don't get past the vault check.
-	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: secret.Name, Path: "services"})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.Search(ctx, f.grant, SearchRequest{Query: hidden, Vaults: []string{secret.Name}, Path: "services", Tags: []string{"x"}})
-	wantCode(t, err, CodeNotFound)
-	_, err = f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT 1", Vaults: []string{secret.Name}})
-	wantCode(t, err, CodeNotFound)
-
 	// The answer for a vault the user can't read is the answer for one that doesn't exist.
-	_, errSecret := f.base.Read(ctx, f.grant, ReadRequest{Vault: secret.Name, Path: "x.md"})
-	_, errNone := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/nothing", Path: "x.md"})
-	if strings.ReplaceAll(errSecret.Error(), secret.Name, "V") != strings.ReplaceAll(errNone.Error(), "ours/nothing", "V") {
-		t.Errorf("answers differ:\n%v\n%v", errSecret, errNone)
+	_, errSecret := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: secret.Name, Path: "x.md"})
+	_, errNone := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: "ours/nothing", Path: "x.md"})
+	if got, want := strings.ReplaceAll(errSecret.Error(), secret.Name, "V"), strings.ReplaceAll(errNone.Error(), "ours/nothing", "V"); got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
-
-	// Spelling correction only knows the user's vaults: "secrut" is close to a word only the secret
-	// vault has, so it isn't corrected to it.
-	res, err = f.base.Search(ctx, f.grant, SearchRequest{Query: "secrut"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for word, instead := range res.Corrected {
-		if instead == hidden {
-			t.Errorf("corrected %q to %q, a word only the secret vault has", word, instead)
-		}
-	}
-}
-
-func TestVaultNames(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	p, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "Ours/KB", Path: "README.md"})
-	if err != nil || p.Vault != "ours/kb" {
-		t.Errorf("read with another letter case: vault %q, %v", p.Vault, err)
-	}
-	res, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared", "OURS/SHARED"}})
-	if err != nil || len(res.Hits) != 1 || res.Hits[0].Source != "ours/shared" {
-		t.Errorf("a vault named twice: %+v, %v", res.Hits, err)
-	}
-	qres, err := f.base.Query(ctx, f.grant, QueryRequest{SQL: "SELECT count(*) FROM documents", Vaults: []string{"ours/shared", "ours/shared"}})
-	if err != nil || fmt.Sprint(qres.Rows.Rows) != "[[1]]" {
-		t.Errorf("query with a vault named twice: %v, %v", qres.Rows.Rows, err)
-	}
-}
-
-func TestReadEdges(t *testing.T) {
-	f := newFixture(t)
-	headings := strings.Repeat("# H\n", maxOutline+5)
-	straddle := strings.Repeat("y", maxReadBytes-1) + "é\n"
-	f.copies[1] = newCopy(t, map[string]string{
-		"crlf.md":     "# A\r\n\r\nb\r\n",
-		"empty.md":    "",
-		"headings.md": headings,
-		"straddle.md": straddle,
-	})
-	ctx := t.Context()
-
-	p, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "crlf.md", FromLine: 2})
-	if err != nil || p.Content != "\r\nb\r\n" || p.TotalLines != 3 {
-		t.Errorf("CRLF: %q of %d, %v", p.Content, p.TotalLines, err)
-	}
-	p, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "empty.md"})
-	if err != nil || p.Content != "" || p.TotalLines != 0 || p.LineCount != 0 {
-		t.Errorf("empty: %+v, %v", p, err)
-	}
-	p, _ = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "headings.md", LineCount: 1})
-	if len(p.Outline) != maxOutline || len(p.Warnings) != 1 {
-		t.Errorf("outline of %d, warnings %v", len(p.Outline), p.Warnings)
-	}
-	p, _ = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "straddle.md"})
-	if len(p.Content) != maxReadBytes-1 || !utf8.ValidString(p.Content) {
-		t.Errorf("cut inside a character: %d bytes", len(p.Content))
-	}
-}
-
-// Long headings can't make a read much bigger than 64 KiB: they're cut, and the outline counts against
-// the cap.
-func TestReadOutlineBytes(t *testing.T) {
-	f := newFixture(t)
-	var b strings.Builder
-	for range maxOutline {
-		b.WriteString("# " + strings.Repeat("é", 2500) + "\n" + strings.Repeat("text ", 200) + "\n")
-	}
-	f.copies[1] = newCopy(t, map[string]string{"long.md": b.String()})
-	for _, n := range []int{1, 0} {
-		p, err := f.base.Read(t.Context(), f.grant, ReadRequest{Vault: "ours/kb", Path: "long.md", LineCount: n})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, h := range p.Outline {
-			if len(h.Text) > maxHeading || !utf8.ValidString(h.Text) || !strings.HasSuffix(h.Text, "…") {
-				t.Fatalf("heading of %d bytes: %q", len(h.Text), h.Text)
-			}
-		}
-		if size := outlineSize(p.Outline); size > maxOutlineLen || len(p.Content)+size > maxReadBytes {
-			t.Errorf("line_count %d: %d bytes of content and %d of outline", n, len(p.Content), size)
-		}
-		if len(p.Outline) == 0 || len(p.Outline) == maxOutline || len(p.Warnings) != 1 {
-			t.Errorf("line_count %d: outline of %d, warnings %v", n, len(p.Outline), p.Warnings)
-		}
-	}
-}
-
-func TestHistoryEdges(t *testing.T) {
-	f := newFixture(t)
-	f.github.history = []gh.Commit{{SHA: "c1", Message: "x\n\nSpeki-Client: " + strings.Repeat("é", 100)}}
-	got, err := f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
-	if err != nil || len(got[0].Client) > maxClient || !utf8.ValidString(got[0].Client) {
-		t.Errorf("long client: %q, %v", got[0].Client, err)
-	}
-	f.github.history = []gh.Commit{{SHA: "c1", Author: strings.Repeat("a", 1000), Message: strings.Repeat("é", 1000) + "\n\nbody"}}
-	got, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
-	if err != nil || len(got[0].Author) > maxAuthor || len(got[0].Message) > maxSubject || !utf8.ValidString(got[0].Message) {
-		t.Errorf("long author and subject: %d and %d bytes, %v", len(got[0].Author), len(got[0].Message), err)
-	}
-	f.github.historyErr = fmt.Errorf("commits: %w", gh.ErrUnauthorized)
-	_, err = f.base.History(t.Context(), f.grant, HistoryRequest{Vault: "ours/kb"})
-	wantCode(t, err, CodeUnavailable)
 }
