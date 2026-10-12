@@ -158,9 +158,9 @@ reproduces them (`SPEKI_MEASURE=1`). Limited to 4 cores:
 | Search one vault of 50,000, p50 / p95 | 26 ms / 56 ms | |
 | Search 10 vaults of 10,000, p50 / p95 | 16 ms / 27 ms | p95 under 100 ms |
 
-A second run on 2026-10-10, again on 4 cores, added memory. The process's resident
-memory, from `/proc/self/status`: `VmHWM` after resetting it just before the build, and `VmRSS` once
-after `runtime.GC()` at the end, one sample each. To repeat:
+Memory, measured on 2026-10-10, again on 4 cores. The process's resident memory, from `/proc/self/status`:
+`VmHWM` after resetting it just before the build, and `VmRSS` once after `runtime.GC()` at the end, one
+sample each. To repeat:
 `SPEKI_MEASURE=1 GOMAXPROCS=4 go test -tags sqlite_fts5,sqlite_omit_load_extension -run TestMeasure -v ./index`.
 
 | What | Result |
@@ -183,9 +183,9 @@ match thousands of them. Real vaults should do better.
 
 ## Query sandbox checks
 
-Checks of the sandbox's assumptions, with go-sqlite3 1.14.52 and
-the `sqlite_fts5,sqlite_omit_load_extension` build tags. The tests in `index/sandbox_test.go` repeat
-each of these.
+Checks of the sandbox's assumptions, with go-sqlite3 1.14.52 and the
+`sqlite_fts5,sqlite_omit_load_extension` build tags. The tests in `index/sandbox_test.go` repeat each of
+these.
 
 - `ATTACH 'file:<path>?mode=ro'` works: go-sqlite3 opens connections with `SQLITE_OPEN_URI`. It works
   on an index in WAL mode while `Apply` writes to it from another connection, and each query sees a

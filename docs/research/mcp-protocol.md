@@ -123,9 +123,9 @@ Two options:
 We use the official SDK. It tracks the spec, ships the resource-server half of auth, and GitHub's MCP
 server runs on it. It has no authorization-server helpers, so that part is ours either way.
 
-v1.8 removed built-in `Origin` checking. We wrap the handler with
-`http.NewCrossOriginProtection` from the standard library (Go 1.25+) ourselves. That rejects cross-origin
-browser requests. It doesn't add CORS headers, which speki doesn't need: Claude's apps call MCP servers from
+The SDK doesn't check `Origin` (v1.8 removed it), so we wrap the handler with
+`http.NewCrossOriginProtection` from the standard library (Go 1.25+). That rejects cross-origin browser
+requests. It doesn't add CORS headers, which speki doesn't need: Claude's apps call MCP servers from
 their own backend.
 
 Sources: [v1.7.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.7.0),

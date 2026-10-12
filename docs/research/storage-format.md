@@ -99,8 +99,8 @@ People can still put images in a vault by hand. Speki leaves them alone, and lin
 - Git paths are case-sensitive, but macOS and Windows checkouts are not. `Note.md` and `note.md` in one
   vault break Obsidian users. Speki refuses a write that would create a case-only collision.
 - macOS produces NFD Unicode in filenames. Speki normalises paths to NFC.
-- Speki keeps a file's existing line endings when rewriting it. API writes are raw bytes, and flipping CRLF to LF
-  produces a diff of the whole file.
+- Speki keeps a file's existing line endings when rewriting it. API writes are raw bytes, and flipping CRLF
+  to LF produces a diff of the whole file.
 
 ## Go libraries
 

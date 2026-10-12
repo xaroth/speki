@@ -112,9 +112,9 @@ A request passes only when:
 
 Failing 2 or 3 is a 403 with a message that names the reason, but not other vaults or orgs.
 
-Membership and vault access are cached per GitHub token for 60 seconds, on each instance. Removing someone from GitHub stops their speki
-access within that window. Writes go to GitHub with the user's own token, so GitHub re-checks push
-access at that moment regardless of our cache.
+Membership and vault access are cached per GitHub token for 60 seconds, on each instance. Removing someone
+from GitHub stops their speki access within that window. Writes go to GitHub with the user's own token, so
+GitHub re-checks push access at that moment regardless of our cache.
 
 ## Who may install the app
 

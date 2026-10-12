@@ -1,7 +1,7 @@
 # Security
 
-Researched 2026-10-09. This is the threat model the
-design answers to, ordered by how much damage a threat does and how likely it is.
+Researched 2026-10-09. This is the threat model the design answers to, ordered by how much damage a threat
+does and how likely it is.
 
 ## 1. Leaking one vault to users of another
 
