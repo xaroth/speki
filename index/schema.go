@@ -2,7 +2,7 @@ package index
 
 // schemaVersion changes whenever schema does. An index with another version is rebuilt; there are no
 // migrations, because rebuilding from git is always possible.
-const schemaVersion = "4"
+const schemaVersion = "5"
 
 // schema creates one vault's index, without the triggers. Documents are only ever inserted and deleted,
 // never updated.
@@ -88,22 +88,24 @@ CREATE VIRTUAL TABLE words USING fts5 (
 CREATE VIRTUAL TABLE words_vocab USING fts5vocab (words, 'row');
 
 -- Links resolved when read, so adding a document fixes the links pointing at it. The shortest path wins
--- for ambiguous wikilinks, close to what Obsidian does. Paths compare in NFC, so a link typed on one
--- system finds a file named on another (macOS writes NFD).
+-- for ambiguous wikilinks, close to what Obsidian does, after documents that aren't broken. Paths compare
+-- in NFC, so a link typed on one system finds a file named on another (macOS writes NFD).
 CREATE VIEW resolved_links AS
 SELECT l.doc_id, l.target, l.kind, l.text,
 	CASE l.kind
 		WHEN 'wikilink' THEN (SELECT d.path FROM documents d WHERE d.name = l.candidate
-			ORDER BY length(d.key), d.path LIMIT 1)
-		ELSE (SELECT d.path FROM documents d WHERE d.key = l.candidate ORDER BY d.path LIMIT 1)
+			ORDER BY d.status = 'broken', length(d.key), d.path LIMIT 1)
+		ELSE (SELECT d.path FROM documents d WHERE d.key = l.candidate
+			ORDER BY d.status = 'broken', d.path LIMIT 1)
 	END AS target_path
 FROM links l;
 `
 
 // triggers keep the full-text tables in step with documents. A full build creates them after filling the
 // tables and running one rebuild per full-text table, which is much faster than indexing row by row.
+// Broken documents stay out of them: their file-name titles would turn up in matches and typo corrections.
 const triggers = `
-CREATE TRIGGER documents_insert AFTER INSERT ON documents BEGIN
+CREATE TRIGGER documents_insert AFTER INSERT ON documents WHEN new.status != 'broken' BEGIN
 	INSERT INTO fts (rowid, title, aliases, tags, description, headings, body)
 		VALUES (new.id, new.title, new.aliases, new.tags, new.description, new.headings, new.body);
 	INSERT INTO names (rowid, title, aliases, name)
@@ -112,7 +114,7 @@ CREATE TRIGGER documents_insert AFTER INSERT ON documents BEGIN
 		VALUES (new.id, new.title, new.aliases, new.tags, new.description, new.headings, new.body);
 END;
 
-CREATE TRIGGER documents_delete AFTER DELETE ON documents BEGIN
+CREATE TRIGGER documents_delete AFTER DELETE ON documents WHEN old.status != 'broken' BEGIN
 	INSERT INTO fts (fts, rowid, title, aliases, tags, description, headings, body)
 		VALUES ('delete', old.id, old.title, old.aliases, old.tags, old.description, old.headings, old.body);
 	INSERT INTO names (names, rowid, title, aliases, name)
@@ -122,10 +124,19 @@ CREATE TRIGGER documents_delete AFTER DELETE ON documents BEGIN
 END;
 `
 
-// rebuildFullText fills the full-text tables from documents in one pass.
+// rebuildFullText fills the full-text tables from documents in one pass. A rebuild reads every document,
+// so the broken ones are taken out after it, as the triggers would have left them out. The tables then
+// differ from documents on purpose: another 'rebuild' would add broken rows back, and the integrity-check
+// that compares against the content table (rank 1) fails.
 const rebuildFullText = `
 INSERT INTO fts (fts) VALUES ('rebuild');
 INSERT INTO names (names) VALUES ('rebuild');
 INSERT INTO words (words) VALUES ('rebuild');
+INSERT INTO fts (fts, rowid, title, aliases, tags, description, headings, body)
+	SELECT 'delete', id, title, aliases, tags, description, headings, body FROM documents WHERE status = 'broken';
+INSERT INTO names (names, rowid, title, aliases, name)
+	SELECT 'delete', id, title, aliases, name FROM documents WHERE status = 'broken';
+INSERT INTO words (words, rowid, title, aliases, tags, description, headings, body)
+	SELECT 'delete', id, title, aliases, tags, description, headings, body FROM documents WHERE status = 'broken';
 INSERT INTO fts (fts) VALUES ('optimize');
 `

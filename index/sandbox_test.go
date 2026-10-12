@@ -361,6 +361,14 @@ func TestQueryBrokenDocuments(t *testing.T) {
 			sql:  `SELECT path FROM fts WHERE body MATCH 'steps'`,
 			want: "[]",
 		},
+		{
+			sql:  `SELECT path FROM fts WHERE title MATCH 'deploy'`,
+			want: "[]",
+		},
+		{
+			sql:  `SELECT count(*) FROM fts`,
+			want: "[[3]]",
+		},
 	} {
 		rows, err := runQuery(t, sb, sources, tt.sql)
 		if err != nil {

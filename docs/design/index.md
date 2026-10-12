@@ -122,8 +122,9 @@ CREATE VIEW resolved_links AS
 SELECT l.doc_id, l.target, l.kind, l.text,
        CASE l.kind
          WHEN 'wikilink' THEN (SELECT path FROM documents d WHERE d.name = l.candidate
-                               ORDER BY length(d.key), d.path LIMIT 1)
-         ELSE (SELECT path FROM documents d WHERE d.key = l.candidate ORDER BY d.path LIMIT 1)
+                               ORDER BY d.status = 'broken', length(d.key), d.path LIMIT 1)
+         ELSE (SELECT path FROM documents d WHERE d.key = l.candidate
+               ORDER BY d.status = 'broken', d.path LIMIT 1)
        END AS target_path
 FROM links l;
 ```
@@ -133,7 +134,9 @@ round. Names fold case after normalising, so letters that lowercase differently 
 (İ) still match. The `path` filter of `search` compares in NFC too. `target_path` is the path as stored
 in git.
 
-The shortest path wins for ambiguous wikilinks, which is close to what Obsidian does.
+The shortest path wins for ambiguous wikilinks, which is close to what Obsidian does. A document that
+isn't broken wins over a broken one first, so one unparseable file doesn't capture links meant for a good
+one. A link whose only match is broken still resolves to it, and `LinkedFrom` matches the same way.
 
 The schema version is a constant in the code. An index with another version is rebuilt. There are no
 migrations: rebuilding is always possible.
@@ -164,10 +167,14 @@ from updating. Any other failure aborts the whole transaction and the next sync 
 
 `Build` indexes unusable files the same way. A broken row has the file's new version, size and line
 count, its file name as title, `status = 'broken'`, the parse error in `broken`, and no other content: no
-body, headings, tags or links. The index never keeps an older version of a file that changed, because
-`knowledge` checks an agent's version against the index, and a stale row would let a write overwrite a
-change nobody could read. Agents see the parse error verbatim, so its text is stable; the reasons are
-listed in [tools.md](../functional/tools.md#errors).
+body, headings, tags or links. Broken rows stay out of `fts`, `names` and `words`: the triggers skip
+them, and `Build` deletes them from the three tables after its rebuilds, which read every row. So their
+file-name titles don't match in search or the sandbox, and don't feed typo correction. The sandbox `fts`
+view also filters them, because a scan of an external-content table without `MATCH` reads `documents`
+directly. The index never keeps an older version of a file that changed, because `knowledge` checks an
+agent's version against the index, and a stale row would let a write overwrite a change nobody could
+read. Agents see the parse error verbatim, so its text is stable; the reasons are listed in
+[tools.md](../functional/tools.md#errors).
 
 `Build` writes the next generation with `journal_mode=OFF` and `synchronous=OFF`: it inserts all rows,
 runs the three FTS `rebuild` commands and `optimize`, switches to WAL, and then becomes the current

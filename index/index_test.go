@@ -976,3 +976,103 @@ func TestCloseRacesWork(t *testing.T) {
 		}
 	}
 }
+
+// Broken documents stay out of the full-text tables, whether built or applied, so their file-name titles
+// don't match or feed typo corrections; adding and removing them leaves those tables intact.
+func TestBrokenDocumentsStayOutOfFullText(t *testing.T) {
+	ctx := t.Context()
+	bad := "# Zanzibar\n\nNot UTF-8 \xff\n"
+	files := maps.Clone(fleet)
+	files["zanzibar.md"] = bad
+	built := newIndex(t, files)
+	applied := newIndex(t, fleet)
+	err := applied.Apply(ctx, "c2", []Change{{Path: "zanzibar.md", Version: version(bad), Content: []byte(bad)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, x := range map[string]*Index{"built": built, "applied": applied} {
+		g, err := x.acquire()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, q := range []string{
+			"SELECT count(*) FROM fts WHERE title MATCH 'zanzibar'",
+			"SELECT count(*) FROM names WHERE names MATCH 'zanzi'",
+			"SELECT count(*) FROM words_vocab WHERE term = 'zanzibar'",
+		} {
+			var n int
+			err := g.reader.QueryRowContext(ctx, q).Scan(&n)
+			if err != nil || n != 0 {
+				t.Errorf("%s: %s = %d, %v", name, q, n, err)
+			}
+		}
+		v, err := loadVocabulary(ctx, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := v.suggest("zanzibat", 2); len(got) != 0 {
+			t.Errorf("%s: suggestions %v", name, got)
+		}
+		g.release()
+
+		good := "# Zanzibar\n\nFixed.\n"
+		err = x.Apply(ctx, "c3", []Change{{Path: "zanzibar.md", Version: version(good), Content: []byte(good)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res := search(t, []Source{{Name: "kb", Index: x}}, "zanzibar", Options{}); !slices.Contains(hitPaths(res), "zanzibar.md") {
+			t.Errorf("%s: the fixed document isn't found", name)
+		}
+		err = x.Apply(ctx, "c4", []Change{{Path: "zanzibar.md", Version: version(bad), Content: []byte(bad)}})
+		if err == nil {
+			err = x.Apply(ctx, "c5", []Change{{Path: "zanzibar.md"}})
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, err = x.acquire()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, table := range []string{"fts", "names", "words"} {
+			_, err := g.writer.ExecContext(ctx, "INSERT INTO "+table+" ("+table+") VALUES ('integrity-check')")
+			if err != nil {
+				t.Errorf("%s: %s: %v", name, table, err)
+			}
+		}
+		g.release()
+	}
+}
+
+// A link resolves to a document that isn't broken before a broken one, even when the broken one's path is
+// shorter, and falls back to the broken one when it's the only match.
+func TestLinksPreferDocumentsThatArentBroken(t *testing.T) {
+	ctx := t.Context()
+	bad := "# Deploy\n\nNot UTF-8 \xff\n"
+	x := newIndex(t, map[string]string{
+		"x/deploy.md":        bad,
+		"runbooks/deploy.md": "# Deploy\n\nSteps.\n",
+		"x/restart.md":       bad,
+		"a.md":               "# A\n\nSee [[deploy]] and [[restart]].\n",
+	})
+	for path, want := range map[string][]string{
+		"runbooks/deploy.md": {"a.md"},
+		"x/deploy.md":        nil,
+		"x/restart.md":       {"a.md"},
+	} {
+		from, err := x.LinkedFrom(ctx, path)
+		if err != nil || !slices.Equal(from, want) {
+			t.Errorf("linked from %s = %v, %v", path, from, err)
+		}
+	}
+	g, err := x.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.release()
+	var target string
+	err = g.reader.QueryRowContext(ctx, "SELECT group_concat(target || ' ' || target_path, ', ') FROM (SELECT * FROM resolved_links ORDER BY target)").Scan(&target)
+	if want := "[[deploy]] runbooks/deploy.md, [[restart]] x/restart.md"; err != nil || target != want {
+		t.Errorf("links resolve to %q, %v; want %q", target, err, want)
+	}
+}
