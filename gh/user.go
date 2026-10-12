@@ -205,7 +205,6 @@ func roleOf(p *github.RepositoryPermissions) Role {
 	return RoleNone
 }
 
-// userClient returns an API client authenticated as the user.
 func (c *Client) userClient(token string) (*github.Client, error) {
 	return newGitHub(c.apiURL, c.metrics.observe("user", authTransport{token: token, next: c.base}))
 }
@@ -221,7 +220,6 @@ func (a authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return a.next.RoundTrip(r)
 }
 
-// userError turns a 401 into ErrUnauthorized.
 func userError(err error) error {
 	if gerr, ok := errors.AsType[*github.ErrorResponse](err); ok && gerr.Response != nil && gerr.Response.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("%w: %w", ErrUnauthorized, err)

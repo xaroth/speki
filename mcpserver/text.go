@@ -25,9 +25,8 @@ func oneLine(s string) string {
 	}, s))
 }
 
-// fence wraps vault content in a block named kind. The closing tag carries a random boundary, so
-// content can't end the block early: it can't know the boundary. Look-alike tags in the content are
-// escaped too.
+// fence wraps vault content in a block named kind. The random boundary on the closing tag stops
+// content from ending the block early.
 func fence(kind, content string) string {
 	var b [8]byte
 	_, _ = rand.Read(b[:]) // crypto/rand.Read never returns an error
@@ -39,7 +38,6 @@ func fence(kind, content string) string {
 	return "<" + kind + " boundary=\"" + boundary + "\">\n" + content + "</" + kind + " boundary=\"" + boundary + "\">\n"
 }
 
-// fenceNames are the block names fence uses.
 var fenceNames = []string{"document", "guidelines"}
 
 // escapeMarkers escapes every "<" that starts something a reader could take for a fence tag: the name
@@ -59,12 +57,10 @@ func escapeMarkers(s string) string {
 	return b.String()
 }
 
-// isLessThan reports whether r looks like "<".
 func isLessThan(r rune) bool {
 	return r == '<' || r == '＜' || r == '﹤' || r == '‹' || r == '〈' || r == '⟨'
 }
 
-// startsFenceName reports whether s, read loosely, starts with a fence name.
 func startsFenceName(s string) bool {
 	var name []rune
 	for _, r := range s {
@@ -88,19 +84,17 @@ func startsFenceName(s string) bool {
 	return false
 }
 
-// ignorable reports whether r is invisible or blank: spacing, controls, format and combining marks.
 func ignorable(r rune) bool {
 	return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Mn, unicode.Me, unicode.Z)
 }
 
-// lookAlikes maps letters that look like the ASCII letters of the fence names to them.
+// lookAlikes maps homoglyphs of the fence names' letters to the letters.
 var lookAlikes = map[rune]rune{
 	'а': 'a', 'с': 'c', 'ԁ': 'd', 'е': 'e', 'ё': 'e', 'ɡ': 'g', 'һ': 'h', 'і': 'i', 'ӏ': 'l', 'ⅼ': 'l',
 	'м': 'm', 'п': 'n', 'о': 'o', 'ο': 'o', 'ѕ': 's', 'т': 't', 'υ': 'u', 'ս': 'u', 'ı': 'i', 'ℓ': 'l',
 	'ⅾ': 'd', 'ⅰ': 'i', 'ⅿ': 'm', 'ⅽ': 'c',
 }
 
-// fold maps r to the lower-case ASCII letter it looks like, where it looks like one.
 func fold(r rune) rune {
 	if n := []rune(norm.NFKC.String(string(r))); len(n) == 1 { // fullwidth, mathematical and similar forms
 		r = n[0]

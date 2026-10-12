@@ -18,7 +18,6 @@ import (
 	"github.com/eve-online-tools/speki/oauth"
 )
 
-// maxBody is the largest request speki reads.
 const maxBody = 2 << 20
 
 // Per-user request rate: enough for an agent working quickly, not enough to hog the instance.
@@ -27,13 +26,12 @@ const (
 	rateBurst     = 30
 )
 
-// authenticator checks tokens and puts the signed-in identity on the context (see oauth.NewContext).
+// authenticator puts the signed-in identity on the context (see oauth.NewContext).
 type authenticator interface {
 	Middleware(next http.Handler) http.Handler
 	Unauthorized(w http.ResponseWriter, reason string)
 }
 
-// resolver turns a signed-in user into a grant.
 type resolver interface {
 	Resolve(ctx context.Context, u access.User) (*access.Grant, error)
 }
@@ -73,7 +71,6 @@ func (id Identity) title() string {
 	return "Speki knowledge base"
 }
 
-// description is the instance's description on one line, cleaned like any text shown to agents.
 func (id Identity) description() string {
 	return oneLine(strings.Join(strings.Fields(id.Description), " "))
 }
@@ -135,9 +132,8 @@ func GrantFrom(ctx context.Context) (*access.Grant, bool) {
 	return g, ok
 }
 
-// grant resolves what the user may do, before the MCP handler: only here can speki still answer with a
-// status code. A token GitHub no longer accepts gets a 401, so the client refreshes or signs in again;
-// a user who isn't allowed in gets a 403 that says why.
+// grant runs before the MCP handler because only here can speki still answer with a status code: 401
+// makes the client refresh or sign in again, 403 says why the user isn't allowed in.
 func (s *Server) grant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := oauth.IdentityFrom(r.Context())
@@ -168,7 +164,7 @@ func (s *Server) grant(next http.Handler) http.Handler {
 	})
 }
 
-// rateLimit holds each user to ratePerSecond requests, with bursts of rateBurst, on this instance.
+// rateLimit is per instance, not cluster-wide.
 func (s *Server) rateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := oauth.IdentityFrom(r.Context())
