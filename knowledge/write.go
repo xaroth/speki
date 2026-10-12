@@ -497,7 +497,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 	for {
 		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
-			return Result{}, noVault(name)
+			return Result{}, goneVault(v.Name)
 		}
 		st := state{vault: c.Info(), copy: c, head: c.Index().Commit()} // the live name and branch
 		p, err := prepare(ctx, st)

@@ -18,8 +18,8 @@ searched or read, but it isn't hidden either:
 - `search` and `query` without `vaults` name it in `skipped_vaults`, with its state, and say so in the
   text: `Not searched, so this result says nothing about them: ours/new (still building its index; try
   again shortly)`. The key is left out when every readable vault was covered.
-- Naming a building or failed vault in any tool fails with `unavailable`, saying which. A vault the user
-  can't read, or one that's gone, answers `not_found`.
+- Naming a building, failed or gone vault in any tool fails with `unavailable`, saying which. A vault the
+  user can't read answers `not_found`.
 
 ## Versions
 

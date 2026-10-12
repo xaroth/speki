@@ -503,6 +503,7 @@ func TestUnavailableVaultsSkipped(t *testing.T) {
 func TestUnavailableVaultNamed(t *testing.T) {
 	f := newFixture(t)
 	withUnavailable(t, f)
+	delete(f.copies, ours.RepoID) // in the grant, but not served any more: list shows it as gone
 	ctx := t.Context()
 	calls := map[string]func(name string) error{
 		"list": func(name string) error {
@@ -510,7 +511,7 @@ func TestUnavailableVaultNamed(t *testing.T) {
 			return err
 		},
 		"search": func(name string) error {
-			_, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb", name}})
+			_, err := f.base.Search(ctx, f.grant, SearchRequest{Query: "zeppelin", Vaults: []string{"ours/shared", name}})
 			return err
 		},
 		"query": func(name string) error {
@@ -549,6 +550,7 @@ func TestUnavailableVaultNamed(t *testing.T) {
 	}{
 		{name: "OURS/new", code: CodeUnavailable, message: "unavailable: ours/new is still building its index. Try again in a minute"},
 		{name: "ours/old", code: CodeUnavailable, message: "unavailable: ours/old failed to open"},
+		{name: "OURS/kb", code: CodeUnavailable, message: "unavailable: ours/kb was just removed or is reopening. Try again shortly"},
 		{name: "ours/nothing", code: CodeNotFound, message: `not_found: there's no vault named "ours/nothing"`},
 		{name: secret.Name, code: CodeNotFound, message: `not_found: there's no vault named "ours/secret"`},
 	}
@@ -565,6 +567,27 @@ func TestUnavailableVaultNamed(t *testing.T) {
 	}
 	if f.github.commits != 0 || f.github.repo != "" {
 		t.Error("asked GitHub about a vault that isn't served")
+	}
+}
+
+// A vault whose index closes under a request answers as gone, the way list shows it.
+func TestClosedIndex(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	f.copies[ours.RepoID].idx.Close()
+
+	vaults, err := f.base.Vaults(ctx, f.grant)
+	if err != nil || len(vaults) != 2 || vaults[0].Name != "ours/kb" || vaults[0].State != access.StateGone {
+		t.Errorf("vaults = %+v, %v", vaults, err)
+	}
+	_, err = f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: "README.md"})
+	wantCode(t, err, CodeUnavailable)
+	_, err = f.base.List(ctx, f.grant, ListRequest{Vault: "ours/kb"})
+	wantCode(t, err, CodeUnavailable)
+	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: "README.md", Version: "x"})
+	wantCode(t, err, CodeUnavailable)
+	if len(f.github.requests) != 0 {
+		t.Errorf("committed %d times", len(f.github.requests))
 	}
 }
 

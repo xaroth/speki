@@ -3,6 +3,7 @@ package knowledge
 import (
 	"cmp"
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
@@ -29,18 +30,23 @@ type VaultInfo struct {
 func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error) {
 	var out []VaultInfo
 	for _, v := range g.Readable() {
+		gone := VaultInfo{
+			Name:        v.Name,
+			Title:       v.Config.Title,
+			Description: v.Config.Description,
+			Guidelines:  v.Config.Guidelines,
+			State:       access.StateGone,
+		}
 		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
-			out = append(out, VaultInfo{
-				Name:        v.Name,
-				Title:       v.Config.Title,
-				Description: v.Config.Description,
-				Guidelines:  v.Config.Guidelines,
-				State:       access.StateGone,
-			})
+			out = append(out, gone)
 			continue
 		}
 		stats, err := c.Index().Stats(ctx)
+		if errors.Is(err, index.ErrClosed) {
+			out = append(out, gone)
+			continue
+		}
 		if err != nil {
 			b.logger.WarnContext(ctx, "vault stats failed", "vault", v.Name, "err", err)
 			continue
