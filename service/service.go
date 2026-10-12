@@ -137,7 +137,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 			},
 			CheckUser: func(ctx context.Context, token string) error {
 				err := resolver.CheckMember(ctx, token)
-				if errors.Is(err, access.ErrNotMember) || errors.Is(err, access.ErrNoVaults) {
+				if errors.Is(err, access.ErrNotMember) {
 					return &oauth.Refusal{Reason: err.Error()}
 				}
 				return err

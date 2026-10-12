@@ -98,15 +98,6 @@ func (r *Redis) Release(ctx context.Context, key string, value []byte) error {
 	return nil
 }
 
-// Delete removes key.
-func (r *Redis) Delete(ctx context.Context, key string) error {
-	err := r.client.Del(ctx, keyPrefix+key).Err()
-	if err != nil {
-		return fmt.Errorf("redis del: %w", err)
-	}
-	return nil
-}
-
 type notice struct {
 	RepoID int64  `json:"repo_id"`
 	Commit string `json:"commit"`
