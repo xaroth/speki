@@ -159,14 +159,15 @@ func (x *Index) Build(ctx context.Context, commit string, files iter.Seq2[Change
 old row (cascading to tags, links and headings, and removing it from the FTS tables with the
 external-content delete command) and inserts the new one. A file that's unusable in itself (not UTF-8,
 frontmatter over 64 KiB) is logged with its path and indexed as broken, so one bad file can't stop a vault
-from updating. Any other failure aborts the whole transaction and the next sync tries again. `meta.commit` is updated in the same transaction. Readers see
-the old state or the new one, never a mix.
+from updating. Any other failure aborts the whole transaction and the next sync tries again.
+`meta.commit` is updated in the same transaction. Readers see the old state or the new one, never a mix.
 
 `Build` indexes unusable files the same way. A broken row has the file's new version, size and line
 count, its file name as title, `status = 'broken'`, the parse error in `broken`, and no other content: no
 body, headings, tags or links. The index never keeps an older version of a file that changed, because
 `knowledge` checks an agent's version against the index, and a stale row would let a write overwrite a
-change nobody could read.
+change nobody could read. Agents see the parse error verbatim, so its text is stable; the reasons are
+listed in [tools.md](../functional/tools.md#errors).
 
 `Build` writes the next generation with `journal_mode=OFF` and `synchronous=OFF`: it inserts all rows,
 runs the three FTS `rebuild` commands and `optimize`, switches to WAL, and then becomes the current
@@ -298,8 +299,8 @@ query that hits it fails with `too_large`. Both limits are for the whole process
 below them on their own (about 40 MB at 50,000 documents), but a build that allocates while a query has
 just used up the shared budget fails with `SQLITE_NOMEM`. The build or apply then fails as a whole, the
 index stays at its commit, and the vault is synced again at the next poll: only a file that's unusable
-in itself is indexed as broken instead. The 100 KB value and 50 column limits bound how much one row can hold before the
-1 MiB result check sees it.
+in itself is indexed as broken instead. The 100 KB value and 50 column limits bound how much one row can
+hold before the 1 MiB result check sees it.
 
 Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,
 `fts_config` and the content table `documents`, and run `PRAGMA data_version`. Those are on the lists

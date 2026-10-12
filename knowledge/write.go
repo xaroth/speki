@@ -381,7 +381,7 @@ func (st state) newPath(path, moving string) (string, error) {
 	}
 	switch taken[checked] {
 	case "a file":
-		return "", errorf(CodeAlreadyExists, "%s exists in the vault but isn't a document speki reads (it may be over 1 MiB). Pick another path", checked)
+		return "", errorf(CodeAlreadyExists, "%s exists in the vault but isn't a document speki reads (for example over 1 MiB, stored in Git LFS, or a symlink). Pick another path", checked)
 	case "a folder":
 		return "", errorf(CodeAlreadyExists, "%s is a folder in the vault. Pick another path", checked)
 	}
