@@ -51,6 +51,8 @@ func (fakeResolver) Resolve(_ context.Context, u access.User) (*access.Grant, er
 		return nil, access.ErrNotMember
 	case "nobody":
 		return nil, access.ErrNoVaults
+	case "early":
+		return nil, access.ErrNotReady
 	}
 	return access.NewGrant(u, []vault.Vault{{RepoID: 1, Name: "ours/kb"}}, nil), nil
 }
@@ -90,6 +92,7 @@ func TestStack(t *testing.T) {
 		{name: "GitHub revoked the sign-in", token: "revoked", want: http.StatusUnauthorized},
 		{name: "not in the organisation", token: "outsider", want: http.StatusForbidden, body: "organisation"},
 		{name: "no vaults", token: "nobody", want: http.StatusForbidden, body: "vault"},
+		{name: "vaults still loading", token: "early", want: http.StatusServiceUnavailable, body: "still loading"},
 		{name: "cross-origin browser request", token: "alice", header: map[string]string{"Sec-Fetch-Site": "cross-site"}, want: http.StatusForbidden},
 	}
 	for _, tt := range tests {
@@ -103,6 +106,9 @@ func TestStack(t *testing.T) {
 			}
 			if rec.Code == http.StatusUnauthorized && tt.token != "" && rec.Header().Get("WWW-Authenticate") == "" {
 				t.Error("401 without WWW-Authenticate")
+			}
+			if rec.Code == http.StatusServiceUnavailable && rec.Header().Get("Retry-After") == "" {
+				t.Error("503 without Retry-After")
 			}
 		})
 	}

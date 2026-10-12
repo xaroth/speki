@@ -254,7 +254,7 @@ for. Below about 1.2 GiB, the kernel can kill the process before SQLite's own li
 | `/.well-known/oauth-authorization-server` | `listen` | OAuth metadata |
 | `/oauth/...` | `listen` | Sign-in, consent, token and registration endpoints |
 | `/healthz` | `listen` | 200 while the process runs |
-| `/readyz` | `listen` | 200 once the first round of vault discovery is done, whether or not it succeeded, or once looking up the app's owner has failed. 503 while starting and stopping. `/mcp` answers 503 at the same times |
+| `/readyz` | `listen` | 200 once the first round of vault discovery is done, whether or not it succeeded, or once looking up the app's owner has failed. 503 while starting and stopping. `/mcp` answers 503 at the same times, and to a user whose vaults are all still being cloned or indexed ([access.md](access.md#who-gets-in)) |
 | `/metrics` | `metrics_listen` | Prometheus metrics |
 | `/status` | `metrics_listen` | Readiness, every vault's state, commit, last sync and last error, and any `speki.yaml` that couldn't be used, as JSON |
 

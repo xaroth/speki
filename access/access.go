@@ -30,6 +30,13 @@ var ErrNotMember = errors.New("you aren't a member of an organisation this speki
 // ErrNoVaults means the user can't read any vault.
 var ErrNoVaults = errors.New("you can't read any vault on this speki")
 
+// ErrNotReady means the user can't read any vault being served yet, but may read one speki is still
+// cloning or indexing, or will retry opening.
+var ErrNotReady = errors.New("speki is still loading your vaults; try again shortly")
+
+// errLoading means a resolve found only vaults being built that the user may read: worth waiting for.
+var errLoading = errors.New("readable vaults are still being built")
+
 // User is a signed-in user, from their speki token.
 type User struct {
 	ID     int64
@@ -95,13 +102,22 @@ type cache interface {
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }
 
+// library is what the resolver needs to know about speki's vaults.
+type library interface {
+	Vaults() []vault.Vault    // being served
+	Building() []vault.Vault  // being cloned and indexed
+	Failed() []vault.Vault    // failed to open, retried with backoff
+	Changed() <-chan struct{} // closed when a vault is added or removed, or changes state
+}
+
 // Resolver turns users into grants.
 type Resolver struct {
 	github       githubAPI
-	vaults       func() []vault.Vault // the vaults speki serves
+	library      library
 	requiredOrgs []string
 	cache        cache // by GitHub token, never by user: tokens can differ in scope or be revoked
 	ttl          time.Duration
+	wait         time.Duration // how long Resolve waits for a readable vault that's being built
 	now          func() time.Time
 	flight       singleflight.Group // one lookup per key at a time, shared by its callers
 }
@@ -114,42 +130,63 @@ type cached struct {
 	Expires time.Time       `json:"expires"`
 }
 
-// NewResolver returns a resolver. vaults returns the vaults speki currently serves; requiredOrgs may be
-// empty.
-func NewResolver(github githubAPI, vaults func() []vault.Vault, requiredOrgs []string, c cache) *Resolver {
+// NewResolver returns a resolver. requiredOrgs may be empty.
+func NewResolver(github githubAPI, lib library, requiredOrgs []string, c cache) *Resolver {
 	return &Resolver{
 		github:       github,
-		vaults:       vaults,
+		library:      lib,
 		requiredOrgs: requiredOrgs,
 		cache:        c,
 		ttl:          5 * time.Minute,
+		wait:         30 * time.Second,
 		now:          time.Now,
 	}
 }
 
 // Resolve returns what u may do. It errs with ErrUnauthorized, ErrNotMember or ErrNoVaults when u
-// doesn't get in.
+// doesn't get in. When u can read no vault being served but one being built, it waits for the library to
+// serve one, and errs with ErrNotReady if it doesn't in time or ctx ends first.
 func (r *Resolver) Resolve(ctx context.Context, u User) (*Grant, error) {
 	repos, err := r.lookup(ctx, u.Token)
 	if err != nil {
 		return nil, err
 	}
-	var readable []vault.Vault
+	changed := r.library.Changed() // before resolving, so a change while it runs isn't missed
+	g, err := r.grant(ctx, u, repos)
+	if !errors.Is(err, errLoading) {
+		return g, err
+	}
+	timeout := time.NewTimer(r.wait)
+	defer timeout.Stop()
+	for {
+		select {
+		case <-changed:
+		case <-timeout.C:
+			return nil, ErrNotReady
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", ErrNotReady, ctx.Err())
+		}
+		changed = r.library.Changed()
+		g, err = r.grant(ctx, u, repos)
+		if !errors.Is(err, errLoading) {
+			return g, err
+		}
+	}
+}
+
+// grant returns u's grant over the vaults being served. With none readable it errs with errLoading,
+// ErrNotReady or ErrNoVaults, by what u may read among the vaults that aren't served.
+func (r *Resolver) grant(ctx context.Context, u User, repos map[int64]gh.RepoAccess) (*Grant, error) {
+	readable, err := r.readable(ctx, u, repos, r.library.Vaults())
+	if err != nil {
+		return nil, err
+	}
+	if len(readable) == 0 {
+		return nil, r.unserved(ctx, u, repos)
+	}
 	var writable []int64
-	for _, v := range r.vaults() {
-		a, ok := repos[v.RepoID]
-		if !ok || a.Role < max(v.Config.ReadRole, gh.RoleRead) {
-			continue
-		}
-		reader, err := r.listed(ctx, u, v.Config.Readers)
-		if err != nil {
-			return nil, err
-		}
-		if !reader {
-			continue
-		}
-		readable = append(readable, v)
-		if a.Role < gh.RoleWrite || !u.Write {
+	for _, v := range readable {
+		if repos[v.RepoID].Role < gh.RoleWrite || !u.Write {
 			continue
 		}
 		writer, err := r.listed(ctx, u, v.Config.Writers)
@@ -160,10 +197,46 @@ func (r *Resolver) Resolve(ctx context.Context, u User) (*Grant, error) {
 			writable = append(writable, v.RepoID)
 		}
 	}
-	if len(readable) == 0 {
-		return nil, ErrNoVaults
-	}
 	return NewGrant(u, readable, writable), nil
+}
+
+// unserved says why u gets no vault: errLoading for one being built, ErrNotReady for one that failed to
+// open, ErrNoVaults for none. A failed vault isn't waited for: its next retry is minutes away at least.
+func (r *Resolver) unserved(ctx context.Context, u User, repos map[int64]gh.RepoAccess) error {
+	building, err := r.readable(ctx, u, repos, r.library.Building())
+	if err != nil {
+		return err
+	}
+	if len(building) > 0 {
+		return errLoading
+	}
+	failed, err := r.readable(ctx, u, repos, r.library.Failed())
+	if err != nil {
+		return err
+	}
+	if len(failed) > 0 {
+		return ErrNotReady
+	}
+	return ErrNoVaults
+}
+
+// readable returns the vaults among vs that u may read.
+func (r *Resolver) readable(ctx context.Context, u User, repos map[int64]gh.RepoAccess, vs []vault.Vault) ([]vault.Vault, error) {
+	var out []vault.Vault
+	for _, v := range vs {
+		a, ok := repos[v.RepoID]
+		if !ok || a.Role < max(v.Config.ReadRole, gh.RoleRead) {
+			continue
+		}
+		reader, err := r.listed(ctx, u, v.Config.Readers)
+		if err != nil {
+			return nil, err
+		}
+		if reader {
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
 
 // CheckMember reports whether the token's user passes the organisation gate, for sign-in.

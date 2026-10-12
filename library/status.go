@@ -42,10 +42,33 @@ func (l *Library) publish() {
 }
 
 // Vaults returns the vaults being served, sorted by name.
-func (l *Library) Vaults() []vault.Vault {
+func (l *Library) Vaults() []vault.Vault { return l.inState(StateServing) }
+
+// Building returns the vaults being cloned and indexed, to be served once done, sorted by name.
+func (l *Library) Building() []vault.Vault { return l.inState(StateBuilding) }
+
+// Failed returns the vaults that failed to open, sorted by name. The poller retries them with backoff.
+func (l *Library) Failed() []vault.Vault { return l.inState(StateFailed) }
+
+// Changed returns a channel that's closed the next time a vault is added or removed, or changes state.
+func (l *Library) Changed() <-chan struct{} {
+	l.changedMu.Lock()
+	defer l.changedMu.Unlock()
+	return l.changed
+}
+
+// notify wakes everyone waiting on Changed.
+func (l *Library) notify() {
+	l.changedMu.Lock()
+	defer l.changedMu.Unlock()
+	close(l.changed)
+	l.changed = make(chan struct{})
+}
+
+func (l *Library) inState(s State) []vault.Vault {
 	var out []vault.Vault
 	for _, v := range l.all() {
-		if v.Status().State == StateServing {
+		if v.Status().State == s {
 			out = append(out, v.Info())
 		}
 	}

@@ -121,7 +121,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	}
 	resolver := access.NewResolver(
 		github,
-		lib.Vaults,
+		lib,
 		cfg.Access.RequiredOrgs,
 		shared,
 	)
@@ -411,12 +411,14 @@ func serve(srv *http.Server, ln net.Listener) error {
 	return err
 }
 
+// newServer's read and write timeouts leave room for access.Resolver's 30 second wait for vaults being
+// built, which comes before the MCP handler reads the body.
 func newServer(h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      90 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 }

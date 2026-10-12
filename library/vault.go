@@ -415,10 +415,14 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 	v.status.Large = stats.Documents > largeDocuments || stats.Bytes > largeBytes
 	v.status.LastSync = now
 	v.status.Fresh = now
+	changed := v.status.State != StateServing
 	v.status.State = StateServing
 	v.recordLocked(nil)
 	large := v.status.Large
 	v.mu.Unlock()
+	if changed {
+		l.notify()
+	}
 	if large {
 		l.logger.WarnContext(ctx, "vault is larger than speki is built for", "vault", v.Info().Name,
 			"documents", stats.Documents, "bytes", stats.Bytes)

@@ -59,6 +59,9 @@ type Library struct {
 	background sync.WaitGroup
 	closed     atomic.Bool
 	publishMu  sync.Mutex // one publish at a time
+
+	changedMu sync.Mutex
+	changed   chan struct{} // closed and replaced by notify
 }
 
 // New returns an empty library.
@@ -76,6 +79,7 @@ func New(github githubAPI, opts Options, logger *slog.Logger) *Library {
 		now:     time.Now,
 		vaults:  make(map[int64]*Vault),
 		opening: semaphore.NewWeighted(int64(opts.Opening)),
+		changed: make(chan struct{}),
 	}
 }
 
@@ -105,6 +109,7 @@ func (l *Library) Restore(ctx context.Context) error {
 		l.mu.Unlock()
 		l.logger.InfoContext(ctx, "vault restored from disk", "vault", v.Info().Name, "commit", v.index.Commit())
 	}
+	l.notify()
 	l.publish()
 	return nil
 }
@@ -183,6 +188,7 @@ func (l *Library) Update(ctx context.Context, changes vault.Changes) {
 			l.background.Go(func() { l.remove(v) })
 		}
 	}
+	l.notify()
 	l.publish()
 }
 
@@ -256,12 +262,14 @@ func (l *Library) initialise(ctx context.Context, v *Vault) {
 		return
 	}
 	v.setState(StateBuilding, nil)
+	l.notify()
 	err := v.open(ctx, l)
 	if err == nil {
 		err = l.syncLocked(ctx, v, false)
 	}
 	if err != nil {
 		v.setState(StateFailed, err)
+		l.notify()
 		l.logger.WarnContext(ctx, "vault failed to open", "vault", v.Info().Name, "err", err)
 		return
 	}

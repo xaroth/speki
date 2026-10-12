@@ -275,6 +275,38 @@ func TestFailedCloneIsReported(t *testing.T) {
 	}
 }
 
+func TestChangedFollowsState(t *testing.T) {
+	missing := kb
+	missing.Name = "ours/missing"
+	tests := []struct {
+		name  string
+		vault vault.Vault
+		done  func(*Library) []vault.Vault
+	}{
+		{name: "served", vault: kb, done: (*Library).Vaults},
+		{name: "failed", vault: missing, done: (*Library).Failed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRemote(t)
+			r.push(map[string]string{"a.md": "# A\n"})
+			l := newLibrary(t, r, t.TempDir())
+			changed := l.Changed()
+			l.Update(t.Context(), vault.Changes{Added: []vault.Vault{tt.vault}})
+			timeout := time.After(time.Minute)
+			for len(tt.done(l)) == 0 {
+				select {
+				case <-changed:
+				case <-timeout:
+					t.Fatalf("no change announced; status = %+v", l.Status())
+				}
+				changed = l.Changed()
+			}
+			l.WaitIdle()
+		})
+	}
+}
+
 func TestBranchChangeReclones(t *testing.T) {
 	r := newRemote(t)
 	r.push(map[string]string{"a.md": "# A\n\nmaster text\n"})

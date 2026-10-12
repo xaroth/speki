@@ -19,6 +19,9 @@ import (
 
 const maxBody = 2 << 20
 
+// notReadyRetry is the Retry-After, in seconds, for a user whose vaults are still being built.
+const notReadyRetry = "15"
+
 // Per-user request rate: enough for an agent working quickly, not enough to hog the instance.
 const (
 	ratePerSecond = 10
@@ -133,7 +136,8 @@ func GrantFrom(ctx context.Context) (*access.Grant, bool) {
 }
 
 // grant runs before the MCP handler because only here can speki still answer with a status code: 401
-// makes the client refresh or sign in again, 403 says why the user isn't allowed in.
+// makes the client refresh or sign in again, 403 says why the user isn't allowed in, 503 that their vaults
+// aren't served yet.
 func (s *Server) grant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := s.auth.User(r.Context())
@@ -148,6 +152,10 @@ func (s *Server) grant(next http.Handler) http.Handler {
 			return
 		case errors.Is(err, access.ErrNotMember), errors.Is(err, access.ErrNoVaults):
 			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		case errors.Is(err, access.ErrNotReady):
+			w.Header().Set("Retry-After", notReadyRetry)
+			http.Error(w, access.ErrNotReady.Error(), http.StatusServiceUnavailable)
 			return
 		case err != nil:
 			s.logger.ErrorContext(r.Context(), "resolving access failed", "login", u.Login, "err", err)
