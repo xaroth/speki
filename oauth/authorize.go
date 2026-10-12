@@ -316,9 +316,9 @@ func redirectTo(w http.ResponseWriter, r *http.Request, base string, params url.
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
-// pageCSP keeps the pages from loading anything but speki's fonts, or being framed. It has no form-action: browsers apply
-// it to the redirects after the consent form (to GitHub, or back to the client on Cancel), and the
-// client's address isn't known in advance.
+// pageCSP keeps the pages from loading anything but speki's fonts, or being framed. It has no
+// form-action: browsers apply it to the redirects after the consent form (to GitHub, or back to the
+// client on Cancel), and the client's address isn't known in advance.
 const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; frame-ancestors 'none'"
 
 func (s *Server) page(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
