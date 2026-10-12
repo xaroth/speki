@@ -297,10 +297,10 @@ table, so `fts MATCH 'x'` is a "no such column" error.
 
 `DEFENSIVE` mode and `trusted_schema` can't be set through mattn's Go API. The cgo preamble of
 `index/defensive.go` registers an `sqlite3_auto_extension` hook that, only for connections whose main
-database is `:memory:`, calls `sqlite3_db_config` with `SQLITE_DBCONFIG_DEFENSIVE` on and `SQLITE_DBCONFIG_TRUSTED_SCHEMA` off.
-Index writers aren't affected, because `DEFENSIVE` would block the `journal_mode=OFF` builds use. The preamble
-declares the few SQLite prototypes it needs itself. The symbols come from the SQLite that mattn compiles
-into the binary.
+database is `:memory:`, calls `sqlite3_db_config` with `SQLITE_DBCONFIG_DEFENSIVE` on and
+`SQLITE_DBCONFIG_TRUSTED_SCHEMA` off. Index writers aren't affected, because `DEFENSIVE` would block the
+`journal_mode=OFF` builds use. The preamble declares the few SQLite prototypes it needs itself. The symbols
+come from the SQLite that mattn compiles into the binary.
 
 ### The authorizer
 
