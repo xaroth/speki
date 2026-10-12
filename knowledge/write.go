@@ -482,9 +482,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			// A stale version, or a version or tree the copy no longer has: the copy may be behind
 			// GitHub, or was just replaced. Sync once and look again.
 			synced = true
-			sctx, cancel := context.WithTimeout(ctx, syncWait)
-			serr := b.vaults.Sync(sctx, v.RepoID)
-			cancel()
+			serr := b.syncNow(ctx, v.RepoID)
 			if errors.Is(serr, ErrRebuilding) {
 				return Result{}, rebuilding(v.Name)
 			}
@@ -515,9 +513,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 				}
 				return Result{}, b.keptChanging(ctx, v, about)
 			}
-			sctx, cancel := context.WithTimeout(ctx, syncWait)
-			err = b.vaults.Sync(sctx, v.RepoID)
-			cancel()
+			err = b.syncNow(ctx, v.RepoID)
 			if errors.Is(err, ErrRebuilding) {
 				return Result{}, rebuilding(v.Name)
 			}
@@ -547,23 +543,34 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			sha = found
 		}
 
-		res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom}
-		// The commit landed: finish the job even if the client went away, within syncWait.
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncWait)
-		err = b.vaults.Sync(sctx, v.RepoID)
-		cancel()
-		if err != nil {
-			b.logger.WarnContext(ctx, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
-		}
-		res.IndexPending = err != nil || !b.indexed(context.WithoutCancel(ctx), v.RepoID, p.path, p.version)
-		nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeTimeout)
-		err = b.notices.Publish(nctx, v.RepoID, sha)
-		cancel()
-		if err != nil {
-			b.logger.WarnContext(ctx, "telling other instances about a commit failed", "vault", v.Name, "err", err)
-		}
-		return res, nil
+		return b.afterCommit(ctx, v, p, sha), nil
 	}
+}
+
+// syncNow syncs a vault for a change, within syncWait.
+func (b *Base) syncNow(ctx context.Context, repoID int64) error {
+	sctx, cancel := context.WithTimeout(ctx, syncWait)
+	defer cancel()
+	return b.vaults.Sync(sctx, repoID)
+}
+
+// afterCommit waits for the index to catch up with a landed commit and tells other instances about it.
+// It finishes even if the client went away.
+func (b *Base) afterCommit(ctx context.Context, v vault.Vault, p plan, sha string) Result {
+	ctx = context.WithoutCancel(ctx)
+	res := Result{Version: p.version, Commit: sha, LinkedFrom: p.linkedFrom}
+	err := b.syncNow(ctx, v.RepoID)
+	if err != nil {
+		b.logger.WarnContext(ctx, "sync after a commit failed", "vault", v.Name, "commit", sha, "err", err)
+	}
+	res.IndexPending = err != nil || !b.indexed(ctx, v.RepoID, p.path, p.version)
+	nctx, cancel := context.WithTimeout(ctx, noticeTimeout)
+	defer cancel()
+	err = b.notices.Publish(nctx, v.RepoID, sha)
+	if err != nil {
+		b.logger.WarnContext(ctx, "telling other instances about a commit failed", "vault", v.Name, "err", err)
+	}
+	return res
 }
 
 // findCommit looks on GitHub, as the user, for the commit carrying requestID among the latest ones
