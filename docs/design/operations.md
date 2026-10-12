@@ -44,7 +44,7 @@ func loadConfig(path string, environ []string) (service.Config, error)
 ```
 
 1. Decode the YAML file named by `--config` (default `config.yaml`), with unknown keys rejected: a typo in
-   a key should fail, not be silently ignored. A missing file is fine when everything comes from the
+   a key should fail, not be ignored. A missing file is fine when everything comes from the
    environment. The `..._file` keys are set aside, not read yet. Any text setting can have one; they're
    meant for secrets. The YAML is decoded as written, so errors name the right line.
 2. Walk the struct by reflection and apply environment variables named after the `yaml` tags:
@@ -69,8 +69,8 @@ characters, otherwise generated. It's in every log line, in error messages to cl
 when tracing is on.
 
 Every tool call logs one line at the end: request ID, GitHub login, client name, tool, vault, path,
-`outcome` (the error code, `ok`, or `canceled` when the client went away) and duration. Background work logs per vault: discovery changes, sync results, index builds with
-duration and document count, failures.
+`outcome` (the error code, `ok`, or `canceled` when the client went away) and duration. Background work
+logs per vault: discovery changes, sync results, index builds with duration and document count, failures.
 
 ## Metrics
 
@@ -99,9 +99,9 @@ Names:
 | `speki_signins_total` | counter | `result` |
 
 The vault gauges are written from the library's status at startup, after every poll round and
-discovery update, and on shutdown, so they lag by a poll round at most. Alert on `time() - speki_vault_fresh_timestamp_seconds`:
-above a few poll intervals, a vault is falling behind. It's a timestamp rather than an age so that it
-keeps growing staler when the poller itself stalls.
+discovery update, and on shutdown, so they lag by a poll round at most. Alert on
+`time() - speki_vault_fresh_timestamp_seconds`: above a few poll intervals, a vault is falling behind.
+It's a timestamp rather than an age so that it keeps growing staler when the poller itself stalls.
 
 Vault labels are fine at 20 vaults. User logins are never labels.
 
@@ -117,11 +117,12 @@ isn't showing up". Like `/metrics`, it's for operators only and shouldn't be exp
 ## Tracing
 
 OpenTelemetry, off unless `telemetry.tracing` is true. The exporter is OTLP over HTTP, configured by the
-standard `OTEL_EXPORTER_OTLP_*` variables. Spans: the HTTP request (`telemetry.Trace`, a new trace per request that keeps
-an incoming `traceparent` only as a link), each tool call, GitHub requests (an `otelhttp` transport on the
-GitHub client, which doesn't send speki's trace context to GitHub), `index.Search`, `index.Query`,
-`index.Apply`, and `library.Sync`. Span attributes follow the logging rules: no content, no SQL, no tokens. The server span leaves out query strings,
-because the GitHub callback carries `code` and `state` there, and names spans from a fixed set of routes.
+standard `OTEL_EXPORTER_OTLP_*` variables. Spans: the HTTP request (`telemetry.Trace`, a new trace per
+request that keeps an incoming `traceparent` only as a link), each tool call, GitHub requests (an
+`otelhttp` transport on the GitHub client, which doesn't send speki's trace context to GitHub),
+`index.Search`, `index.Query`, `index.Apply`, and `library.Sync`. Span attributes follow the logging
+rules: no content, no SQL, no tokens. The server span leaves out query strings, because the GitHub
+callback carries `code` and `state` there, and names spans from a fixed set of routes.
 
 ## Builds
 

@@ -19,8 +19,8 @@ written down here.
 
 ## Errors
 
-One action per statement. Check its error on the next line and return. Never pass a call's results straight
-into another call that checks them.
+One action per statement. Check its error on the next line and return. Never pass a call's results
+straight into another call that checks them.
 
 ```go
 // Wrong
@@ -60,8 +60,7 @@ if err != nil {
 - Code that returns document content takes an `*access.Grant`. No exceptions without a comment explaining
   why.
 - Tokens, codes, cookies, the configuration (it holds secrets), document content and SQL never go into
-  logs or error messages. The slog handler
-  redacts known attribute names, but don't rely on it.
+  logs or error messages. The slog handler redacts known attribute names, but don't rely on it.
 - URLs that end up in tokens or metadata come from configuration, never from request headers.
 
 ## Tests

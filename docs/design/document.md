@@ -36,9 +36,9 @@ func Parse(path string, raw []byte) (*Document, error)
 ```
 
 `Parse` errors only when the file can't be used at all: it isn't UTF-8, or its frontmatter block is over
-64 KiB. Everything else becomes a warning. Frontmatter that doesn't parse as YAML, uses anchors or aliases, or
-isn't a mapping is ignored as a whole: the document gets its title from the first heading or the file name,
-and `Warnings` says what's wrong. A core field with the wrong type is ignored on its own.
+64 KiB. Everything else becomes a warning. Frontmatter that doesn't parse as YAML, uses anchors or
+aliases, or isn't a mapping is ignored as a whole: the document gets its title from the first heading or
+the file name, and `Warnings` says what's wrong. A core field with the wrong type is ignored on its own.
 
 ## Frontmatter
 
@@ -104,7 +104,7 @@ collect:
 - links: markdown links and wikilinks, with their text. Linkify makes bare URLs, `www.example.com` and
   email addresses links too, so they're recorded like any other link to the web.
 
-Speki never renders HTML, so goldmark's renderer and its past XSS problems don't matter here, but the version
+Speki never renders HTML, so goldmark's renderer and its past XSS problems don't matter here. The version
 is kept current anyway.
 
 Link candidates:
@@ -129,5 +129,4 @@ The rules are in [documents.md](../functional/documents.md). `CheckPath` is for 
 to NFC and returns an error naming the rule that failed, which goes straight to the agent. A folder name
 that git has in another normalisation is returned with git's bytes, so `café/new.md` lands in an existing
 NFD `café/`. A file that exists in another normalisation, or a name that differs in letter case, is
-refused. Existing documents keep the exact
-path git has, even when it isn't NFC.
+refused. Existing documents keep the exact path git has, even when it isn't NFC.

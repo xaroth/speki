@@ -35,7 +35,7 @@ limit, grant.
 ## Instructions
 
 Claude Code cuts instructions at 2,048 characters, so this text stays well under that and leads with the
-part that decides whether an agent uses speki at all. Draft:
+part that decides whether an agent uses speki at all:
 
 ```text
 Speki is this team's shared knowledge base: how our systems work, why decisions were made, runbooks,

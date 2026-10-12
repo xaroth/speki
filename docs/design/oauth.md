@@ -91,9 +91,8 @@ fetches the document with an HTTP client that:
 Parsed documents (name and redirect URIs only) are kept in a per-instance cache of 100 entries and
 refetched after 10 minutes. The refetch runs in the background, and the old document is used meanwhile,
 and for up to an hour while the host can't be reached or answers with an error. A 404 or 410 means the
-document was removed, so the old one is dropped. Failed
-fetches are remembered on their own: a missing or invalid document for a minute, an unreachable host for
-10 seconds.
+document was removed, so the old one is dropped. Failed fetches are remembered on their own: a missing
+or invalid document for a minute, an unreachable host for 10 seconds.
 
 At most 4 fetches of new documents run at once, with 2 more slots for refetching documents that were
 fetched before, so a stream of made-up URLs can't keep claude.ai out. A request waits up to 2 seconds for

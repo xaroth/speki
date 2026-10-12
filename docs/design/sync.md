@@ -33,8 +33,8 @@ A vault is only removed on a definite answer: GitHub says the installation or re
 repository no longer has `speki.yaml`, the account isn't allowed anymore, or the installation is
 suspended. A removed vault's copy and index are deleted, so unsuspending an installation means cloning and
 indexing its vaults again. A failed request changes nothing. A `speki.yaml` that stops parsing keeps the
-vault running on its last good configuration, and the problem is logged and shown on the status page (see [operations.md](operations.md)). A new vault with a
-bad `speki.yaml` is not added.
+vault running on its last good configuration, and the problem is logged and shown on the status page
+(see [operations.md](operations.md)). A new vault with a bad `speki.yaml` is not added.
 
 ## Git copies
 
@@ -74,7 +74,7 @@ loses its executable bit when speki edits or moves it.
 Every walk of a tree, and `Diff`, looks each folder up itself (go-git's `DiffTree` treats a missing
 folder as empty, and refuses folder names with control characters). So a missing object is an error
 (`gitsync.ErrBroken`) rather than a quiet gap, and a path with a control character, which git allows, is
-simply not eligible. A copy that turns out broken while in use is cloned again, next to the old one, and
+not eligible. A copy that turns out broken while in use is cloned again, next to the old one, and
 the index rebuilt from it; a quick sync for a write leaves that to the poller. A `read` that finds a blob
 missing marks the copy, and the next poll does the same.
 
@@ -181,16 +181,16 @@ plus an add), checked against `expectedHeadOid`, signed by GitHub. Push protecti
 apply to it (see [git-access.md](../research/git-access.md)).
 
 Before committing, `knowledge` checks the target path against every path in the mirror's tree at the
-expected head (`Paths`, plus the folders they imply): a path that exists (as any kind of entry), or that differs only in letter case from an existing
-file or folder, is refused for creation, and so is a file that differs only in Unicode normalisation. A
-folder that differs only in normalisation takes git's spelling (see `CheckPath` in
-[document.md](document.md)). When changing an existing file,
-speki writes back to the exact path bytes git has.
+expected head (`Paths`, plus the folders they imply): a path that exists (as any kind of entry), or that
+differs only in letter case from an existing file or folder, is refused for creation, and so is a file
+that differs only in Unicode normalisation. A folder that differs only in normalisation takes git's
+spelling (see `CheckPath` in [document.md](document.md)). When changing an existing file, speki writes
+back to the exact path bytes git has.
 
 Commit messages: the first line of the agent's message, or a default, cut to at most 200 bytes. A line that
-looks like a `Speki-Client:` trailer is replaced by the default. Speki then appends its own trailers: the client name
-(one line, printable characters, at most 64) and `Speki-Request:` with a random ID for that attempt. `history` reads only the last `Speki-Client` trailer of a
-message.
+looks like a `Speki-Client:` trailer is replaced by the default. Speki then appends its own trailers: the
+client name (one line, printable characters, at most 64) and `Speki-Request:` with a random ID for that
+attempt. `history` reads only the last `Speki-Client` trailer of a message.
 
 `gh` turns GitHub's answers into errors `knowledge` can act on:
 
@@ -237,8 +237,7 @@ After a successful commit, `knowledge`:
 1. computes the new version: the git blob hash of the content it sent
 2. asks the vault to sync, and waits until a sync that started after the commit has finished, at most 10
    seconds
-3. publishes `{repo id, commit}` on the store's change channel (milestone 8; a single instance has nobody
-   to tell)
+3. publishes `{repo id, commit}` on the store's change channel (a no-op with the in-memory store)
 4. returns the version, the commit SHA, and `index_pending: true` if step 2 timed out
 
 ## Change notices between instances
@@ -269,6 +268,6 @@ User tokens carry the per-user calls: access checks (at most once a minute while
 commits and history.
 
 `gh` records `x-ratelimit-remaining` per token kind as a metric and logs a warning below 10%, at most
-once every 10 minutes per kind and installation. Each request is counted once, by the credential it carries: an
-installation's calls go through the app's transport, which only counts the ones signed with the app's
-JWT.
+once every 10 minutes per kind and installation. Each request is counted once, by the credential it
+carries: an installation's calls go through the app's transport, which only counts the ones signed with
+the app's JWT.

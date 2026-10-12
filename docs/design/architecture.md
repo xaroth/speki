@@ -73,7 +73,7 @@ tested without a protocol in the way.
 
 Where a package needs something from another package, it declares a small interface for exactly what it
 uses, next to the code that uses it. `knowledge` declares a `committer` interface with the one `gh` method
-it calls, and tests hand it a fake. Concrete types everywhere else. No interface per package "just in case".
+it calls, and tests hand it a fake. Concrete types everywhere else, and no interface without a consumer.
 
 ## The `Grant` type
 
@@ -257,7 +257,8 @@ traces all carry it.
 ## Testing
 
 - `document`, `seal` and `index` are plain code with table-driven tests and fixtures under `testdata/`.
-- `cmd/speki` tests `run` and the config loading with given arguments, environment and files. The examples in the functional docs (stemming, typo correction, path rules) are test cases.
+- `cmd/speki` tests `run` and the config loading with given arguments, environment and files.
+- The examples in the functional docs (stemming, typo correction, path rules) are test cases.
 - `gitsync` tests run against local bare repositories made in a temporary directory.
 - `access`, `oauth`, `knowledge`, `library` and `vault` get hand-written fakes of the small interfaces they
   declare.
