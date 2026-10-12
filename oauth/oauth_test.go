@@ -571,6 +571,51 @@ func TestPagesNameTheInstance(t *testing.T) {
 	}
 }
 
+var fontURL = regexp.MustCompile(`url\((/oauth/fonts/[^)]+)\)`)
+
+// Every font the pages name is served, and only from speki itself.
+func TestPagesFonts(t *testing.T) {
+	h := newHarness(t)
+	clientID := h.register("http://127.0.0.1/callback")
+	page := h.do(http.MethodGet, authorizeURL(clientID, "http://127.0.0.1/callback", nil), nil)
+	if csp := page.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "font-src 'self'") {
+		t.Errorf("CSP doesn't allow speki's fonts: %s", csp)
+	}
+	urls := fontURL.FindAllStringSubmatch(page.Body.String(), -1)
+	if len(urls) == 0 {
+		t.Fatal("the page names no fonts")
+	}
+	for _, m := range urls {
+		rec := h.do(http.MethodGet, m[1], nil)
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "font/woff2" || rec.Body.Len() == 0 {
+			t.Errorf("%s: %d %q", m[1], rec.Code, rec.Header().Get("Content-Type"))
+		}
+	}
+	for _, target := range []string{"/oauth/fonts/missing.woff2", "/oauth/fonts/OFL.txt", "/oauth/fonts/..%2Fconsent.html"} {
+		if rec := h.do(http.MethodGet, target, nil); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: %d", target, rec.Code)
+		}
+	}
+}
+
+// Error pages mark the step that failed: choosing access before GitHub, signing in after it.
+func TestErrorPagesMarkTheStep(t *testing.T) {
+	h := newHarness(t)
+	tests := []struct {
+		target string
+		want   string
+	}{
+		{"/oauth/authorize?client_id=unknown", `<li aria-current="step">Choose access</li>`},
+		{"/oauth/github/callback?state=unknown", `<li aria-current="step">Sign in with GitHub</li>`},
+	}
+	for _, tt := range tests {
+		rec := h.do(http.MethodGet, tt.target, nil)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tt.want) {
+			t.Errorf("%s: %d %s", tt.target, rec.Code, rec.Body)
+		}
+	}
+}
+
 func TestTokenRejects(t *testing.T) {
 	h := newHarness(t)
 	clientID := h.register("http://127.0.0.1/callback")
