@@ -270,7 +270,7 @@ func TestCachePerToken(t *testing.T) {
 	calls := f.calls
 	_, _ = r.Resolve(ctx, User{Token: "alice"})
 	if f.calls != calls {
-		t.Error("second resolve within a minute asked GitHub")
+		t.Error("second resolve within five minutes asked GitHub")
 	}
 
 	// Another token of the same user is checked on its own: a revoked one stays revoked.
@@ -280,9 +280,9 @@ func TestCachePerToken(t *testing.T) {
 		t.Errorf("revoked second token: %v", err)
 	}
 
-	// After a minute GitHub is asked again, and a removed permission takes effect.
+	// After five minutes GitHub is asked again, and a removed permission takes effect.
 	f.repos["alice"] = nil
-	now = now.Add(61 * time.Second)
+	now = now.Add(5*time.Minute + time.Second)
 	_, err = r.Resolve(ctx, User{Token: "alice"})
 	if !errors.Is(err, ErrNoVaults) {
 		t.Errorf("after expiry: %v", err)

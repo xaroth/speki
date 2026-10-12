@@ -31,8 +31,8 @@ A request is accepted when all of these hold:
 If 2 or 3 fails, the client gets an HTTP 403 saying which of the two it was. It never names organisations
 or vaults the user can't see.
 
-Speki checks 2 and 3 again at most every 60 seconds per user. Someone removed from an organisation, a
-repository or a team loses access within a minute.
+Speki checks 2 and 3 again at most every 5 minutes per user. Someone removed from an organisation, a
+repository or a team loses access within 5 minutes.
 
 ## What a user can see and change
 

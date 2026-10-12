@@ -1,6 +1,6 @@
 // Package access decides what a signed-in user may do: whether they get in at all, and which vaults they
 // may read and write. GitHub is the source of truth, narrowed by each vault's readers and writers; answers
-// are cached for a minute, in a cache every instance shares.
+// are cached for five minutes, in a cache every instance shares.
 package access
 
 import (
@@ -122,7 +122,7 @@ func NewResolver(github githubAPI, vaults func() []vault.Vault, requiredOrgs []s
 		vaults:       vaults,
 		requiredOrgs: requiredOrgs,
 		cache:        c,
-		ttl:          time.Minute,
+		ttl:          5 * time.Minute,
 		now:          time.Now,
 	}
 }

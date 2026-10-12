@@ -201,7 +201,7 @@ The first connection opens a browser to sign in ([access.md](access.md)).
 
 With no `redis` configured, speki runs as a single instance and keeps its short-lived state in memory:
 used authorization codes, refresh locks, refresh results and the access cache (what GitHub said each
-user may see, kept for a minute). A restart loses that state, which only means a few users get checked
+user may see, kept for 5 minutes). A restart loses that state, which only means a few users get checked
 against GitHub again.
 
 With `redis` configured, any number of instances can run behind a load balancer without sticky sessions.
