@@ -78,7 +78,7 @@ func newClientResolver(keys *seal.Keyring, hosts []string) *clientResolver {
 	return &clientResolver{
 		keys:     keys,
 		hosts:    hosts,
-		fetch:    newMetadataFetcher(hosts),
+		fetch:    newMetadataFetcher(hosts, publicTransport()),
 		now:      time.Now,
 		fetching: make(chan struct{}, metadataFetches),
 		known:    make(chan struct{}, metadataKnown),
@@ -363,18 +363,23 @@ func hidesText(r rune) bool {
 // answering or refusing.
 var errNoDocument = errors.New("no metadata document")
 
-// newMetadataFetcher returns a function that fetches client metadata documents from the allowed hosts
-// only, refusing any address that isn't public after DNS resolution, ignoring proxy settings, following
-// no redirects, and reading at most metadataMaxBytes within five seconds.
-func newMetadataFetcher(hosts []string) func(ctx context.Context, url string) ([]byte, error) {
+// publicTransport connects to public addresses only, refusing any address that isn't public after DNS
+// resolution, and ignores proxy settings.
+func publicTransport() http.RoundTripper {
 	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: refusePrivate}
+	return &http.Transport{
+		Proxy:               nil,
+		DialContext:         dialer.DialContext,
+		TLSHandshakeTimeout: 5 * time.Second,
+	}
+}
+
+// newMetadataFetcher returns a function that fetches client metadata documents from the allowed hosts
+// only, through rt, following no redirects, and reading at most metadataMaxBytes within five seconds.
+func newMetadataFetcher(hosts []string, rt http.RoundTripper) func(ctx context.Context, url string) ([]byte, error) {
 	hc := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			Proxy:               nil,
-			DialContext:         dialer.DialContext,
-			TLSHandshakeTimeout: 5 * time.Second,
-		},
+		Timeout:       5 * time.Second,
+		Transport:     rt,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	return func(ctx context.Context, rawURL string) ([]byte, error) {
