@@ -172,6 +172,16 @@ func (v *Vault) Paths(commit string) ([]string, error) {
 	return v.mirror.Paths(commit)
 }
 
+// Version returns the blob SHA of the file at path in the git copy at commit, "" when there's none.
+func (v *Vault) Version(commit, path string) (string, error) {
+	v.gitMu.RLock()
+	defer v.gitMu.RUnlock()
+	if v.mirror == nil {
+		return "", errors.New("no git copy")
+	}
+	return v.mirror.BlobAt(commit, path)
+}
+
 // setInfo records new details and reports whether the git copy must be cloned again: it follows one
 // branch, and the default branch changed.
 func (v *Vault) setInfo(info vault.Vault) bool {

@@ -2,7 +2,7 @@ package index
 
 // schemaVersion changes whenever schema does. An index with another version is rebuilt; there are no
 // migrations, because rebuilding from git is always possible.
-const schemaVersion = "3"
+const schemaVersion = "4"
 
 // schema creates one vault's index, without the triggers. Documents are only ever inserted and deleted,
 // never updated.
@@ -16,7 +16,7 @@ CREATE TABLE documents (
 	name        TEXT NOT NULL,        -- document.LinkName of path, for wikilinks
 	title       TEXT NOT NULL,
 	description TEXT,
-	status      TEXT NOT NULL,        -- draft | active | deprecated
+	status      TEXT NOT NULL,        -- draft | active | deprecated | broken
 	tags        TEXT NOT NULL,        -- JSON array
 	aliases     TEXT NOT NULL,        -- JSON array
 	related     TEXT NOT NULL,        -- JSON array
@@ -28,12 +28,14 @@ CREATE TABLE documents (
 	bytes       INTEGER NOT NULL,
 	lines       INTEGER NOT NULL,
 	version     TEXT NOT NULL,        -- git blob SHA
-	warnings    TEXT NOT NULL         -- JSON array of frontmatter problems
+	warnings    TEXT NOT NULL,        -- JSON array of frontmatter problems
+	broken      TEXT                  -- why the file can't be parsed, when status is broken
 );
 CREATE INDEX documents_key ON documents (key);
 CREATE INDEX documents_name ON documents (name);
 CREATE INDEX documents_updated ON documents (updated);
 CREATE INDEX documents_deprecated ON documents (id) WHERE status = 'deprecated'; -- for ranking
+CREATE INDEX documents_broken ON documents (id) WHERE status = 'broken';         -- left out of search
 
 CREATE TABLE tags (
 	doc_id INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,

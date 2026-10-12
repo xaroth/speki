@@ -70,6 +70,16 @@ func (c *fakeCopy) Paths(string) ([]string, error) {
 	return slices.Sorted(maps.Keys(c.tree)), nil
 }
 
+func (c *fakeCopy) Version(_, path string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	content, ok := c.tree[path]
+	if !ok {
+		return "", nil
+	}
+	return blobID(content), nil
+}
+
 // load rebuilds the copy at commit with files. Files that aren't markdown are in the tree but not indexed.
 func (c *fakeCopy) load(t *testing.T, commit string, files map[string][]byte) {
 	t.Helper()

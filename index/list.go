@@ -16,6 +16,11 @@ import (
 // ErrNotFound means the index has no document at that path.
 var ErrNotFound = errors.New("no such document")
 
+// StatusBroken is the status of a document whose file can't be parsed (not UTF-8, or frontmatter over its
+// size limit). It's the index's own: frontmatter can't set it. A broken document has its current version
+// but no content, and search leaves it out.
+const StatusBroken document.Status = "broken"
+
 // Document is what the index knows about one document.
 type Document struct {
 	Path        string
@@ -32,6 +37,7 @@ type Document struct {
 	Lines       int
 	Version     string
 	Warnings    []string
+	Broken      string // why the file can't be parsed, when Status is StatusBroken
 }
 
 // Entry is one item in a folder listing: a folder (Path ends in "/") or a document.
@@ -57,13 +63,13 @@ func (x *Index) Document(ctx context.Context, path string) (Document, error) {
 	defer g.release()
 
 	var d Document
-	var desc, created, updated sql.NullString
+	var desc, created, updated, broken sql.NullString
 	var tags, aliases, related, extra, warnings string
 	err = g.reader.QueryRowContext(ctx, `SELECT path, title, description, status, tags, aliases, related,
-			created, updated, extra, bytes, lines, version, warnings
+			created, updated, extra, bytes, lines, version, warnings, broken
 		FROM documents WHERE path = ?`, path).Scan(
 		&d.Path, &d.Title, &desc, &d.Status, &tags, &aliases, &related,
-		&created, &updated, &extra, &d.Bytes, &d.Lines, &d.Version, &warnings,
+		&created, &updated, &extra, &d.Bytes, &d.Lines, &d.Version, &warnings, &broken,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Document{}, ErrNotFound
@@ -72,7 +78,7 @@ func (x *Index) Document(ctx context.Context, path string) (Document, error) {
 		return Document{}, fmt.Errorf("document %s: %w", path, err)
 	}
 	d.Title, d.Description = clip(d.Title, maxTitle), clip(desc.String, maxDescription)
-	d.Created, d.Updated = created.String, updated.String
+	d.Created, d.Updated, d.Broken = created.String, updated.String, broken.String
 	for _, f := range []struct {
 		src string
 		dst any
