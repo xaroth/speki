@@ -382,6 +382,34 @@ func TestPathsKeepGitsBytes(t *testing.T) {
 	}
 }
 
+func TestBlobAt(t *testing.T) {
+	src := newSource(t)
+	head := src.commit(map[string]*string{
+		"README.md":    new("# Vault\n"),
+		"ops/fleet.md": new("# Fleet\n"),
+	})
+	m, err := Open(t.Context(), filepath.Join(t.TempDir(), "copy"), Source{URL: src.dir, Branch: "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := m.Files(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		got, err := m.BlobAt(head, f.Path)
+		if err != nil || got != f.Blob {
+			t.Errorf("BlobAt(%s) = %q, %v; want %q", f.Path, got, err, f.Blob)
+		}
+	}
+	for _, p := range []string{"missing.md", "ops", "ops/missing.md", "README.md/x.md", "nope/fleet.md"} {
+		got, err := m.BlobAt(head, p)
+		if err != nil || got != "" {
+			t.Errorf("BlobAt(%s) = %q, %v; want nothing", p, got, err)
+		}
+	}
+}
+
 // copyDir copies a directory tree, for breaking a copy of a repository without touching the original.
 func copyDir(t *testing.T, from, to string) {
 	t.Helper()

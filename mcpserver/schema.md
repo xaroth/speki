@@ -9,13 +9,15 @@ answer: documents by metadata, links between documents, gaps in the knowledge.
 documents: one row per document.
 
 - `vault`, `path`
-- `title`; `description` (may be null); `status`: `draft`, `active` or `deprecated`
+- `title`; `description` (may be null); `status`: `draft`, `active` or `deprecated`, or `broken` for a
+  file speki can't parse
 - `tags`, `aliases`, `related`: JSON arrays. Tags are lowercased; related holds paths as written
 - `created`, `updated`: ISO 8601 UTC text, may be null for documents not written by speki
 - `extra`: JSON object of frontmatter keys speki doesn't own
 - `body`: markdown without the frontmatter
 - `bytes`, `lines`: size of the whole file
 - `version`: git blob SHA
+- `broken`: why the file can't be parsed, null otherwise. A broken document has no body, tags or links
 
 tags: one row per document and tag: `vault`, `path`, `tag`.
 

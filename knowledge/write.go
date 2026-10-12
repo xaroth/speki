@@ -85,6 +85,9 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 		if err != nil {
 			return plan{}, err
 		}
+		if exists && cur.Status == index.StatusBroken {
+			return plan{}, brokenDocument(cur)
+		}
 		if req.Version == "" {
 			if exists {
 				return plan{}, &Error{
@@ -128,6 +131,7 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 			message: "Update " + cur.Path,
 			path:    cur.Path,
 			version: blobID(out),
+			base:    cur,
 		}, nil
 	})
 }
@@ -148,6 +152,9 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 		}
 		if !exists {
 			return plan{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, path)
+		}
+		if cur.Status == index.StatusBroken {
+			return plan{}, brokenDocument(cur)
 		}
 		if req.Version != "" && cur.Version != req.Version {
 			return plan{}, stale(cur)
@@ -178,6 +185,7 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 			message: "Update " + cur.Path,
 			path:    cur.Path,
 			version: blobID(out),
+			base:    cur,
 		}, nil
 	})
 }
@@ -203,6 +211,9 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 		}
 		if !exists {
 			return plan{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", st.vault.Name, from)
+		}
+		if cur.Status == index.StatusBroken {
+			return plan{}, brokenDocument(cur)
 		}
 		if cur.Version != req.Version {
 			return plan{}, stale(cur)
@@ -240,6 +251,7 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 			source:     cur.Path,
 			version:    cur.Version,
 			linkedFrom: linked,
+			base:       cur,
 		}, nil
 	})
 }
@@ -273,6 +285,7 @@ func (b *Base) Delete(ctx context.Context, g *access.Grant, req DeleteRequest) (
 			message:    "Delete " + cur.Path,
 			path:       cur.Path,
 			linkedFrom: linked,
+			base:       cur,
 		}, nil
 	})
 }
@@ -312,6 +325,23 @@ func (st state) document(ctx context.Context, path string) (index.Document, bool
 		return index.Document{}, false, indexError(st.vault.Name, err)
 	}
 	return d, true, nil
+}
+
+// unchanged checks that base is at its indexed version in the git tree at head, the commit the change is
+// based on. The agent's version was checked against the index, so an index that disagrees with git would
+// let the commit overwrite a change nobody saw. One tree lookup.
+func (st state) unchanged(base index.Document) error {
+	if base.Path == "" {
+		return nil
+	}
+	v, err := st.copy.Version(st.head, base.Path)
+	if err != nil {
+		return err
+	}
+	if v != base.Version {
+		return stale(index.Document{Path: base.Path, Version: v})
+	}
+	return nil
 }
 
 // newPath checks a path for a new document against the git tree at head, and returns the path to
@@ -427,6 +457,9 @@ type staleError struct{ conflict *Error }
 func (e *staleError) Error() string { return e.conflict.Error() }
 
 func stale(cur index.Document) error {
+	if cur.Version == "" {
+		return &staleError{conflict: errorf(CodeConflict, "%s was deleted since you read it. Use search or list to find it", cur.Path)}
+	}
 	return &staleError{conflict: &Error{
 		Code:    CodeConflict,
 		Message: fmt.Sprintf("%s changed since you read it. Current version: %s. Read it again and redo your change", cur.Path, cur.Version),
@@ -442,6 +475,7 @@ type plan struct {
 	source     string // for a move, where it was: the document a conflict is about
 	version    string // its version there; empty when it's deleted
 	linkedFrom []string
+	base       index.Document // the existing document the change replaces, moves or deletes, if any
 }
 
 // change runs one change: it checks the user may write, takes the vault's write lock, prepares the commit
@@ -467,6 +501,9 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		}
 		st := state{vault: c.Info(), copy: c, head: c.Index().Commit()} // the live name and branch
 		p, err := prepare(ctx, st)
+		if err == nil {
+			err = st.unchanged(p.base)
+		}
 		if err != nil {
 			var se *staleError
 			var kerr *Error

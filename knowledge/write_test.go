@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/eve-online-tools/speki/access"
 	"github.com/eve-online-tools/speki/document"
 	"github.com/eve-online-tools/speki/gh"
+	"github.com/eve-online-tools/speki/index"
 	"github.com/eve-online-tools/speki/vault"
 )
 
@@ -660,5 +662,120 @@ func TestLongTitles(t *testing.T) {
 	_, err = f.base.Write(t.Context(), f.grant, WriteRequest{Vault: "ours/kb", Path: "ok.md", Content: "---\ntitle: " + long[1:] + "\n---\nBody.\n"})
 	if err != nil {
 		t.Errorf("writing a title of exactly %d bytes: %v", document.MaxTitle, err)
+	}
+}
+
+// apply changes one file in the copy and applies it to the index, as a sync of a push would.
+func (c *fakeCopy) apply(t *testing.T, commit, path string, content []byte) {
+	t.Helper()
+	c.mu.Lock()
+	c.tree = maps.Clone(c.tree)
+	c.tree[path] = content
+	c.blobs[blobID(content)] = content
+	c.mu.Unlock()
+	err := c.idx.Apply(t.Context(), commit, []index.Change{{Path: path, Version: blobID(content), Content: content}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A push that leaves a document unparseable must not let an agent overwrite it with the version it read
+// before. Delete with the current version is the only change allowed.
+func TestBrokenDocument(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	const path = "services/esi-proxy.md"
+	old := f.version(t, path)
+	bad := []byte("---\ntitle: ESI proxy\n---\n# ESI proxy\n\nA human's edit \xff\n")
+	f.copies[1].apply(t, "c2", path, bad)
+	now := blobID(bad)
+
+	_, err := f.base.Read(ctx, f.grant, ReadRequest{Vault: "ours/kb", Path: path})
+	wantCode(t, err, CodeBroken)
+	var kerr *Error
+	if errors.As(err, &kerr); kerr.Version != now || !strings.Contains(kerr.Message, "not UTF-8") {
+		t.Errorf("read error = %+v", kerr)
+	}
+
+	content := "---\ntitle: ESI proxy\n---\nOverwritten.\n"
+	changes := map[string]func(version string) error{
+		"edit": func(v string) error {
+			_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "ESI", NewText: "X", Version: v})
+			return err
+		},
+		"replace": func(v string) error {
+			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: path, Content: content, Version: v})
+			return err
+		},
+		"create": func(string) error {
+			_, err := f.base.Write(ctx, f.grant, WriteRequest{Vault: "ours/kb", Path: path, Content: content})
+			return err
+		},
+		"move": func(v string) error {
+			_, err := f.base.Move(ctx, f.grant, MoveRequest{Vault: "ours/kb", From: path, To: "x.md", Version: v})
+			return err
+		},
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			for _, v := range []string{old, now} {
+				wantCode(t, change(v), CodeBroken)
+			}
+		})
+	}
+	if len(f.github.requests) != 0 {
+		t.Fatalf("committed %d times", len(f.github.requests))
+	}
+
+	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: old})
+	wantCode(t, err, CodeConflict)
+	_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := f.lastCommit(t); len(c.Changes) != 1 || c.Changes[0].Path != path || c.Changes[0].Content != nil {
+		t.Errorf("delete changes = %+v", c.Changes)
+	}
+}
+
+// Before committing, the index's version is checked against git: an index that fell behind the tree must
+// not let a change overwrite what it doesn't know about.
+func TestChangeRefusesWhenTheIndexDisagreesWithGit(t *testing.T) {
+	const path = "services/esi-proxy.md"
+	changed := []byte("# ESI proxy\n\nChanged in git.\n")
+	for _, tt := range []struct {
+		name    string
+		drift   []byte // nil deletes the file
+		version string
+	}{
+		{"changed", changed, blobID(changed)},
+		{"deleted", nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := t.Context()
+			v := f.version(t, path)
+			c := f.copies[1]
+			c.mu.Lock()
+			c.tree = maps.Clone(c.tree)
+			if tt.drift == nil {
+				delete(c.tree, path)
+			} else {
+				c.tree[path] = tt.drift
+			}
+			c.mu.Unlock()
+
+			_, err := f.base.Edit(ctx, f.grant, EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v})
+			wantCode(t, err, CodeConflict)
+			var kerr *Error
+			if errors.As(err, &kerr); kerr.Version != tt.version {
+				t.Errorf("conflict version = %q, want %q", kerr.Version, tt.version)
+			}
+			_, err = f.base.Delete(ctx, f.grant, DeleteRequest{Vault: "ours/kb", Path: path, Version: v})
+			wantCode(t, err, CodeConflict)
+			if len(f.github.requests) != 0 {
+				t.Errorf("committed %d times", len(f.github.requests))
+			}
+		})
 	}
 }

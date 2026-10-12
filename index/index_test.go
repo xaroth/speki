@@ -239,9 +239,9 @@ func TestApply(t *testing.T) {
 	if res := search(t, src, "zeppelins", Options{}); len(hitPaths(res)) != 1 {
 		t.Errorf("changed document not found")
 	}
-	_, err = x.Document(t.Context(), "bad.md")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("unusable file was indexed: %v", err)
+	d, err := x.Document(t.Context(), "bad.md")
+	if err != nil || d.Status != StatusBroken || d.Version != version("z") {
+		t.Errorf("unusable file: %+v, %v", d, err)
 	}
 }
 
@@ -468,15 +468,73 @@ func TestSearchWhileBuilding(t *testing.T) {
 	}
 }
 
-func TestApplyKeepsOldDocumentWhenNewOneFails(t *testing.T) {
+// A file that becomes unusable is kept as broken at its new version, never at the old one: a write
+// checked against the old version would overwrite a change nobody saw.
+func TestBrokenDocuments(t *testing.T) {
+	ctx := t.Context()
 	x := newIndex(t, fleet)
-	err := x.Apply(t.Context(), "c2", []Change{{Path: "README.md", Version: "v2", Content: []byte("bad \xff")}})
+	src := []Source{{Name: "kb", Index: x}}
+	bad := "---\ntitle: About\n---\n# About\n\nKnowledge about our fleet. \xff\n"
+	err := x.Apply(ctx, "c2", []Change{{Path: "README.md", Version: version(bad), Content: []byte(bad)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := x.Document(t.Context(), "README.md")
-	if err != nil || d.Version != version(fleet["README.md"]) {
-		t.Errorf("README.md after a failed change: %+v, %v", d, err)
+	if x.Commit() != "c2" {
+		t.Errorf("commit = %q", x.Commit())
+	}
+	applied, err := x.Document(ctx, "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Document{
+		Path:     "README.md",
+		Title:    "README",
+		Status:   StatusBroken,
+		Tags:     []string{},
+		Aliases:  []string{},
+		Related:  []string{},
+		Extra:    map[string]any{},
+		Bytes:    len(bad),
+		Lines:    7,
+		Version:  version(bad),
+		Warnings: []string{},
+		Broken:   "unusable document: not UTF-8",
+	}
+	if diff := cmp.Diff(want, applied); diff != "" {
+		t.Errorf("after Apply (-want +got):\n%s", diff)
+	}
+	for _, q := range []string{"knowledge", "about", "readme"} {
+		if res := search(t, src, q, Options{}); slices.Contains(hitPaths(res), "README.md") {
+			t.Errorf("search %q found the broken document", q)
+		}
+	}
+	root, err := x.List(ctx, "", false, "", 100)
+	if err != nil || len(root) == 0 || root[0].Path != "README.md" || root[0].Status != StatusBroken {
+		t.Errorf("list: %+v, %v", root, err)
+	}
+
+	files := maps.Clone(fleet)
+	files["README.md"] = bad
+	built := newIndex(t, files)
+	d, err := built.Document(ctx, "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(applied, d); diff != "" {
+		t.Errorf("Build and Apply disagree (-apply +build):\n%s", diff)
+	}
+
+	good := "# About\n\nFixed.\n"
+	err = x.Apply(ctx, "c3", []Change{{Path: "README.md", Version: version(good), Content: []byte(good)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err = x.Document(ctx, "README.md")
+	if err != nil || d.Status != "active" || d.Broken != "" || d.Version != version(good) {
+		t.Errorf("after the fix: %+v, %v", d, err)
+	}
+	if res := search(t, src, "fixed", Options{}); !slices.Contains(hitPaths(res), "README.md") {
+		t.Error("the fixed document isn't found")
 	}
 }
 
@@ -633,8 +691,8 @@ func TestApplyFailureKeepsTheCommit(t *testing.T) {
 	if err != nil || x.Commit() != "c2" {
 		t.Fatalf("retry: %v, commit %s", err, x.Commit())
 	}
-	if _, err := x.Document(t.Context(), "bad.md"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("the bad file after the retry: %v", err)
+	if d, err := x.Document(t.Context(), "bad.md"); err != nil || d.Status != StatusBroken {
+		t.Errorf("the bad file after the retry: %+v, %v", d, err)
 	}
 	if d, err := x.Document(t.Context(), "README.md"); err != nil || d.Version != version(content) {
 		t.Errorf("README.md after the retry: %+v, %v", d, err)

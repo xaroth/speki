@@ -341,6 +341,37 @@ func TestQueryWhileApplying(t *testing.T) {
 	wg.Wait()
 }
 
+func TestQueryBrokenDocuments(t *testing.T) {
+	sb, sources, _ := sandboxFixture(t)
+	bad := "# Deploy\n\nNew steps \xff\n"
+	err := sources[0].Index.Apply(t.Context(), "c2", []Change{{Path: "runbooks/deploy.md", Version: version(bad), Content: []byte(bad)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ sql, want string }{
+		{
+			sql:  `SELECT vault, path, broken, body, version FROM documents WHERE status = 'broken'`,
+			want: "[[ours/kb runbooks/deploy.md unusable document: not UTF-8  " + version(bad) + "]]",
+		},
+		{
+			sql:  `SELECT count(*) FROM documents WHERE broken IS NULL`,
+			want: "[[3]]",
+		},
+		{
+			sql:  `SELECT path FROM fts WHERE body MATCH 'steps'`,
+			want: "[]",
+		},
+	} {
+		rows, err := runQuery(t, sb, sources, tt.sql)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.sql, err)
+		}
+		if got := fmt.Sprint(rows.Rows); got != tt.want {
+			t.Errorf("%s = %s, want %s", tt.sql, got, tt.want)
+		}
+	}
+}
+
 // A query that needs more memory than SQLite may take fails as too large instead of growing the process.
 func TestQueryMemoryLimit(t *testing.T) {
 	sb, sources, _ := sandboxFixture(t)

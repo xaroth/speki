@@ -186,7 +186,7 @@ func viewSQL(sources []Source) []string {
 	}
 	if len(sources) == 0 { // empty views with the right columns
 		return []string{
-			"CREATE TEMP VIEW documents AS SELECT NULL AS vault, NULL AS path, NULL AS title, NULL AS description, NULL AS status, NULL AS tags, NULL AS aliases, NULL AS related, NULL AS created, NULL AS updated, NULL AS extra, NULL AS body, NULL AS bytes, NULL AS lines, NULL AS version WHERE 0",
+			"CREATE TEMP VIEW documents AS SELECT NULL AS vault, NULL AS path, NULL AS title, NULL AS description, NULL AS status, NULL AS tags, NULL AS aliases, NULL AS related, NULL AS created, NULL AS updated, NULL AS extra, NULL AS body, NULL AS bytes, NULL AS lines, NULL AS version, NULL AS broken WHERE 0",
 			"CREATE TEMP VIEW tags AS SELECT NULL AS vault, NULL AS path, NULL AS tag WHERE 0",
 			"CREATE TEMP VIEW links AS SELECT NULL AS vault, NULL AS path, NULL AS target, NULL AS target_path, NULL AS kind, NULL AS text WHERE 0",
 			"CREATE TEMP VIEW headings AS SELECT NULL AS vault, NULL AS path, NULL AS level, NULL AS text, NULL AS line WHERE 0",
@@ -195,7 +195,7 @@ func viewSQL(sources []Source) []string {
 	}
 	return []string{
 		"CREATE TEMP VIEW documents AS " + arms(func(db, vault string) string {
-			return "SELECT " + vault + " AS vault, path, title, description, status, tags, aliases, related, created, updated, extra, body, bytes, lines, version FROM " + db + ".documents"
+			return "SELECT " + vault + " AS vault, path, title, description, status, tags, aliases, related, created, updated, extra, body, bytes, lines, version, broken FROM " + db + ".documents"
 		}),
 		"CREATE TEMP VIEW tags AS " + arms(func(db, vault string) string {
 			return "SELECT " + vault + " AS vault, d.path, t.tag FROM " + db + ".tags t JOIN " + db + ".documents d ON d.id = t.doc_id"

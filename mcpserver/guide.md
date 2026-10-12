@@ -79,7 +79,9 @@ vault don't cause conflicts.
 A failed call starts with a code. `read_only_session` means the user connected speki without write access,
 `no_write_access` that they may read that vault but not write to it, and `vault_read_only` that the vault only
 takes changes through pull requests: tell the user in each case. `secret_detected` means GitHub found a
-secret in the content: remove it and tell the user.
+secret in the content: remove it and tell the user. `broken` means the file can't be parsed (it isn't
+UTF-8, or its frontmatter is too large): speki can't read or change it, so tell the user to fix it in git.
+Only `delete`, with the version the error gives, works on it.
 
 ## Trust
 

@@ -319,6 +319,41 @@ func (m *Mirror) Paths(commit string) ([]string, error) {
 	return paths, nil
 }
 
+// BlobAt returns the blob SHA of the file at path in the tree at commit, "" when there's no file there. It
+// reads only the folders on the way, not the whole tree.
+func (m *Mirror) BlobAt(commit, path string) (string, error) {
+	tree, err := commitTree(m.repo, plumbing.NewHash(commit))
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(path, "/")
+	for _, dir := range parts[:len(parts)-1] {
+		e, ok := entryNamed(tree, dir)
+		if !ok || e.Mode != filemode.Dir {
+			return "", nil
+		}
+		tree, err = object.GetTree(m.repo.Storer, e.Hash)
+		if err != nil {
+			return "", fmt.Errorf("%s at %s: %w", path, commit, broken(err))
+		}
+	}
+	e, ok := entryNamed(tree, parts[len(parts)-1])
+	if !ok || e.Mode == filemode.Dir {
+		return "", nil
+	}
+	return e.Hash.String(), nil
+}
+
+// entryNamed finds an entry of tree by name. go-git's own lookup rejects some names git allows.
+func entryNamed(tree *object.Tree, name string) (object.TreeEntry, bool) {
+	for _, e := range tree.Entries {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return object.TreeEntry{}, false
+}
+
 // Diff returns the markdown files that changed between two commits. Both must be in the copy. A file
 // with an empty Blob was deleted, or stopped being a file speki reads.
 func (m *Mirror) Diff(from, to string) ([]File, error) {

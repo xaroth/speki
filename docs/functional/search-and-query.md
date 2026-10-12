@@ -63,7 +63,7 @@ Each result has a snippet of up to 32 words from the body around the best match,
 | `path` | text | Path within the vault |
 | `title` | text | Title, after the fallbacks in [documents.md](documents.md) |
 | `description` | text | May be null |
-| `status` | text | `draft`, `active` or `deprecated` |
+| `status` | text | `draft`, `active` or `deprecated`, or `broken` for a file speki can't parse |
 | `tags` | JSON array | Lowercased |
 | `aliases` | JSON array | |
 | `related` | JSON array | Paths as written |
@@ -72,6 +72,7 @@ Each result has a snippet of up to 32 words from the body around the best match,
 | `body` | text | Markdown without the frontmatter |
 | `bytes`, `lines` | integer | Size of the whole file |
 | `version` | text | Git blob SHA |
+| `broken` | text | Why the file can't be parsed. Null unless `status` is `broken`; a broken document has no body, tags or links |
 
 ### tags
 

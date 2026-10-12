@@ -3,6 +3,8 @@ package knowledge
 import (
 	"errors"
 	"fmt"
+
+	"github.com/eve-online-tools/speki/index"
 )
 
 // ErrRebuilding is what Vaults.Sync returns when a vault's index needs a full rebuild before it can catch
@@ -18,6 +20,7 @@ const (
 	CodeConflict        Code = "conflict"
 	CodeAlreadyExists   Code = "already_exists"
 	CodeInvalid         Code = "invalid"
+	CodeBroken          Code = "broken"
 	CodeNoWriteAccess   Code = "no_write_access"
 	CodeReadOnlySession Code = "read_only_session"
 	CodeVaultReadOnly   Code = "vault_read_only"
@@ -33,7 +36,7 @@ const (
 type Error struct {
 	Code    Code
 	Message string
-	Version string // the document's current version, for conflict and already_exists
+	Version string // the document's current version, for conflict, already_exists and broken
 }
 
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
@@ -41,6 +44,16 @@ func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
 // signedOut is the error for a user whose GitHub token GitHub no longer accepts.
 func signedOut() *Error {
 	return errorf(CodeUnavailable, "GitHub no longer accepts the user's sign-in. Ask them to reconnect speki")
+}
+
+// brokenDocument is the error for reading or changing a document whose file speki can't parse. Delete
+// is the only change it allows: nobody can have read the current content through speki.
+func brokenDocument(d index.Document) *Error {
+	return &Error{
+		Code:    CodeBroken,
+		Message: fmt.Sprintf("%s can't be parsed (%s). Ask the user to fix it in git. Speki only allows deleting it, with version %s", d.Path, d.Broken, d.Version),
+		Version: d.Version,
+	}
 }
 
 func errorf(code Code, format string, args ...any) *Error {

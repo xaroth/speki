@@ -36,7 +36,8 @@ func Parse(path string, raw []byte) (*Document, error)
 ```
 
 `Parse` errors only when the file can't be used at all: it isn't UTF-8, or its frontmatter block is over
-64 KiB. Everything else becomes a warning. Frontmatter that doesn't parse as YAML, uses anchors or
+64 KiB. The index keeps such a file as broken (see [index.md](index.md)). Everything else becomes a
+warning. Frontmatter that doesn't parse as YAML, uses anchors or
 aliases, or isn't a mapping is ignored as a whole: the document gets its title from the first heading or
 the file name, and `Warnings` says what's wrong. A core field with the wrong type is ignored on its own.
 

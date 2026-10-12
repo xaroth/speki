@@ -46,7 +46,7 @@ CREATE TABLE documents (
 	name        TEXT NOT NULL,           -- file name without .md, folded (document.LinkName), for wikilinks
 	title       TEXT NOT NULL,
 	description TEXT,
-	status      TEXT NOT NULL,           -- draft | active | deprecated
+	status      TEXT NOT NULL,           -- draft | active | deprecated | broken
 	tags        TEXT NOT NULL,           -- JSON array
 	aliases     TEXT NOT NULL,           -- JSON array
 	related     TEXT NOT NULL,           -- JSON array
@@ -58,10 +58,13 @@ CREATE TABLE documents (
 	bytes       INTEGER NOT NULL,
 	lines       INTEGER NOT NULL,
 	version     TEXT NOT NULL,           -- git blob SHA
-	warnings    TEXT NOT NULL            -- JSON array of frontmatter problems
+	warnings    TEXT NOT NULL,           -- JSON array of frontmatter problems
+	broken      TEXT                     -- why the file can't be parsed, when status is broken
 );
 CREATE INDEX documents_name ON documents (name);
 CREATE INDEX documents_updated ON documents (updated);
+CREATE INDEX documents_deprecated ON documents (id) WHERE status = 'deprecated'; -- for ranking
+CREATE INDEX documents_broken ON documents (id) WHERE status = 'broken';         -- left out of search
 
 CREATE TABLE tags (
 	doc_id INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
@@ -155,10 +158,15 @@ func (x *Index) Build(ctx context.Context, commit string, files iter.Seq2[Change
 `Apply` runs in one transaction. For each change it parses the content with `document.Parse`, deletes the
 old row (cascading to tags, links and headings, and removing it from the FTS tables with the
 external-content delete command) and inserts the new one. A file that's unusable in itself (not UTF-8,
-frontmatter over 64 KiB) is skipped and logged with its path, and keeps its last good version in the
-index if it had one, so one bad file can't stop a vault from updating. Any other failure aborts the whole
-transaction and the next sync tries again. `meta.commit` is updated in the same transaction. Readers see
+frontmatter over 64 KiB) is logged with its path and indexed as broken, so one bad file can't stop a vault
+from updating. Any other failure aborts the whole transaction and the next sync tries again. `meta.commit` is updated in the same transaction. Readers see
 the old state or the new one, never a mix.
+
+`Build` indexes unusable files the same way. A broken row has the file's new version, size and line
+count, its file name as title, `status = 'broken'`, the parse error in `broken`, and no other content: no
+body, headings, tags or links. The index never keeps an older version of a file that changed, because
+`knowledge` checks an agent's version against the index, and a stale row would let a write overwrite a
+change nobody could read.
 
 `Build` writes the next generation with `journal_mode=OFF` and `synchronous=OFF`: it inserts all rows,
 runs the three FTS `rebuild` commands and `optimize`, switches to WAL, and then becomes the current
@@ -169,7 +177,7 @@ at a time per vault.
 
 A document whose frontmatter doesn't parse is still indexed: its body is searchable, its title comes from
 the first heading or the file name, and the problem is stored in `warnings`. Only a file that isn't UTF-8
-or whose frontmatter block is over 64 KiB is skipped.
+or whose frontmatter block is over 64 KiB is broken.
 
 ## Search
 
@@ -200,13 +208,15 @@ vault's vocabulary.
    than 32 distinct words or phrases is `invalid`. Tag, status and path-prefix filters go into the SQL, not
    the expression.
 4. Rank inside the full-text table, deprecated documents halved there through a partial index on them,
-   so they can't push an active document out of the top, and join only the best:
+   so they can't push an active document out of the top, and join only the best. Broken documents are
+   left out through a partial index on them too, in the ranking and in the `names` query:
 
    ```sql
    WITH ranked AS (
      SELECT rowid AS id, bm25(fts, 10, 10, 6, 4, 3, 1) *
             CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
-     FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?)
+     FROM fts WHERE fts MATCH ? AND rowid NOT IN (SELECT id FROM documents WHERE status = 'broken')
+     ORDER BY rank LIMIT ?)
    SELECT d.path, d.title, ..., ranked.rank AS score FROM ranked JOIN documents d ON d.id = ranked.id
    ORDER BY score;
    ```
@@ -223,7 +233,8 @@ vault's vocabulary.
 `List(prefix, after, limit)` returns folders and documents under a folder in one sorted stream, starting
 after a given path (keyset pagination), so a cursor stays valid while documents change. `Document(path)`
 returns the metadata and version. `knowledge` reads the raw bytes from the mirror by version, so the index
-doesn't store each file twice.
+doesn't store each file twice. Broken documents are listed, with their status, and `Document` returns them
+with `Broken` set; `knowledge` answers `read` on one with `broken` instead of content.
 
 `LinkedFrom(path)` returns the documents with a link that resolves to that path, by the same rules as
 `resolved_links`. `knowledge` calls it before a `move` or `delete` commits, while the target still
@@ -287,7 +298,7 @@ query that hits it fails with `too_large`. Both limits are for the whole process
 below them on their own (about 40 MB at 50,000 documents), but a build that allocates while a query has
 just used up the shared budget fails with `SQLITE_NOMEM`. The build or apply then fails as a whole, the
 index stays at its commit, and the vault is synced again at the next poll: only a file that's unusable
-in itself is skipped. The 100 KB value and 50 column limits bound how much one row can hold before the
+in itself is indexed as broken instead. The 100 KB value and 50 column limits bound how much one row can hold before the
 1 MiB result check sees it.
 
 Running a `MATCH` through the `fts` view makes FTS5 read, on the attached database, `fts_idx`,

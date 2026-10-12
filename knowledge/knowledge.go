@@ -23,6 +23,8 @@ type Copy interface {
 	Index() *index.Index
 	Blob(sha string) ([]byte, error)
 	Paths(commit string) ([]string, error) // every file in the git tree at commit
+	// Version returns the blob SHA of the file at path in the git tree at commit, "" when there's none.
+	Version(commit, path string) (string, error)
 }
 
 // Vaults hands out the local copies of the vaults speki serves.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"path"
 	"runtime"
 	"strings"
 	"time"
@@ -30,8 +31,8 @@ type Change struct {
 }
 
 // Apply brings the current generation from its commit to commit. It runs in one transaction, so readers
-// see the index before or after, never halfway. A file that's unusable is skipped and logged, so one bad
-// file can't stop a vault from updating. Any other failure (out of memory, a full disk, a cancelled
+// see the index before or after, never halfway. A file that's unusable is indexed as broken and logged, so
+// one bad file can't stop a vault from updating. Any other failure (out of memory, a full disk, a cancelled
 // context) aborts: the commit doesn't move, and the next sync tries again.
 func (x *Index) Apply(ctx context.Context, commit string, changes []Change) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "index.Apply", trace.WithAttributes(attribute.Int("speki.changes", len(changes))))
@@ -49,11 +50,7 @@ func (x *Index) Apply(ctx context.Context, commit string, changes []Change) erro
 	defer func() { _ = tx.Rollback() }()
 
 	for _, c := range changes {
-		err = applyOne(ctx, tx, c)
-		if errors.Is(err, errBadFile) {
-			x.logger.WarnContext(ctx, "skipping file", "path", c.Path, "err", err)
-			continue
-		}
+		err = applyOne(ctx, tx, c, x.logger)
 		if err != nil {
 			return fmt.Errorf("apply %s: %w", c.Path, err)
 		}
@@ -84,18 +81,14 @@ func fillError(ctx context.Context, insertErr, readErr error) error {
 	return errors.Join(insertErr, fmt.Errorf("build: %w", readErr))
 }
 
-// errBadFile marks a file that can't be indexed because of its content, which retrying won't change.
-var errBadFile = errors.New("unusable file")
-
-// applyOne replaces one document inside a savepoint, so a failure leaves nothing half-written: the old
-// document stays when the new one can't be indexed.
-func applyOne(ctx context.Context, tx *sql.Tx, c Change) error {
+// applyOne replaces one document inside a savepoint, so a failure leaves nothing half-written.
+func applyOne(ctx context.Context, tx *sql.Tx, c Change, logger *slog.Logger) error {
 	var r row
 	if c.Version != "" {
-		var err error
-		r, err = parse(c)
-		if err != nil {
-			return fmt.Errorf("%w: %w", errBadFile, err)
+		var perr error
+		r, perr = rowOf(c)
+		if perr != nil {
+			logger.WarnContext(ctx, "indexing an unusable file as broken", "path", c.Path, "err", perr)
 		}
 	}
 	_, err := tx.ExecContext(ctx, "SAVEPOINT change")
@@ -205,10 +198,9 @@ func fill(
 	for range runtime.GOMAXPROCS(0) {
 		parsers.Go(func() error {
 			for c := range in {
-				r, err := parse(c)
-				if err != nil { // the file itself is unusable
-					logger.WarnContext(ctx, "skipping file", "path", c.Path, "err", err)
-					continue
+				r, err := rowOf(c)
+				if err != nil {
+					logger.WarnContext(ctx, "indexing an unusable file as broken", "path", c.Path, "err", err)
 				}
 				select {
 				case out <- r:
@@ -274,10 +266,43 @@ type row struct {
 	tags, aliases, related, extra, warnings string // JSON
 	created, updated                        sql.NullString
 	headingText, body, version              string
+	broken                                  string // why the file can't be parsed
 	bytes, lines                            int
 	tagList                                 []string
 	links                                   []document.Link
 	headings                                []document.Heading
+}
+
+// rowOf parses c into a row. A file that can't be parsed gets a broken row, with the parse error beside
+// it for the log: the index must never keep an older version of a file that changed, or a write based on
+// it would overwrite a change nobody saw.
+func rowOf(c Change) (row, error) {
+	r, err := parse(c)
+	if err == nil {
+		return r, nil
+	}
+	return brokenRow(c, err), err
+}
+
+// brokenRow is a file that can't be parsed: its new version and size, its file name for a title, and no
+// content, so search doesn't find what it said before.
+func brokenRow(c Change, err error) row {
+	return row{
+		path:     c.Path,
+		key:      norm.NFC.String(c.Path),
+		name:     document.LinkName(c.Path),
+		title:    strings.TrimSuffix(path.Base(c.Path), ".md"),
+		status:   string(StatusBroken),
+		tags:     "[]",
+		aliases:  "[]",
+		related:  "[]",
+		extra:    "{}",
+		warnings: "[]",
+		version:  c.Version,
+		bytes:    len(c.Content),
+		lines:    bytes.Count(c.Content, []byte("\n")) + 1,
+		broken:   err.Error(),
+	}
 }
 
 func parse(c Change) (row, error) {
@@ -348,10 +373,11 @@ func timeValue(t time.Time) sql.NullString {
 func insert(ctx context.Context, tx *sql.Tx, r row) error {
 	res, err := tx.ExecContext(ctx, `INSERT INTO documents
 		(path, key, name, title, description, status, tags, aliases, related, created, updated, extra,
-		 headings, body, bytes, lines, version, warnings)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 headings, body, bytes, lines, version, warnings, broken)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.path, r.key, r.name, r.title, nullIfEmpty(r.description), r.status, r.tags, r.aliases, r.related,
 		r.created, r.updated, r.extra, r.headingText, r.body, r.bytes, r.lines, r.version, r.warnings,
+		nullIfEmpty(r.broken),
 	)
 	if err != nil {
 		return fmt.Errorf("insert document: %w", err)

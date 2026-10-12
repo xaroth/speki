@@ -32,6 +32,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | `conflict` | The document changed since the given version. Includes the current version (none when creating a document the vault keeps changing under) |
 | `already_exists` | `write` without a version, or `move` onto a path that's taken. Includes the current version when the path is a document; a file speki doesn't index, a folder, or the same name in another Unicode normalisation has none |
 | `invalid` | Bad path, bad frontmatter, `old_text` not found or not unique, bad SQL. Says what and where |
+| `broken` | The file can't be parsed (not UTF-8, or frontmatter over 64 KiB), so speki can't read or change it. Includes the reason and the current version. Ask the user to fix it in git; `delete` with that version is the only change allowed |
 | `no_write_access` | The user can read this vault but not write to it: they can't push to it on GitHub, or the vault's `writers` doesn't list them |
 | `read_only_session` | The user signed in read-only. Ask them to reconnect speki with write access |
 | `vault_read_only` | GitHub refused the commit because the branch requires pull requests or checks |
@@ -86,6 +87,9 @@ With `vault`: the folders and documents under `path`.
   ],
   "guidelines": "Put one document per service under services/ ..." }
 ```
+
+A document whose file can't be parsed is listed with `"status": "broken"` and its file name as title.
+`search` doesn't find it.
 
 At most 200 entries per call, sorted by path. When there are more, `next_cursor` is set: pass it as
 `cursor` to get the next page. It's left out on the last page. The cursor stays valid when documents are

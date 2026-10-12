@@ -208,7 +208,15 @@ only then falls back to the type. The responses recorded from github.com are in 
 commit is logged with GitHub's message, since the agent only gets the code.
 
 When the agent's version doesn't match the index, `knowledge` syncs once before answering `conflict`: the
-agent may have read a version GitHub has and the index doesn't yet. One write runs at a time per vault on
+agent may have read a version GitHub has and the index doesn't yet. Before committing a change to an
+existing document (replace, `edit`, `move`, `delete`), `knowledge` also looks up the path's blob in the
+mirror's tree at the expected head (`Version`, one lookup per folder on the way) and treats a mismatch with
+the index's version as a stale version: sync once, then `conflict`. The index and git should never
+disagree there; this check keeps a bug in the index from turning into an overwritten change.
+
+A broken document (see [index.md](index.md)) can't be read through speki, so no agent can have seen its
+content: `read`, `write` (creating or replacing), `edit` and `move` on it answer `broken`. `delete` with
+its current version is allowed, so an agent can clear out a file that was never meant to be a document. One write runs at a time per vault on
 an instance; between instances, the expected head keeps commits from overwriting each other.
 
 When GitHub's answer to a commit is lost (a dropped connection, a timeout, a 5xx), the commit may have

@@ -160,11 +160,11 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 	filter, args := filters(opt)
 	// Rank inside the full-text table and join only the best few documents: reading a document row reads
 	// its body, which costs far more than ranking. Deprecated documents are halved inside the ranking,
-	// through a partial index, so they can't crowd active ones out of the top. Filters can drop any
-	// number of candidates, so a filtered search joins every match.
+	// through a partial index, so they can't crowd active ones out of the top. Broken documents are left
+	// out the same way. Filters can drop any number of candidates, so a filtered search joins every match.
 	ranked := `SELECT rowid AS id, bm25(fts, ` + bm25Weights + `) *
 			CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
-		FROM fts WHERE fts MATCH ?`
+		FROM fts WHERE fts MATCH ? AND rowid NOT IN (SELECT id FROM documents WHERE status = 'broken')`
 	rankArgs := []any{expr}
 	if filter == "" {
 		ranked += ` ORDER BY rank LIMIT ?`
@@ -199,7 +199,7 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 	}
 	q = `SELECT d.id, d.path, d.title, d.description, d.tags, d.status, d.updated, d.version, 0
 		FROM names JOIN documents d ON d.id = names.rowid
-		WHERE names MATCH ?` + filter + `
+		WHERE names MATCH ? AND d.status != 'broken'` + filter + `
 		LIMIT ?`
 	byName, err := queryHits(ctx, g.reader, q, slices.Concat(nameArgs, args, []any{opt.Limit}))
 	if err != nil {

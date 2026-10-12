@@ -58,6 +58,10 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	if errors.Is(err, index.ErrNotFound) {
 		return Page{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", v.Name, path)
 	}
+	var berr *Error
+	if errors.As(err, &berr) {
+		return Page{}, berr
+	}
 	if err != nil {
 		return Page{}, indexError(v.Name, err)
 	}
@@ -150,8 +154,9 @@ func clip(s string, n int) string {
 	return cutUTF8(s, max(n-len("…"), 0)) + "…"
 }
 
-// load returns a document's metadata and content. A sync between the two lookups can leave the index
-// pointing at a version the git copy no longer has, so it tries a second time.
+// load returns a document's metadata and content, or a broken error for a file speki can't parse. A sync
+// between the two lookups can leave the index pointing at a version the git copy no longer has, so it
+// tries a second time.
 func (b *Base) load(ctx context.Context, c Copy, path string) (index.Document, []byte, error) {
 	var err error
 	for range 2 {
@@ -159,6 +164,9 @@ func (b *Base) load(ctx context.Context, c Copy, path string) (index.Document, [
 		doc, err = c.Index().Document(ctx, path)
 		if err != nil {
 			return index.Document{}, nil, err
+		}
+		if doc.Status == index.StatusBroken {
+			return index.Document{}, nil, brokenDocument(doc)
 		}
 		var raw []byte
 		raw, err = c.Blob(doc.Version)
