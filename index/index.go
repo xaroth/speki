@@ -37,7 +37,7 @@ type Index struct {
 	vocabPending bool       // a reload is queued but hasn't started
 	vocabLoad    sync.Mutex // one reload runs at a time
 
-	// ctx is cancelled by Close, stopping background work, which background tracks.
+	// Close cancels ctx to stop background work, and waits for background.
 	ctx        context.Context
 	cancel     context.CancelFunc
 	background sync.WaitGroup
@@ -107,7 +107,7 @@ func (x *Index) Commit() string {
 	return g.commit.Load().(string)
 }
 
-// Close waits for background work, then closes the index, keeping its file for the next Open. It must
+// Close stops background work, then closes the index, keeping its file for the next Open. It must
 // not be used afterwards. Callers after the first wait until it's done.
 func (x *Index) Close() {
 	x.closeOnce.Do(func() {
