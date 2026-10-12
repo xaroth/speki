@@ -243,7 +243,7 @@ func (s *Service) Run(ctx context.Context) error {
 	var background sync.WaitGroup
 	background.Go(func() { s.discover(work) })
 	background.Go(func() { s.library.Run(work, s.cfg.Sync.PollInterval) })
-	background.Go(func() { s.followNotices(work) })
+	background.Go(func() { s.library.FollowNotices(work, s.store) })
 
 	g.Go(func() error {
 		<-gctx.Done()
@@ -338,68 +338,6 @@ func (s *Service) allowedAccounts(ctx context.Context, giveUp func()) ([]int64, 
 		case <-time.After(wait):
 		}
 		wait = min(wait*2, 5*time.Minute)
-	}
-}
-
-// followNotices syncs a vault when another instance says its branch moved, so a write on one instance
-// shows up on the others within seconds instead of at the next poll. Notices for one vault are
-// coalesced: at most one sync runs per vault, and notices that arrive meanwhile cause one more. The
-// subscription is retried with backoff while the store is unreachable; polling covers the gap.
-func (s *Service) followNotices(ctx context.Context) {
-	var syncs sync.WaitGroup
-	defer syncs.Wait()
-	var mu sync.Mutex
-	state := map[int64]string{} // "running", or "again" when a notice came during the sync
-
-	onNotice := func(repoID int64, commit string) {
-		v, ok := s.library.Vault(repoID)
-		if !ok || v.Index().Commit() == commit {
-			return
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if state[repoID] != "" {
-			state[repoID] = "again"
-			return
-		}
-		state[repoID] = "running"
-		syncs.Go(func() {
-			for {
-				err := s.library.SyncAfterNotice(ctx, v)
-				if err != nil && ctx.Err() == nil {
-					s.logger.WarnContext(ctx, "sync after a change notice failed", "vault", v.Info().Name, "err", err)
-				}
-				mu.Lock()
-				if state[repoID] != "again" || ctx.Err() != nil {
-					delete(state, repoID)
-					mu.Unlock()
-					return
-				}
-				state[repoID] = "running"
-				mu.Unlock()
-			}
-		})
-	}
-
-	wait, failing := time.Second, false
-	for ctx.Err() == nil {
-		start := time.Now()
-		err := s.store.Subscribe(ctx, onNotice)
-		if err == nil {
-			return
-		}
-		if time.Since(start) > time.Minute { // it worked for a while: a new outage
-			wait, failing = time.Second, false
-		}
-		if !failing { // once per outage
-			s.logger.WarnContext(ctx, "change notices unavailable; retrying", "err", err)
-			failing = true
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(wait):
-		}
-		wait = min(wait*2, time.Minute)
 	}
 }
 

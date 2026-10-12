@@ -181,19 +181,6 @@ type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
-// SyncAfterNotice syncs a vault another instance changed, as a poll would: not while the vault is
-// backing off after failures, and a failure is recorded the same way, for the status page and backoff.
-func (l *Library) SyncAfterNotice(ctx context.Context, v *Vault) error {
-	if v.Status().State != StateServing || !v.due() {
-		return nil
-	}
-	err := l.Sync(ctx, v)
-	if err != nil && !errors.Is(err, errRemoved) {
-		v.recordFailure(err)
-	}
-	return err
-}
-
 // compact clones a vault's copy afresh when fetches have piled up too many pack files. A sync does this
 // too, but on the instance that writes to a vault the poller never needs to sync: each write's own sync
 // already brought the index up to date.
