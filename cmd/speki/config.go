@@ -19,6 +19,7 @@ import (
 const (
 	defaultConfigPath = "config.yaml"
 	envPrefix         = "SPEKI_"
+	configEnv         = "SPEKI_CONFIG" // the configuration file, when --config isn't given
 )
 
 // loadConfig reads the YAML file at path, then applies SPEKI_* environment variables on top, then reads
@@ -230,6 +231,18 @@ func walkEnv(v reflect.Value, prefix string, env map[string]string, set map[stri
 		set[name] = true
 	}
 	return nil
+}
+
+// lookupEnv returns the value of the last key=value entry in environ for key, or "".
+func lookupEnv(environ []string, key string) string {
+	var value string
+	for _, kv := range environ {
+		k, v, ok := strings.Cut(kv, "=")
+		if ok && k == key {
+			value = v
+		}
+	}
+	return value
 }
 
 // setFromString parses s into v according to v's type.

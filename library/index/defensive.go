@@ -58,8 +58,6 @@ const (
 	DefaultQueryMemory = 384
 )
 
-var hardHeapLimit, queryMemoryBudget int64
-
 func init() { SetMemoryLimits(DefaultMemoryLimit, DefaultQueryMemory) }
 
 // SetMemoryLimits sets SQLite's memory limits for the whole process, in MiB. At limit an allocation fails
@@ -67,10 +65,9 @@ func init() { SetMemoryLimits(DefaultMemoryLimit, DefaultQueryMemory) }
 // recursive queries can't spill to disk. Above half of it, SQLite frees cache. Sandbox queries are
 // interrupted past query, which leaves the rest for search and indexing. Set them before using indexes.
 func SetMemoryLimits(limit, query int64) {
-	hardHeapLimit, queryMemoryBudget = limit<<20, query<<20
-	setHardHeapLimit(hardHeapLimit) // first: SQLite caps the soft limit at the hard limit in force
-	C.sqlite3_soft_heap_limit64(C.longlong(hardHeapLimit / 2))
-	setQueryMemoryBudget(queryMemoryBudget)
+	setHardHeapLimit(limit << 20) // first: SQLite caps the soft limit at the hard limit in force
+	C.sqlite3_soft_heap_limit64(C.longlong(limit << 19))
+	setQueryMemoryBudget(query << 20)
 }
 
 var harden = sync.OnceValue(func() error {
