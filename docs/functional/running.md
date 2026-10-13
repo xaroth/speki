@@ -34,7 +34,7 @@ where the app is installed.
 
 ## Configuration
 
-Speki reads a YAML file (`--config`, default `config.yaml` in the working directory) and then environment
+Speki reads a YAML file (`--config`, else `SPEKI_CONFIG`, else `config.yaml` in the working directory) and then environment
 variables, which win.
 
 ```yaml
@@ -176,8 +176,8 @@ Without [Task](https://taskfile.dev):
 CGO_ENABLED=1 go build -tags 'sqlite_fts5,sqlite_omit_load_extension' -o bin/speki ./cmd/speki
 ```
 
-Start it with `bin/speki --config /path/to/config.yaml`. Without `--config` it reads `config.yaml` in the
-working directory if there is one, and otherwise runs on environment variables alone. `speki --version`
+Start it with `bin/speki --config /path/to/config.yaml`, or set `SPEKI_CONFIG=/path/to/config.yaml`. With
+neither it reads `config.yaml` in the working directory if there is one, and otherwise runs on environment variables alone. `speki --version`
 prints the version.
 
 Each release publishes an image to `ghcr.io/xaroth/speki`, tagged with its version (`1.2.3`) and, for

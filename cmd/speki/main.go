@@ -37,7 +37,7 @@ func main() {
 func run(ctx context.Context, args, environ []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("speki", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	configPath := flags.String("config", "", "path to the YAML configuration file (default "+defaultConfigPath+")")
+	configPath := flags.String("config", "", "path to the YAML configuration file (default $"+configEnv+", then "+defaultConfigPath+")")
 	showVersion := flags.Bool("version", false, "print the version and exit")
 	err := flags.Parse(args)
 	if err != nil {
@@ -51,7 +51,11 @@ func run(ctx context.Context, args, environ []string, stdout, stderr io.Writer) 
 		return err
 	}
 
-	cfg, err := loadConfig(*configPath, environ)
+	path := *configPath
+	if path == "" {
+		path = lookupEnv(environ, configEnv)
+	}
+	cfg, err := loadConfig(path, environ)
 	if err != nil {
 		return err
 	}

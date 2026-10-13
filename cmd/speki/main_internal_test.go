@@ -184,6 +184,17 @@ func TestRun(t *testing.T) {
 		{name: "unknown flag", args: []string{"--verbose"}, wantErr: "flag provided but not defined"},
 		{name: "unexpected argument", args: []string{"--config", emptyConfig, "serve"}, environ: environ, wantErr: "unexpected arguments"},
 		{name: "missing explicit file", args: []string{"--config=" + filepath.Join(t.TempDir(), "absent.yaml")}, wantErr: "read config"},
+		{name: "file from environment", environ: append([]string{"SPEKI_CONFIG=" + emptyConfig}, environ...)},
+		{
+			name:    "missing file from environment",
+			environ: []string{"SPEKI_CONFIG=" + filepath.Join(t.TempDir(), "absent.yaml")},
+			wantErr: "read config",
+		},
+		{
+			name:    "flag wins over environment",
+			args:    []string{"--config", emptyConfig},
+			environ: append([]string{"SPEKI_CONFIG=" + filepath.Join(t.TempDir(), "absent.yaml")}, environ...),
+		},
 		{
 			name:    "invalid configuration",
 			args:    []string{"--config", writeFile(t, "listen: \":1\"\nmetrics_listen: \":1\"\n")},
