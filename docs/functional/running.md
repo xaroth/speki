@@ -180,8 +180,8 @@ Start it with `bin/speki --config /path/to/config.yaml`. Without `--config` it r
 working directory if there is one, and otherwise runs on environment variables alone. `speki --version`
 prints the version.
 
-Each release publishes an image to `ghcr.io/xaroth/speki`, tagged with its version (`1.2.3`, `1.2`) and,
-for non-prereleases, `latest`. To build it yourself, the Dockerfile builds a small image that runs as a
+Each release publishes an image to `ghcr.io/xaroth/speki`, tagged with its version (`1.2.3`) and, for
+non-prereleases, `1.2` and `latest`. To build it yourself, the Dockerfile builds a small image that runs as a
 non-root user:
 
 ```sh
