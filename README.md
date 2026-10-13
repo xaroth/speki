@@ -25,7 +25,13 @@ Without [Task](https://taskfile.dev):
 CGO_ENABLED=1 go build -tags 'sqlite_fts5,sqlite_omit_load_extension' -o bin/speki ./cmd/speki
 ```
 
-Or build the container image:
+Or pull the container image, published for each release:
+
+```sh
+docker pull ghcr.io/xaroth/speki:latest
+```
+
+Or build it:
 
 ```sh
 docker build -t speki .
