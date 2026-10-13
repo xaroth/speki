@@ -21,11 +21,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/library"
-	"github.com/eve-online-tools/speki/library/gitsync"
-	"github.com/eve-online-tools/speki/library/index"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/library"
+	"github.com/xaroth/speki/library/gitsync"
+	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/vault"
 )
 
 var kb = vault.Vault{RepoID: 100, Name: "ours/kb", InstallationID: 1, DefaultBranch: "master"}

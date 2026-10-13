@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eve-online-tools/speki/gh"
+	"github.com/xaroth/speki/gh"
 )
 
 // Vault is a repository that holds knowledge.

@@ -15,8 +15,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/vault"
 )
 
 func TestParseConfig(t *testing.T) {

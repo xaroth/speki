@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/document"
-	"github.com/eve-online-tools/speki/knowledge"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/document"
+	"github.com/xaroth/speki/knowledge"
 )
 
 // VaultSummary describes a vault the user can read.

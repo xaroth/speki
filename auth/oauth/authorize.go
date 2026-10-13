@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eve-online-tools/speki/auth/seal"
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/xaroth/speki/auth/seal"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/telemetry"
 )
 
 //go:embed pages/*.html pages/fonts/*.woff2

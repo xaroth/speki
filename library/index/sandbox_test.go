@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/library/index"
+	"github.com/xaroth/speki/library/index"
 )
 
 func newSandbox(tb testing.TB) *index.Sandbox {

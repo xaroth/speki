@@ -13,7 +13,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/eve-online-tools/speki/service"
+	"github.com/xaroth/speki/service"
 )
 
 const (

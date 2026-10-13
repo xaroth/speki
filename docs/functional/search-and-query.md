@@ -117,7 +117,7 @@ What links to a document:
 
 ```sql
 SELECT vault, path, text FROM links
-WHERE vault = 'eve-online-tools/kb' AND target_path = 'services/esi-proxy.md';
+WHERE vault = 'acme/kb' AND target_path = 'services/esi-proxy.md';
 ```
 
 Links that point at nothing:

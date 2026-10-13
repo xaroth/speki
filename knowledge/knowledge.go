@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/library/index"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/vault"
 )
 
 // Copy is one vault's local copy.

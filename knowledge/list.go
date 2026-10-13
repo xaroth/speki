@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/library/index"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/library/index"
 )
 
 // listLimit is the most entries one List call returns.

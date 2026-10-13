@@ -12,8 +12,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/eve-online-tools/speki/service"
-	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/xaroth/speki/service"
+	"github.com/xaroth/speki/telemetry"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".

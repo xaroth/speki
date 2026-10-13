@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/library/index"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/library/index"
 )
 
 // QueryRequest is one read-only SQL query.

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/gh"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/gh"
 )
 
 // clientTrailer is the commit trailer that names the MCP client a change came from.

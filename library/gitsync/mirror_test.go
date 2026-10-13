@@ -21,7 +21,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/eve-online-tools/speki/library/gitsync"
+	"github.com/xaroth/speki/library/gitsync"
 )
 
 const lfsPointer = "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 12\n"

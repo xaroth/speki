@@ -19,10 +19,10 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/library"
-	"github.com/eve-online-tools/speki/service"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/library"
+	"github.com/xaroth/speki/service"
+	"github.com/xaroth/speki/vault"
 )
 
 var kbFiles = map[string]string{

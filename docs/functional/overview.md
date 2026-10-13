@@ -13,7 +13,7 @@ search index is rebuilt from git whenever speki starts. Delete a speki instance 
 Vault
 : A GitHub repository that holds knowledge. A repository becomes a vault when the speki GitHub App is
   installed on it and it contains a `speki.yaml` file. Vaults are named by their repository:
-  `eve-online-tools/kb`. See [vaults.md](vaults.md).
+  `acme/kb`. See [vaults.md](vaults.md).
 
 Document
 : One markdown file in a vault. It starts with frontmatter: a block of YAML between `---` lines holding

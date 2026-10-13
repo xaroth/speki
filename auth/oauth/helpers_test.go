@@ -25,10 +25,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/auth/oauth"
-	"github.com/eve-online-tools/speki/auth/seal"
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/store"
+	"github.com/xaroth/speki/auth/oauth"
+	"github.com/xaroth/speki/auth/seal"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/store"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files in testdata")

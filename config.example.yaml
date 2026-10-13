@@ -20,7 +20,7 @@ github:
 
 access:
   # Users must be an active member of at least one of these organisations. Empty: no check.
-  # required_orgs: [eve-online-tools]
+  # required_orgs: [acme]
 
 auth:
   # The keys speki seals its tokens with. See the docs for the format and how to rotate them.

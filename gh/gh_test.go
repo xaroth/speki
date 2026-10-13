@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/gh"
+	"github.com/xaroth/speki/gh"
 )
 
 var kb = gh.Repository{ID: 100, FullName: "ours/kb", DefaultBranch: "main", PushedAt: time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)}

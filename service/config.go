@@ -11,10 +11,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/eve-online-tools/speki/auth/seal"
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/library/index"
-	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/xaroth/speki/auth/seal"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/telemetry"
 )
 
 // Config is everything speki needs to run. It knows nothing about files or environment variables;

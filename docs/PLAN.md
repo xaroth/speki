@@ -29,7 +29,7 @@ people and a second instance can finish.
 
 Build:
 
-- `go.mod` (`github.com/eve-online-tools/speki`, Go 1.27).
+- `go.mod` (`github.com/xaroth/speki`, Go 1.27).
 - `cmd/speki`: `main.go` with signal handling and `run`, `config.go` with the file, environment and
   `_file` secret loading. Tests for both.
 - `service`: `Config` with defaults, validation and the `Secret` type; `New` and `Run` with `/healthz`

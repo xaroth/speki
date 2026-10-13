@@ -18,10 +18,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/mcpserver"
-	"github.com/eve-online-tools/speki/telemetry"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/mcpserver"
+	"github.com/xaroth/speki/telemetry"
+	"github.com/xaroth/speki/vault"
 )
 
 // fakeAuth signs in whoever the bearer token names.

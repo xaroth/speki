@@ -15,8 +15,8 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/eve-online-tools/speki/document"
-	"github.com/eve-online-tools/speki/library/index"
+	"github.com/xaroth/speki/document"
+	"github.com/xaroth/speki/library/index"
 )
 
 var (

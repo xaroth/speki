@@ -20,9 +20,9 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/library/gitsync"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/library/gitsync"
+	"github.com/xaroth/speki/vault"
 )
 
 // githubAPI is what the library needs from GitHub.

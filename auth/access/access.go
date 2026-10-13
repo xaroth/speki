@@ -19,8 +19,8 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/vault"
 )
 
 // ErrUnauthorized means GitHub rejected the user's token: it expired or was revoked.

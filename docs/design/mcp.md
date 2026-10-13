@@ -130,7 +130,7 @@ shows the state instead of their guidelines. `read` renders a header
 line and the content in a fence:
 
 ```text
-eve-online-tools/kb services/esi-proxy.md
+acme/kb services/esi-proxy.md
 version 3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1, lines 1-212 of 212
 <document boundary="9f3c1a7e5b2d8c40">
 ---

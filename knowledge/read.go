@@ -9,9 +9,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/document"
-	"github.com/eve-online-tools/speki/library/index"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/document"
+	"github.com/xaroth/speki/library/index"
 )
 
 // What one read returns at most.
