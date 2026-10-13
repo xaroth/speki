@@ -142,6 +142,9 @@ The SQLite driver needs cgo, so builds need a C compiler.
   pushes to `main` only.
 - `govulncheck` (`vuln.yml`) runs on pull requests that change `go.mod` or `go.sum`, and monthly.
 - Fuzzing (`fuzz.yml`) runs `FuzzParseTouch` on manual dispatch only, for 5 minutes by default.
+- Publishing a GitHub release (`release.yml`) builds the image and pushes it to `ghcr.io/xaroth/speki`,
+  tagged with the release version (`v1.2.3` gives `1.2.3`). Non-prerelease versions also get `1.2` and
+  move `latest`.
 - The image `EXPOSE`s only the public port (8080). The metrics port is reachable on the container network
   but not published by default.
 - The image is built in two stages: `golang:1.27-bookworm` to build, `gcr.io/distroless/base-debian12` to
