@@ -448,7 +448,7 @@ func TestQueryMemoryLimit(t *testing.T) {
 func TestQueryMemoryBudget(t *testing.T) {
 	sb, sources := memorySources(t)
 	setQueryMemoryBudget(32 << 20)
-	t.Cleanup(func() { setQueryMemoryBudget(queryMemoryBudget) })
+	t.Cleanup(func() { setQueryMemoryBudget(DefaultQueryMemory << 20) })
 	var wg sync.WaitGroup
 	var queryErr error
 	done := make(chan struct{})
@@ -477,7 +477,7 @@ func TestQueryMemoryBudget(t *testing.T) {
 func TestQueryShortOfMemory(t *testing.T) {
 	sb, sources := memorySources(t)
 	setQueryMemoryBudget(1)
-	t.Cleanup(func() { setQueryMemoryBudget(queryMemoryBudget) })
+	t.Cleanup(func() { setQueryMemoryBudget(DefaultQueryMemory << 20) })
 	_, err := sb.Query(t.Context(), sources, "SELECT 1")
 	if !errors.Is(err, ErrQueryBusy) {
 		t.Errorf("got %v, want %v", err, ErrQueryBusy)
