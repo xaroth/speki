@@ -19,9 +19,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/mattn/go-sqlite3"
 
-	"github.com/eve-online-tools/speki/library/gitsync"
-	"github.com/eve-online-tools/speki/library/index"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/library/gitsync"
+	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/vault"
 )
 
 var testVault = vault.Vault{RepoID: 100, Name: "ours/kb", InstallationID: 1, DefaultBranch: "master"}

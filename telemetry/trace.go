@@ -42,7 +42,7 @@ func StartTracing(ctx context.Context, enabled bool, version string) (func(conte
 }
 
 // Tracer returns speki's tracer.
-func Tracer() trace.Tracer { return otel.Tracer("github.com/eve-online-tools/speki") }
+func Tracer() trace.Tracer { return otel.Tracer("github.com/xaroth/speki") }
 
 // Trace starts a server span for every request. It records the method, the path and the status, never
 // the query string: the GitHub callback carries code and state there.

@@ -50,11 +50,11 @@ github:
   private_key_file: /run/secrets/github-app.pem
   # Numeric IDs of the accounts whose installations count (IDs, because names can be
   # given up and claimed by someone else). Defaults to the app's owner.
-  allowed_accounts: [87654321]   # eve-online-tools
+  allowed_accounts: [87654321]   # acme
 
 access:
   # Users must be an active member of at least one. Empty means no org check.
-  required_orgs: [eve-online-tools]
+  required_orgs: [acme]
 
 auth:
   keys_file: /run/secrets/speki-keys.yaml

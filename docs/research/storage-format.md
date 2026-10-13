@@ -26,7 +26,7 @@ updated: 2026-10-09T14:02:11Z
 ...
 ```
 
-The path is the document's identity: `ops/fleet-doctrine.md` in vault `eve-online-tools/kb` is the same
+The path is the document's identity: `ops/fleet-doctrine.md` in vault `acme/kb` is the same
 document until it's moved. That matches git and Obsidian, and keeps renames simple.
 
 ## Frontmatter

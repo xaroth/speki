@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eve-online-tools/speki/document"
+	"github.com/xaroth/speki/document"
 )
 
 func TestCheckPath(t *testing.T) {

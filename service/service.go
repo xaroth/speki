@@ -18,17 +18,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/auth/oauth"
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/knowledge"
-	"github.com/eve-online-tools/speki/library"
-	"github.com/eve-online-tools/speki/library/gitsync"
-	"github.com/eve-online-tools/speki/library/index"
-	"github.com/eve-online-tools/speki/mcpserver"
-	"github.com/eve-online-tools/speki/store"
-	"github.com/eve-online-tools/speki/telemetry"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/auth/oauth"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/knowledge"
+	"github.com/xaroth/speki/library"
+	"github.com/xaroth/speki/library/gitsync"
+	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/mcpserver"
+	"github.com/xaroth/speki/store"
+	"github.com/xaroth/speki/telemetry"
+	"github.com/xaroth/speki/vault"
 )
 
 // A stopping service drains running requests, then stops background work, each on its own budget, so

@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/service"
+	"github.com/xaroth/speki/service"
 )
 
 // writeFile writes content to a new file and returns its path.

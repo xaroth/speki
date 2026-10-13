@@ -7,7 +7,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/eve-online-tools/speki/library"
+	"github.com/xaroth/speki/library"
 )
 
 // notice sends one change notice, then ends the subscription cleanly.

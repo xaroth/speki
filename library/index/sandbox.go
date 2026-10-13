@@ -20,7 +20,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/xaroth/speki/telemetry"
 )
 
 // Query limits.

@@ -16,8 +16,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/eve-online-tools/speki/auth/oauth"
-	"github.com/eve-online-tools/speki/gh"
+	"github.com/xaroth/speki/auth/oauth"
+	"github.com/xaroth/speki/gh"
 )
 
 // checkTokenAnswer checks a token endpoint answer: a token pair when wantErr is empty, else that error.

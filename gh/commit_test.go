@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/gh"
+	"github.com/xaroth/speki/gh"
 )
 
 const (

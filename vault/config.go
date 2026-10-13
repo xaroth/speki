@@ -11,7 +11,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/eve-online-tools/speki/gh"
+	"github.com/xaroth/speki/gh"
 )
 
 // ConfigFile is the file that makes a repository a vault.

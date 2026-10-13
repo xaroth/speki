@@ -17,7 +17,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/xaroth/speki/telemetry"
 )
 
 // requestContext returns the context a handler behind telemetry.RequestID sees for a request with id.

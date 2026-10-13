@@ -49,7 +49,7 @@ formatters:
       sections:
       - standard
       - default
-      - prefix(github.com/eve-online-tools)
-      - prefix(github.com/eve-online-tools/speki)
+      - prefix(github.com/xaroth)
+      - prefix(github.com/xaroth/speki)
       - blank
       custom-order: true

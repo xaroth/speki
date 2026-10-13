@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/time/rate"
 
-	"github.com/eve-online-tools/speki/auth/access"
+	"github.com/xaroth/speki/auth/access"
 )
 
 const maxBody = 2 << 20

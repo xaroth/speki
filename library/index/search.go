@@ -20,8 +20,8 @@ import (
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/eve-online-tools/speki/document"
-	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/xaroth/speki/document"
+	"github.com/xaroth/speki/telemetry"
 )
 
 // ErrEmptyQuery is returned for a query with nothing to search for.

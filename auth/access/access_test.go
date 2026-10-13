@@ -14,10 +14,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/store"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/store"
+	"github.com/xaroth/speki/vault"
 )
 
 // fakeGitHub answers the GitHub calls the resolver makes, from maps keyed by token or login.

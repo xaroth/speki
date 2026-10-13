@@ -11,7 +11,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
-	"github.com/eve-online-tools/speki/service"
+	"github.com/xaroth/speki/service"
 )
 
 // TestSeveralInstances runs two instances that share Redis, as behind a load balancer without sticky

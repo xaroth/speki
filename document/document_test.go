@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/eve-online-tools/speki/document"
+	"github.com/xaroth/speki/document"
 )
 
 func readFixture(tb testing.TB, name string) []byte {

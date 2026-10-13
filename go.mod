@@ -1,4 +1,4 @@
-module github.com/eve-online-tools/speki
+module github.com/xaroth/speki
 
 go 1.27
 

@@ -45,7 +45,7 @@ Speki keeps two kinds of state, and both can be thrown away:
 
 ## Packages
 
-One module, `github.com/eve-online-tools/speki`. The command lives in `cmd/speki`. Every other package is
+One module, `github.com/xaroth/speki`. The command lives in `cmd/speki`. Every other package is
 named after what it does and sits at the top level, with two exceptions: sign-in and permissions share the
 `auth` folder, and `gitsync` and `index` sit under `library`, which builds and syncs them. No `internal/`,
 no `util`, no layers named `repository`.

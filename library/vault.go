@@ -16,10 +16,10 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/eve-online-tools/speki/library/gitsync"
-	"github.com/eve-online-tools/speki/library/index"
-	"github.com/eve-online-tools/speki/telemetry"
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/library/gitsync"
+	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/telemetry"
+	"github.com/xaroth/speki/vault"
 )
 
 const (

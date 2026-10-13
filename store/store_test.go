@@ -13,7 +13,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
-	"github.com/eve-online-tools/speki/store"
+	"github.com/xaroth/speki/store"
 )
 
 type kv interface {

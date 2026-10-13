@@ -9,7 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/eve-online-tools/speki/gh"
+	"github.com/xaroth/speki/gh"
 )
 
 func TestExchange(t *testing.T) {

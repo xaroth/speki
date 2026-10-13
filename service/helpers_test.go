@@ -22,8 +22,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/service"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/service"
 )
 
 const (

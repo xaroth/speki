@@ -12,11 +12,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/eve-online-tools/speki/auth/access"
-	"github.com/eve-online-tools/speki/document"
-	"github.com/eve-online-tools/speki/gh"
-	"github.com/eve-online-tools/speki/knowledge"
-	"github.com/eve-online-tools/speki/library/index"
+	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/document"
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/knowledge"
+	"github.com/xaroth/speki/library/index"
 )
 
 func TestVaults(t *testing.T) {

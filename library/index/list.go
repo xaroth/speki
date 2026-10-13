@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/eve-online-tools/speki/document"
+	"github.com/xaroth/speki/document"
 )
 
 // ErrNotFound means the index has no document at that path.

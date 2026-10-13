@@ -3,7 +3,7 @@ package index
 import (
 	"unicode/utf8"
 
-	"github.com/eve-online-tools/speki/document"
+	"github.com/xaroth/speki/document"
 )
 
 // How much of a title and a description (or snippet) answers carry, in bytes. The index keeps them

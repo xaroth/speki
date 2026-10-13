@@ -87,10 +87,10 @@ Without `vault`: the user's vaults, sorted by name. One speki can't serve right 
 
 ```json
 { "vaults": [
-  { "vault": "eve-online-tools/kb", "title": "Infrastructure knowledge",
+  { "vault": "acme/kb", "title": "Infrastructure knowledge",
     "description": "How our services are deployed and operated...",
     "can_write": true, "documents": 412 },
-  { "vault": "eve-online-tools/new", "can_write": false, "documents": 0, "state": "building" }
+  { "vault": "acme/new", "can_write": false, "documents": 0, "state": "building" }
 ] }
 ```
 
@@ -139,14 +139,14 @@ Search is forgiving. "configuring" finds "configured", "kubrenetes" finds "kuber
 
 ```json
 { "results": [
-  { "vault": "eve-online-tools/kb", "path": "services/esi-proxy.md",
+  { "vault": "acme/kb", "path": "services/esi-proxy.md",
     "title": "ESI proxy", "description": "...", "tags": ["esi", "proxy"],
     "status": "active", "updated": "...", "version": "...",
     "snippet": "... the proxy **caches** ESI responses for ...", "score": 12.4 }
 ],
   "corrected": { "kubrenetes": "kubernetes" },
   "relaxed": false,
-  "skipped_vaults": [{ "vault": "eve-online-tools/new", "state": "building" }] }
+  "skipped_vaults": [{ "vault": "acme/new", "state": "building" }] }
 ```
 
 `corrected` lists words speki couldn't find and what it searched for instead. `relaxed` is true when no
@@ -171,7 +171,7 @@ A user who can read more than 10 vaults has to name the ones to query.
 
 ```json
 { "columns": ["vault", "path", "updated"],
-  "rows": [["eve-online-tools/kb", "services/esi-proxy.md", "2026-10-09T14:02:11Z"]],
+  "rows": [["acme/kb", "services/esi-proxy.md", "2026-10-09T14:02:11Z"]],
   "truncated": false }
 ```
 
@@ -193,7 +193,7 @@ Only served vaults count toward the 10.
 | `line_count` | number of lines | as many as fit in 1,000 lines and 64 KiB |
 
 ```json
-{ "vault": "eve-online-tools/kb", "path": "services/esi-proxy.md",
+{ "vault": "acme/kb", "path": "services/esi-proxy.md",
   "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1",
   "metadata": { "title": "ESI proxy", "tags": ["esi", "proxy"], "status": "active" },
   "content": "---\ntitle: ESI proxy\n...",

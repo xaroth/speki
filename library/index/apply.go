@@ -19,8 +19,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/eve-online-tools/speki/document"
-	"github.com/eve-online-tools/speki/telemetry"
+	"github.com/xaroth/speki/document"
+	"github.com/xaroth/speki/telemetry"
 )
 
 // Change is one file to put in the index, or take out of it.

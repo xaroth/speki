@@ -10,7 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/eve-online-tools/speki/auth/seal"
+	"github.com/xaroth/speki/auth/seal"
 )
 
 func newSecret(tb testing.TB) string {

@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"slices"
 
-	"github.com/eve-online-tools/speki/vault"
+	"github.com/xaroth/speki/vault"
 )
 
 // Status returns every vault's status, sorted by name.

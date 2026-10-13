@@ -25,7 +25,7 @@ import (
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 
-	"github.com/eve-online-tools/speki/document"
+	"github.com/xaroth/speki/document"
 )
 
 // MaxFileSize is the largest file speki reads from a repository: the largest document. (gitsync may
