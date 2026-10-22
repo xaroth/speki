@@ -117,9 +117,10 @@ func (s *Server) addTools() {
 		Annotations: readOnly(),
 	}, handle(s, "list", s.list))
 	mcp.AddTool(s.mcp, &mcp.Tool{
-		Name:        "history",
-		Title:       "Change history",
-		Description: "List the latest commits of a vault, or of one document: who changed it, when, why, and from which client.",
+		Name:  "history",
+		Title: "Change history",
+		Description: "List the latest commits of a vault, or of one document: who changed it, when, why, and from which client. " +
+			"When older commits follow, the result has a next_cursor: pass it as cursor, with the same vault and path, to get them.",
 		Annotations: readOnly(),
 	}, handle(s, "history", s.history))
 	mcp.AddTool(s.mcp, &mcp.Tool{
