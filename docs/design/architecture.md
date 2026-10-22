@@ -305,8 +305,9 @@ traces all carry it.
 - `gitsync` tests run against local bare repositories made in a temporary directory.
 - `access`, `oauth`, `knowledge`, `library` and `vault` get hand-written fakes of the small interfaces they
   declare.
-- `gh` is tested against an `httptest` server that replays recorded GitHub responses.
-- The end-to-end tests live in `service`. They start a `Service` with a fake GitHub (an `httptest` server
+- `gh` is tested against `gh/ghtest`, a fake GitHub on an `httptest` server, plus recorded GitHub responses
+  for the error cases.
+- The end-to-end tests live in `service`. They start a `Service` with a fake GitHub (`gh/ghtest`
   for the API plus local bare repositories for git) and drive it with the go-sdk MCP client: sign in,
   search, edit, read back, shut down cleanly.
 - An opt-in test (`-tags=github`) runs against a real test organisation. It's not part of CI.

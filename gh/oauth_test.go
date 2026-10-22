@@ -10,13 +10,14 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 )
 
 func TestExchange(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		name         string
-		opts         []gh.FakeOption
+		opts         []ghtest.Option
 		code         string
 		wrongSecret  bool
 		want         gh.UserTokens
@@ -36,7 +37,7 @@ func TestExchange(t *testing.T) {
 		},
 		{
 			name: "code for any verifier",
-			opts: []gh.FakeOption{gh.ExpectOAuthCode("any", "", writer)},
+			opts: []ghtest.Option{ghtest.ExpectOAuthCode("any", "", writer)},
 			code: "any",
 			want: gh.UserTokens{
 				AccessToken:    writer,
@@ -49,7 +50,7 @@ func TestExchange(t *testing.T) {
 		{name: "wrong client secret", code: "good", wrongSecret: true, wantErr: true, wantConfig: true},
 		{
 			name:    "token that doesn't expire",
-			opts:    []gh.FakeOption{respond("POST /login/oauth/access_token", http.StatusOK, nil, `{"access_token":"ghu_forever"}`)},
+			opts:    []ghtest.Option{respond("POST /login/oauth/access_token", http.StatusOK, nil, `{"access_token":"ghu_forever"}`)},
 			code:    "good",
 			wantErr: true,
 		},
@@ -57,7 +58,7 @@ func TestExchange(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, append([]gh.FakeOption{gh.ExpectOAuthCode("good", "verifier", writer)}, testCase.opts...)...)
+			fake := ghtest.New(t, append([]ghtest.Option{ghtest.ExpectOAuthCode("good", "verifier", writer)}, testCase.opts...)...)
 			o := fake.OAuth
 			if testCase.wrongSecret {
 				o.ClientSecret = "wrong"
@@ -89,7 +90,7 @@ func TestRefresh(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, gh.ExpectOAuthCode("good", "verifier", writer))
+			fake := ghtest.New(t, ghtest.ExpectOAuthCode("good", "verifier", writer))
 			tok, err := fake.Exchange(t.Context(), fake.OAuth, "good", "verifier", "https://speki/cb")
 			if err != nil {
 				t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 )
 
 const (
@@ -20,19 +21,19 @@ const (
 )
 
 // withUsers adds octocat, who may write to ours/kb, and reader, who may only read it.
-func withUsers() gh.FakeOption {
-	return func(tb testing.TB, f *gh.Fake) {
+func withUsers() ghtest.Option {
+	return func(tb testing.TB, f *ghtest.Fake) {
 		tb.Helper()
-		gh.ExpectUser(writer, gh.User{ID: 7, Login: "octocat"})(tb, f)
-		gh.ExpectRole(writer, kb.FullName, gh.RoleWrite)(tb, f)
-		gh.ExpectUser(reader, gh.User{ID: 8, Login: "reader"})(tb, f)
-		gh.ExpectRole(reader, kb.FullName, gh.RoleRead)(tb, f)
+		ghtest.ExpectUser(writer, gh.User{ID: 7, Login: "octocat"})(tb, f)
+		ghtest.ExpectRole(writer, kb.FullName, gh.RoleWrite)(tb, f)
+		ghtest.ExpectUser(reader, gh.User{ID: 8, Login: "reader"})(tb, f)
+		ghtest.ExpectRole(reader, kb.FullName, gh.RoleRead)(tb, f)
 	}
 }
 
 // respond answers a route with a fixed response.
-func respond(route string, status int, header http.Header, body string) gh.FakeOption {
-	return gh.ExpectRoute(route, func(http.Handler) http.Handler {
+func respond(route string, status int, header http.Header, body string) ghtest.Option {
+	return ghtest.ExpectRoute(route, func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			for k, v := range header {
 				w.Header()[k] = v
@@ -44,7 +45,7 @@ func respond(route string, status int, header http.Header, body string) gh.FakeO
 	})
 }
 
-func recorded(tb testing.TB, name string) gh.FakeOption {
+func recorded(tb testing.TB, name string) ghtest.Option {
 	tb.Helper()
 	body, err := os.ReadFile(filepath.Join("testdata", name+".json"))
 	if err != nil {
@@ -55,9 +56,9 @@ func recorded(tb testing.TB, name string) gh.FakeOption {
 
 func TestCommit(t *testing.T) {
 	t.Parallel()
-	fake := gh.NewFake(t, withKB(), withUsers(),
-		gh.ExpectFile(kb.FullName, "a.md", []byte("old")),
-		gh.ExpectFile(kb.FullName, "old.md", []byte("gone soon")))
+	fake := ghtest.New(t, withKB(), withUsers(),
+		ghtest.ExpectFile(kb.FullName, "a.md", []byte("old")),
+		ghtest.ExpectFile(kb.FullName, "old.md", []byte("gone soon")))
 	sha, err := fake.Commit(t.Context(), writer, gh.CommitRequest{
 		Repo: kb.FullName, Branch: "main", ExpectedHead: "abc123", Message: "Update a.md\n\nSpeki-Client: test",
 		Changes: []gh.FileChange{
@@ -98,7 +99,7 @@ func TestCommitErrors(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		name  string
-		opts  []gh.FakeOption
+		opts  []ghtest.Option
 		token string
 		head  string
 		want  error
@@ -108,68 +109,68 @@ func TestCommitErrors(t *testing.T) {
 		{name: "token revoked", token: revoked, want: gh.ErrUnauthorized},
 		{
 			name: "ruleset",
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("UNPROCESSABLE", "Repository rule violations found\n\nChanges must be made through a pull request.")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("UNPROCESSABLE", "Repository rule violations found\n\nChanges must be made through a pull request.")},
 			want: gh.ErrBranchRules,
 		},
 		{
 			name: "status check named like a secret", // the check's name is the user's, not GitHub's verdict
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("FORBIDDEN", "Repository rule violations found\n\nRequired status check \"secret scanning\" is expected.\n\n")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("FORBIDDEN", "Repository rule violations found\n\nRequired status check \"secret scanning\" is expected.\n\n")},
 			want: gh.ErrBranchRules,
 		},
 		{
 			name: "push protection",
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("UNPROCESSABLE", "Push cannot contain secrets:\nGitHub Personal Access Token")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("UNPROCESSABLE", "Push cannot contain secrets:\nGitHub Personal Access Token")},
 			want: &gh.SecretError{Detail: "Push cannot contain secrets: GitHub Personal Access Token"},
 		},
 		{
 			name: "repository not seen",
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("NOT_FOUND", "Could not resolve to a Repository with the name 'ours/kb'.")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("NOT_FOUND", "Could not resolve to a Repository with the name 'ours/kb'.")},
 			want: gh.ErrForbidden,
 		},
 		{
 			name: "forbidden, saying something went wrong", // not a timeout
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("FORBIDDEN", "Something went wrong: you can't do that")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("FORBIDDEN", "Something went wrong: you can't do that")},
 			want: gh.ErrForbidden,
 		},
 		{
 			name: "timeout",
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("", "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("", "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.")},
 			want: errUnknown,
 		},
 		{
 			name: "rate limited among other errors",
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("UNPROCESSABLE", "something"), gh.ExpectCommit_Error("RATE_LIMITED", "API rate limit exceeded")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("UNPROCESSABLE", "something"), ghtest.ExpectCommit_Error("RATE_LIMITED", "API rate limit exceeded")},
 			want: &gh.RateLimitError{RetryAfter: time.Minute},
 		},
 		{
 			name: "other refusal",
-			opts: []gh.FakeOption{gh.ExpectCommit_Error("UNPROCESSABLE", "something else")},
+			opts: []ghtest.Option{ghtest.ExpectCommit_Error("UNPROCESSABLE", "something else")},
 			want: gh.ErrRefused,
 		},
 		{
 			name: "secondary rate limit",
-			opts: []gh.FakeOption{respond("POST /graphql", http.StatusForbidden, http.Header{"Retry-After": {"30"}},
+			opts: []ghtest.Option{respond("POST /graphql", http.StatusForbidden, http.Header{"Retry-After": {"30"}},
 				`{"message":"You have exceeded a secondary rate limit.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits"}`)},
 			want: &gh.RateLimitError{RetryAfter: 30 * time.Second},
 		},
 		{
 			name: "HTTP not found",
-			opts: []gh.FakeOption{respond("POST /graphql", http.StatusNotFound, nil, `{"message":"Not Found"}`)},
+			opts: []ghtest.Option{respond("POST /graphql", http.StatusNotFound, nil, `{"message":"Not Found"}`)},
 			want: gh.ErrForbidden,
 		},
 		// Responses recorded from github.com: all FORBIDDEN, told apart only by their messages.
-		{name: "recorded pull request rule", opts: []gh.FakeOption{recorded(t, "commit-ruleset-pull-request")}, want: gh.ErrBranchRules},
-		{name: "recorded status check rule", opts: []gh.FakeOption{recorded(t, "commit-ruleset-status-check")}, want: gh.ErrBranchRules},
+		{name: "recorded pull request rule", opts: []ghtest.Option{recorded(t, "commit-ruleset-pull-request")}, want: gh.ErrBranchRules},
+		{name: "recorded status check rule", opts: []ghtest.Option{recorded(t, "commit-ruleset-status-check")}, want: gh.ErrBranchRules},
 		{
 			name: "recorded secret",
-			opts: []gh.FakeOption{recorded(t, "commit-secret")},
+			opts: []ghtest.Option{recorded(t, "commit-secret")},
 			want: &gh.SecretError{Detail: "Repository rule violations found Secret detected in content"},
 		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, append([]gh.FakeOption{withKB(), withUsers()}, testCase.opts...)...)
+			fake := ghtest.New(t, append([]ghtest.Option{withKB(), withUsers()}, testCase.opts...)...)
 			token, head := testCase.token, testCase.head
 			if token == "" {
 				token = writer
@@ -244,7 +245,7 @@ func TestCommits(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB(), withUsers(), gh.ExpectCommits(kb.FullName, history...))
+			fake := ghtest.New(t, withKB(), withUsers(), ghtest.ExpectCommits(kb.FullName, history...))
 			got, err := fake.Commits(t.Context(), testCase.token, testCase.repo, "main", "a.md", 2)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)

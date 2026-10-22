@@ -4,6 +4,10 @@ package gh
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net"
@@ -15,6 +19,15 @@ import (
 	"testing/synctest"
 	"time"
 )
+
+// testKey is generated once: RSA key generation is slow, more so with -race.
+var testKey = sync.OnceValues(func() ([]byte, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), nil
+})
 
 // pipeGitHub is a fake GitHub token endpoint on an in-memory network, so tests run in a synctest bubble.
 // Its dials fail with dialErrs in order, then connect.
@@ -80,7 +93,7 @@ func startPipeGitHub(t testing.TB, dialErrs []error, tls bool, handler func(n in
 		_ = srv.Close()
 		<-done
 	})
-	key, err := fakeKey()
+	key, err := testKey()
 	if err != nil {
 		t.Fatal(err)
 	}
