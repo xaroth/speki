@@ -185,11 +185,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		oauthUsers{auth},
 		resolver,
 		kb,
-		mcpserver.Identity{
-			Name:        cfg.Instance.Name,
-			Title:       cfg.Instance.Title,
-			Description: cfg.Instance.Description,
-		},
+		cfg.Instance.identity(),
 		cfg.Version,
 		logger,
 	)
