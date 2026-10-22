@@ -365,6 +365,13 @@ func TestSearch(t *testing.T) {
 			wantSearch: []string{"ours/kb"},
 		},
 		{
+			name:       "repository and a vault named in another letter case",
+			req:        knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"OURS/Shared"}, Repository: "ours/zeppelin"},
+			wantHits:   []string{"ours/shared:zeppelin.md"},
+			wantRepo:   "github.com/ours/zeppelin",
+			wantSearch: []string{"ours/shared"},
+		},
+		{
 			name:     "repository no named vault covers",
 			req:      knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}, Repository: "ours/zeppelin"},
 			wantRepo: "github.com/ours/zeppelin",
