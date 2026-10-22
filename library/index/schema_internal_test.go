@@ -3,18 +3,9 @@
 
 package index
 
-// In-package: these hold generations, inject SQL failures or read internal tables, none of which the
-// exported API reaches.
+// In-package: it holds a generation to read the full-text tables and loads the vocabulary directly.
 
-import (
-	"testing"
-)
-
-var vault = map[string]string{
-	"README.md":    "# About\n\nKnowledge about our fleet.\n",
-	"cache.md":     "# Cache\n\nHard problems: cache invalidation and naming things.\n",
-	"ops/fleet.md": "# Fleet\n\nSee [the readme](../README.md).\n",
-}
+import "testing"
 
 // Broken documents stay out of the full-text tables, whether built or applied, so their file-name titles
 // don't match or feed typo corrections; adding and removing them leaves those tables intact.

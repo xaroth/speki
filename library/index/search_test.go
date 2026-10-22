@@ -402,6 +402,38 @@ func TestSearchFiltersBelowManyBetterMatches(t *testing.T) {
 	}
 }
 
+func TestSearchWhileBuilding(t *testing.T) {
+	t.Parallel()
+	x := newIndex(t, corpus())
+	errs := make(chan error, 6) // the builder's errors, reported from the test's goroutine
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 3 {
+			errs <- x.Build(t.Context(), fmt.Sprint("c", i), changes(corpus()))
+			errs <- x.Apply(t.Context(), fmt.Sprint("a", i), []index.Change{{Path: "notes/cache.md"}})
+		}
+	}()
+	for searching := true; searching; {
+		select {
+		case <-done:
+			searching = false
+		default:
+			_, err := index.Search(t.Context(), kb(x), "fleet", index.Options{})
+			if err != nil {
+				<-done
+				t.Fatalf("Search: got error %v, want nil", err)
+			}
+		}
+	}
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("build or apply: got error %v, want nil", err)
+		}
+	}
+}
+
 // benchIndex is corpus with enough filler that BM25 and the vocabulary have work to do.
 func benchIndex(b *testing.B) []index.Source {
 	b.Helper()
