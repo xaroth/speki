@@ -103,8 +103,7 @@ Tests need `-tags 'sqlite_fts5,sqlite_omit_load_extension'`, the same tags as th
 - Table-driven: `testCases := []struct{ name string; ... }`, ranged with `t.Run(testCase.name, ...)`.
 - `t.Parallel()` at the top of every test and subtest.
 - `t.Context()`, not `context.Background()`.
-- Standard library plus `go-cmp`. No assertion libraries. `miniredis` is allowed as a Redis wire fake
-  and `prometheus/testutil` for reading metrics.
+- Standard library plus `go-cmp`. No assertion libraries. `miniredis` is allowed as a Redis wire fake.
 - `t.Fatalf` when the test can't go on, `t.Errorf` otherwise. Messages read "got X, want Y". Structs
   are compared with `cmp.Diff` and reported as "(-want +got)".
 - `httptest` for HTTP, `t.Setenv` for environment variables, `testdata/` for fixtures.

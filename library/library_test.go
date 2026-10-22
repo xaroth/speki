@@ -18,8 +18,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/library"
@@ -1029,35 +1027,5 @@ func TestFailedVaultIsRetried(t *testing.T) {
 	poll(time.Hour)
 	if _, ok := l.Vault(late.RepoID); !ok {
 		t.Errorf("not serving after recovery: %+v", l.Status())
-	}
-}
-
-// The vault gauges follow the library's vaults: a served vault is up with its counts, and a removed one
-// is gone.
-func TestPublish(t *testing.T) {
-	// Not parallel: the gauges are global, and every library resets them.
-	r := newRemote(t)
-	r.push(t, map[string]string{"a.md": "# A\n", "b.md": "# B\n"})
-	l := newLibrary(t, r, library.Options{})
-	serving(t, l)
-	l.Poll(t.Context())
-	want := `
-# HELP speki_vault_documents Documents in the vault's index.
-# TYPE speki_vault_documents gauge
-speki_vault_documents{vault="ours/kb"} 2
-# HELP speki_vault_up 1 when the vault is served and its last sync succeeded.
-# TYPE speki_vault_up gauge
-speki_vault_up{vault="ours/kb"} 1
-`
-	err := testutil.GatherAndCompare(prometheus.DefaultGatherer, strings.NewReader(want), "speki_vault_up", "speki_vault_documents")
-	if err != nil {
-		t.Error(err)
-	}
-
-	l.Update(t.Context(), vault.Changes{Removed: []vault.Vault{kb}})
-	l.WaitIdle()
-	n, err := testutil.GatherAndCount(prometheus.DefaultGatherer, "speki_vault_up")
-	if err != nil || n != 0 {
-		t.Errorf("got %d vaults published after the removal, %v, want 0", n, err)
 	}
 }

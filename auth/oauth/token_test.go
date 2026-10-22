@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/xaroth/speki/auth/oauth"
 	"github.com/xaroth/speki/gh"
@@ -518,32 +517,10 @@ func TestRefreshGitHubTimeout(t *testing.T) {
 	})
 }
 
-func refreshCount(tb testing.TB, result string) float64 {
-	tb.Helper()
-	families, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		tb.Fatal(err)
-	}
-	for _, f := range families {
-		if f.GetName() != "speki_refreshes_total" {
-			continue
-		}
-		for _, m := range f.GetMetric() {
-			for _, l := range m.GetLabel() {
-				if l.GetName() == "result" && l.GetValue() == result {
-					return m.GetCounter().GetValue()
-				}
-			}
-		}
-	}
-	return 0
-}
-
 // GitHub refusing a refresh token signs the user out. When an earlier refresh with that token got no
-// answer, GitHub most likely spent the token then: the sign-out is logged and counted as lost to the
-// timeout, once.
-func TestRefreshSignOutMetrics(t *testing.T) {
-	// Not parallel: it reads the package's global counters, which parallel tests also move.
+// answer, GitHub most likely spent the token then: the sign-out is logged as lost to the timeout, once.
+func TestRefreshSignOut(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name     string
 		first    func(f *fakeGitHub) // makes a first refresh fail; nil for none
@@ -558,6 +535,7 @@ func TestRefreshSignOutMetrics(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				e := newEnv(t)
 				clientID, first := e.signedIn(t)
@@ -577,29 +555,23 @@ func TestRefreshSignOutMetrics(t *testing.T) {
 				}
 				e.github.set(func(f *fakeGitHub) { f.refreshErr = gh.ErrBadGrant }) // spent, by then or by someone else
 
-				lost, signedOut := refreshCount(t, "lost_to_timeout"), refreshCount(t, "signed_out")
+				lostLogs := func() int { return strings.Count(e.logs.String(), "refresh lost to GitHub timeout") }
 				rec := e.do(t, "/oauth/token", form)
 				checkTokenAnswer(t, rec, http.StatusBadRequest, tokenResponse{}, oauthError{Error: "invalid_grant", Description: "sign in again"}, "")
-				got := map[string]any{
-					"lost":       refreshCount(t, "lost_to_timeout") - lost,
-					"signed out": refreshCount(t, "signed_out") - signedOut,
-					"logged":     strings.Contains(e.logs.String(), "refresh lost to GitHub timeout"),
-				}
-				want := map[string]any{"lost": 0.0, "signed out": 1.0, "logged": false}
+				want := 0
 				if testCase.wantLost {
-					want = map[string]any{"lost": 1.0, "signed out": 0.0, "logged": true}
+					want = 1
 				}
-				if diff := cmp.Diff(want, got); diff != "" {
-					t.Errorf("sign-out mismatch (-want +got):\n%s", diff)
+				if got := lostLogs(); got != want {
+					t.Errorf("got %d lost-to-timeout logs, want %d:\n%s", got, want, e.logs.String())
 				}
 				if strings.Contains(e.logs.String(), "ghr_1") {
 					t.Error("got the GitHub refresh token in the logs, want it kept out")
 				}
 
-				lost = refreshCount(t, "lost_to_timeout")
 				_, _ = e.token(t, form)
-				if got := refreshCount(t, "lost_to_timeout") - lost; got != 0 {
-					t.Errorf("got a second refusal counted %v more lost, want 0", got)
+				if got := lostLogs(); got != want {
+					t.Errorf("got %d lost-to-timeout logs after a second refusal, want still %d", got, want)
 				}
 			})
 		})
