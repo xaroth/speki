@@ -19,7 +19,6 @@ type VaultSummary struct {
 	Vault        string   `json:"vault" jsonschema:"the vault's name, owner/repo"`
 	Title        string   `json:"title,omitempty"`
 	Description  string   `json:"description,omitempty"`
-	Guidelines   string   `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
 	Frontmatter  []string `json:"frontmatter,omitempty" jsonschema:"frontmatter keys you may set on top of title, description, tags, aliases, status and related"`
 	Repositories []string `json:"repositories,omitempty" jsonschema:"the code repositories the vault's knowledge is about, as host/owner/repo. A * in the name covers every repository of that owner whose name matches"`
 	CanWrite     bool     `json:"can_write"`
@@ -27,7 +26,7 @@ type VaultSummary struct {
 	State        string   `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly), failed (it couldn't be opened; tell the user) or gone (just removed or reopening; try again shortly)"`
 }
 
-func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummary {
+func vaultSummaries(vaults []knowledge.VaultInfo, frontmatter bool) []VaultSummary {
 	out := make([]VaultSummary, 0, len(vaults))
 	for _, v := range vaults {
 		s := VaultSummary{
@@ -39,8 +38,7 @@ func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummar
 			Documents:    v.Documents,
 			State:        string(v.State),
 		}
-		if guidelines && v.State == "" { // an unserved vault's config may be stale, and it can't be written yet
-			s.Guidelines = v.Guidelines
+		if frontmatter && v.State == "" { // an unserved vault's config may be stale, and it can't be written yet
 			s.Frontmatter = v.Frontmatter
 		}
 		out = append(out, s)
@@ -132,14 +130,14 @@ func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (Guid
 	if served(vaults) == 0 {
 		b.WriteString("\nNone is ready yet. Try again in a minute.\n")
 	}
-	for _, v := range out.Vaults {
+	for i, v := range out.Vaults {
 		fmt.Fprintf(&b, "\n### %s\n\n", oneLine(v.Vault))
 		writeVaultDetails(&b, v)
 		if len(v.Frontmatter) > 0 {
 			fmt.Fprintf(&b, "Frontmatter keys you may also set: %s\n", oneLine(strings.Join(v.Frontmatter, ", ")))
 		}
-		if v.Guidelines != "" {
-			b.WriteString(fence("guidelines", v.Guidelines))
+		if guidelines := vaults[i].Guidelines; guidelines != "" && v.State == "" {
+			b.WriteString(fence("guidelines", guidelines))
 		}
 	}
 	return out, b.String(), nil
@@ -191,7 +189,6 @@ type ListOutput struct {
 	Folders    []string          `json:"folders,omitempty"`
 	Documents  []DocumentSummary `json:"documents,omitempty"`
 	NextCursor string            `json:"next_cursor,omitempty" jsonschema:"pass as cursor to get the next page; absent on the last page"`
-	Guidelines string            `json:"guidelines,omitempty" jsonschema:"the vault's writing guidelines, when listing its root"`
 }
 
 func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListOutput, string, error) {
@@ -242,7 +239,7 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 	if err != nil {
 		return ListOutput{}, "", err
 	}
-	out := ListOutput{Folders: l.Folders, NextCursor: l.NextCursor, Guidelines: l.Guidelines}
+	out := ListOutput{Folders: l.Folders, NextCursor: l.NextCursor}
 	var b strings.Builder
 	for _, f := range l.Folders {
 		fmt.Fprintf(&b, "%s\n", oneLine(f))
@@ -383,7 +380,7 @@ type ReadInput struct {
 	Vault     string `json:"vault" jsonschema:"the vault, owner/repo"`
 	Path      string `json:"path" jsonschema:"the document's path in the vault, e.g. services/esi-proxy.md"`
 	FromLine  int    `json:"from_line,omitempty" jsonschema:"first line to return, counting from 1 at the top of the file. Default 1"`
-	LineCount int    `json:"line_count,omitempty" jsonschema:"how many lines to return. Default: as many as fit in 1,000 lines and 64 KiB"`
+	LineCount int    `json:"line_count,omitempty" jsonschema:"how many lines to return. Default: as many as fit in 1,000 lines and one answer"`
 }
 
 // Metadata is a document's frontmatter, as speki understands it.
@@ -399,25 +396,17 @@ type Metadata struct {
 	Extra       map[string]any `json:"extra,omitempty" jsonschema:"frontmatter keys speki doesn't own"`
 }
 
-// Heading is an entry in a document's outline.
-type Heading struct {
-	Level int    `json:"level"`
-	Text  string `json:"text"`
-	Line  int    `json:"line"`
-}
-
-// ReadOutput is a document, or part of it.
+// ReadOutput describes a document, or the part of it returned. The content and outline are in the text
+// result only, fenced, so they go out once.
 type ReadOutput struct {
-	Vault      string    `json:"vault"`
-	Path       string    `json:"path"`
-	Version    string    `json:"version"`
-	Metadata   Metadata  `json:"metadata"`
-	Content    string    `json:"content" jsonschema:"the raw file text, frontmatter included"`
-	FromLine   int       `json:"from_line"`
-	LineCount  int       `json:"line_count"`
-	TotalLines int       `json:"total_lines"`
-	Outline    []Heading `json:"outline,omitempty" jsonschema:"the document's headings, when content isn't the whole document"`
-	Warnings   []string  `json:"warnings,omitempty" jsonschema:"problems with the frontmatter, from changes made outside speki"`
+	Vault      string   `json:"vault"`
+	Path       string   `json:"path"`
+	Version    string   `json:"version"`
+	Metadata   Metadata `json:"metadata"`
+	FromLine   int      `json:"from_line"`
+	LineCount  int      `json:"line_count"`
+	TotalLines int      `json:"total_lines"`
+	Warnings   []string `json:"warnings,omitempty" jsonschema:"problems with the frontmatter, from changes made outside speki"`
 }
 
 func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadOutput, string, error) {
@@ -426,6 +415,7 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 		Path:      in.Path,
 		FromLine:  in.FromLine,
 		LineCount: in.LineCount,
+		MaxBytes:  readBudget(in.Vault, in.Path),
 	})
 	if err != nil {
 		return ReadOutput{}, "", err
@@ -446,14 +436,10 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 			Updated:     d.Updated,
 			Extra:       d.Extra,
 		},
-		Content:    p.Content,
 		FromLine:   p.FromLine,
 		LineCount:  p.LineCount,
 		TotalLines: p.TotalLines,
 		Warnings:   p.Warnings,
-	}
-	for _, h := range p.Outline {
-		out.Outline = append(out.Outline, Heading{Level: h.Level, Text: h.Text, Line: h.Line})
 	}
 
 	var b strings.Builder
@@ -466,15 +452,21 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 	for _, w := range p.Warnings {
 		fmt.Fprintf(&b, "warning: %s\n", oneLine(w))
 	}
-	if len(out.Outline) > 0 {
+	if len(p.Outline) > 0 {
 		var outline strings.Builder
-		for _, h := range out.Outline {
+		for _, h := range p.Outline {
 			fmt.Fprintf(&outline, "line %d: %s %s\n", h.Line, strings.Repeat("#", h.Level), oneLine(h.Text))
 		}
 		b.WriteString(fence("outline", outline.String()))
 	}
 	b.WriteString(fence("document", p.Content))
 	return out, b.String(), nil
+}
+
+// readBudget is what a page of the document may take in one answer: the vault and path go out beside it,
+// in the structured result and the text.
+func readBudget(vault, path string) int {
+	return maxAnswer - answerOverhead - 2*(encodedSize(vault)+encodedSize(path))
 }
 
 // HistoryInput asks for the latest commits.

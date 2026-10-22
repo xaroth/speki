@@ -21,3 +21,10 @@ const (
 
 // OutlineSize is what an outline counts against a read's byte cap.
 var OutlineSize = outlineSize
+
+// Sizes of the rest of a page, as they count against a read's byte cap.
+var (
+	MetadataSize = metadataSize
+	WarningsSize = warningsSize
+	TextSize     = textSize
+)

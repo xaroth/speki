@@ -105,7 +105,7 @@ func (s *Server) addTools() {
 		Name:  "read",
 		Title: "Read a document",
 		Description: "Read a document's raw markdown, frontmatter included, with its version. " +
-			"Long documents come back in parts of at most 1,000 lines or 64 KiB, with an outline of headings and line numbers: use from_line and line_count to read the rest. A single line longer than 64 KiB is cut.",
+			"Long documents come back in parts of at most 1,000 lines or about 75 KiB, with an outline of headings and line numbers: use from_line and line_count to read the rest. A single line longer than that is cut.",
 		Annotations: readOnly(),
 		Meta:        alwaysLoad(),
 	}, handle(s, "read", s.read))

@@ -460,7 +460,8 @@ func TestRead(t *testing.T) {
 		"crlf.md":               "# A\r\n\r\nb\r\n",
 		"empty.md":              "",
 		"headings.md":           strings.Repeat("# H\n", knowledge.MaxOutline+5),
-		"straddle.md":           strings.Repeat("y", knowledge.MaxReadBytes-1) + "é\n",
+		"straddle.md":           strings.Repeat("y", knowledge.MaxReadBytes-1000) + strings.Repeat("é", 1000) + "\n",
+		"angles.md":             strings.Repeat(strings.Repeat("<", 99)+"\n", 200),
 		"outlined.md":           outlined.String(),
 	}))
 	testCases := []struct {
@@ -520,7 +521,8 @@ func TestRead(t *testing.T) {
 			name: "byte cap",
 			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "bytes.md"},
 			check: func(t *testing.T, p knowledge.Page) {
-				if want := knowledge.MaxReadBytes / len(long); p.LineCount != want || len(p.Content) != want*len(long) {
+				room := knowledge.MaxReadBytes - knowledge.MetadataSize(p.Document)
+				if want := room / knowledge.TextSize(long); p.LineCount != want || len(p.Content) != want*len(long) {
 					t.Errorf("got %d lines, %d bytes, want %d whole lines", p.LineCount, len(p.Content), want)
 				}
 			},
@@ -538,8 +540,20 @@ func TestRead(t *testing.T) {
 			name: "cut before a character the cap would split",
 			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "straddle.md"},
 			check: func(t *testing.T, p knowledge.Page) {
-				if len(p.Content) != knowledge.MaxReadBytes-1 || !utf8.ValidString(p.Content) {
-					t.Errorf("got %d bytes, valid UTF-8 %t, want %d valid bytes", len(p.Content), utf8.ValidString(p.Content), knowledge.MaxReadBytes-1)
+				want := knowledge.MaxReadBytes - knowledge.MetadataSize(p.Document) - knowledge.WarningsSize(p.Warnings)
+				if len(p.Content) < want-1 || len(p.Content) > want || !strings.HasSuffix(p.Content, "é") || !utf8.ValidString(p.Content) {
+					t.Errorf("got %d bytes, valid UTF-8 %t, want %d or one less, ending in é", len(p.Content), utf8.ValidString(p.Content), want)
+				}
+			},
+		},
+		{
+			// A < counts as the &lt; a fence may escape it to, JSON-encoded.
+			name: "markup counts as escaped",
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "angles.md", MaxBytes: 20_000},
+			check: func(t *testing.T, p knowledge.Page) {
+				room := 20_000 - knowledge.MetadataSize(p.Document) - knowledge.OutlineSize(p.Outline)
+				if want := room / (99*len(`\u0026lt;`) + 2); p.LineCount != want {
+					t.Errorf("got %d lines, want %d", p.LineCount, want)
 				}
 			},
 		},
@@ -571,7 +585,7 @@ func TestRead(t *testing.T) {
 			},
 		},
 		{
-			// Long headings can't make a read much bigger than 64 KiB: they're cut, and the outline
+			// Long headings can't make a read much bigger than its cap: they're cut, and the outline
 			// counts against the cap.
 			name: "long headings",
 			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "outlined.md"},
