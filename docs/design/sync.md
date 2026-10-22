@@ -1,7 +1,8 @@
 # Vaults, local copies and writes
 
 Packages: `vault` (discovery), `gitsync` (git), `library` (keeping copies current), `gh` (GitHub API),
-`knowledge` (the write path), `store` (change notices).
+`gh/ghcache` (polling reads shared between instances), `knowledge` (the write path), `store` (change
+notices).
 
 ## Discovery
 
@@ -272,6 +273,27 @@ waiting for the next poll.
 
 With the in-memory store there is only one instance, and nothing to tell.
 
+## Shared polling reads
+
+With Redis configured, `gh/ghcache` shares the reads every round of discovery and polling makes:
+installations, each installation's repositories, and branch heads. The first instance to need an answer
+takes a lock on it in Redis (`speki:gh:v1:<key>:lock`, 30 seconds), asks GitHub, and stores the answer.
+Other instances use it until it's 90% of the loop's interval old. While one instance is asking, the
+others use the older answer, or, when there's none yet, ask GitHub themselves. A not-found answer is
+shared, since discovery acts on it; other failures aren't.
+
+The instance that asks about a branch sends the ETag of the shared answer, so asking stays free while
+the branch doesn't move, and callers still get an empty SHA when their own ETag is current. `speki.yaml`
+fetches aren't shared: discovery fetches the file only after a push, and an older shared copy would
+hide the new one until the next push.
+
+Answers are kept for at least an hour. If Redis fails, each instance asks GitHub directly, as a single
+instance does. `speki_github_shared_reads_total` counts the reads by call and result: `hit`, `fetched`,
+`stale` or `direct`.
+
+Each instance still fetches its own git copy. After a write, the shared head can lag the new commit by
+up to a poll interval, and an instance that already has the commit fetches once more for nothing.
+
 ## History
 
 `knowledge.History` calls `GET /repos/{owner}/{repo}/commits` with `path`, `sha`, `page` and `per_page`,
@@ -298,8 +320,8 @@ Installation tokens get 5,000 to 12,500 requests an hour. Speki's own background
 
 | What | Requests per hour |
 |---|---|
-| Polling every minute | about 1,200, nearly all 304 and free |
-| Discovery every 5 minutes | about 12 × (1 + installations), plus `speki.yaml` fetches only for pushed repositories |
+| Polling every minute | about 1,200, nearly all 304 and free; shared between instances with Redis |
+| Discovery every 5 minutes | about 12 × (1 + installations), shared between instances with Redis, plus `speki.yaml` fetches only for pushed repositories, per instance |
 | Repository ID checks | one per sync, so only for vaults that changed |
 | Installation tokens | a few |
 

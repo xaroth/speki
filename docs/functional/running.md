@@ -230,7 +230,9 @@ status page shows `"store": "memory"` with the same warning.
 
 With `redis` configured, any number of instances can run behind a load balancer without sticky sessions.
 They share that state through Redis, and when one instance writes to a vault, it tells the others, so
-they pick up the change within seconds instead of at the next poll. Every instance needs the same
+they pick up the change within seconds instead of at the next poll. They also share what discovery and
+polling learn from GitHub, so N instances use about as much of the GitHub rate limit for that as one.
+Every instance needs the same
 configuration: the same `public_url`, GitHub App and keys, and the same Redis. Speki needs Redis 6.2 or
 later, or Valkey, because it uses `GETDEL`. An instance that can't reach Redis at startup refuses to
 start. If Redis goes away later, sign-in and refresh fail until it's back, every request checks access
@@ -239,7 +241,7 @@ with GitHub, and changes reach the other instances at their next poll.
 The per-user rate limit (10 requests a second, bursts of 30) is kept by each instance, not shared through
 Redis. With N instances behind a load balancer, a user can make up to N times as many requests.
 
-Speki's keys in Redis are small and short-lived (minutes), all prefixed `speki:`. Configure Redis not to
+Speki's keys in Redis are small and short-lived (an hour at most), all prefixed `speki:`. Configure Redis not to
 evict them (`maxmemory-policy noeviction`): every speki key has a time to live, so policies such as
 `volatile-ttl` would evict exactly the used-code markers, and an evicted one could let an authorization
 code be used twice. Persistence isn't needed.
