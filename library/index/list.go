@@ -197,6 +197,29 @@ func (x *Index) LinkedFrom(ctx context.Context, path string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// Resolves reports whether l points to a document, matched like resolved_links.
+func (x *Index) Resolves(ctx context.Context, l document.Link) (bool, error) {
+	if l.Candidate == "" {
+		return false, nil
+	}
+	g, err := x.acquire()
+	if err != nil {
+		return false, err
+	}
+	defer g.release()
+
+	q := `SELECT EXISTS (SELECT 1 FROM documents WHERE key = ?)`
+	if l.Kind == document.LinkWiki {
+		q = `SELECT EXISTS (SELECT 1 FROM documents WHERE name = ?)`
+	}
+	var ok bool
+	err = g.reader.QueryRowContext(ctx, q, l.Candidate).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("resolve %s: %w", l.Target, err)
+	}
+	return ok, nil
+}
+
 // Stats is the size of an index.
 type Stats struct {
 	Documents int

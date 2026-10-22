@@ -312,6 +312,34 @@ func TestLinkedFrom(t *testing.T) {
 	}
 }
 
+func TestResolves(t *testing.T) {
+	t.Parallel()
+	x := newIndex(t, fleet)
+	testCases := []struct {
+		name string
+		link document.Link
+		want bool
+	}{
+		{name: "path", link: document.Link{Target: "fleet-roles.md", Candidate: "ops/fleet-roles.md", Kind: document.LinkRelated}, want: true},
+		{name: "missing path", link: document.Link{Target: "nope.md", Candidate: "ops/nope.md", Kind: document.LinkRelated}},
+		{name: "wikilink", link: document.Link{Target: "[[fleet-roles]]", Candidate: "fleet-roles", Kind: document.LinkWiki}, want: true},
+		{name: "missing wikilink", link: document.Link{Target: "[[nope]]", Candidate: "nope", Kind: document.LinkWiki}},
+		{name: "outside the vault", link: document.Link{Target: "https://example.com", Kind: document.LinkRelated}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := x.Resolves(t.Context(), testCase.link)
+			if err != nil {
+				t.Fatalf("Resolves: got error %v, want nil", err)
+			}
+			if got != testCase.want {
+				t.Errorf("got %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestList(t *testing.T) {
 	t.Parallel()
 	x := newIndex(t, fleet)

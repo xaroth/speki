@@ -443,3 +443,19 @@ func list(prefix string, n int) string {
 	}
 	return strings.Join(items, ", ")
 }
+
+func TestAddedRelated(t *testing.T) {
+	t.Parallel()
+	current := mustParse(t, "ops/a.md", []byte("---\nrelated: [b.md, gone.md]\n---\n"))
+	next := mustParse(t, "ops/a.md", []byte("---\nrelated: [b.md, gone.md, /c.md, \"[[d]]\"]\n---\n"))
+	want := []document.Link{
+		{Target: "/c.md", Candidate: "c.md", Kind: document.LinkRelated},
+		{Target: "[[d]]", Candidate: "d", Kind: document.LinkWiki},
+	}
+	if diff := cmp.Diff(want, document.AddedRelated(current, next)); diff != "" {
+		t.Errorf("added (-want +got):\n%s", diff)
+	}
+	if got := document.AddedRelated(nil, next); len(got) != 4 {
+		t.Errorf("got %d links for a new document, want 4", len(got))
+	}
+}

@@ -65,6 +65,9 @@ lowercased. Dates accept RFC 3339 and Obsidian's `2026-10-09`, `2026-10-09T10:30
 // returns the problems the change introduces.
 func Check(current, next *Document, allowed []string) error
 
+// AddedRelated returns the links of the related entries next adds.
+func AddedRelated(current, next *Document) []Link
+
 // Touch sets updated to now, and created to created unless that's zero, and returns the new bytes.
 func (d *Document) Touch(now, created time.Time) ([]byte, error)
 ```
@@ -82,6 +85,9 @@ and so is `created` when `Touch` will set it. Locking applies to new documents t
 keys. When the current frontmatter is broken, its values can't be compared, so `Check` reads its top-level
 key names line by line and only lets an agent repair it when none of them is locked (`created` aside). A
 block with a locked key, or a top-level line that isn't a key, has to be fixed by a person.
+
+`Check` doesn't look at other documents. `knowledge` resolves the links `AddedRelated` returns against the
+vault's index, matched like the `links` view, and rejects those that don't point to a document.
 
 `Touch` edits the `yaml.Node` tree in place: it updates the value node for `updated` (and `created`), or
 appends key and value nodes at the end of the mapping. Then it re-encodes only the frontmatter block, using

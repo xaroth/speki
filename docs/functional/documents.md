@@ -53,7 +53,7 @@ Lowercase names with `-` between words are the convention, but speki doesn't enf
 | `tags` | list of text | writer | Topics. No leading `#`. Matched case-insensitively. At most 20 |
 | `aliases` | list of text | writer | Other names for the subject. Searched like the title. At most 10 |
 | `status` | `draft`, `active`, `deprecated` | writer | Missing means `active`. Search ranks `deprecated` documents lower |
-| `related` | list of paths | writer | Other documents in the same vault worth reading alongside this one |
+| `related` | list of paths | writer | Other documents in the same vault worth reading alongside this one. Each entry a change adds must point to an existing document |
 | `created` | UTC datetime | speki | Set when speki creates the document. A change that leaves it out keeps it |
 | `updated` | UTC datetime | speki | Set every time speki changes the document |
 
@@ -62,6 +62,11 @@ with commas. The error says which field and why.
 
 A `title` longer than 200 bytes or a `description` longer than 500 is kept, with a warning; answers show
 only its start. More than 20 tags or 10 aliases are kept too, with a warning, so a change can't add them.
+
+A `related` entry is a path relative to the document, a path from the vault root starting with `/`, or a
+wikilink (`[[fleet-roles]]`), resolved like the [links](#links) in the body. A change can't add an entry
+that doesn't point to a document in the vault. Entries already there are left alone, so deleting a
+document doesn't block changes to the documents that list it.
 
 Agents may only set the writer fields above, plus the keys the vault lists under `frontmatter.allow` in
 its [speki.yaml](vaults.md#spekiyaml). Any other key must keep the value it has: a change can't add,
