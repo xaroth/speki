@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -31,6 +32,10 @@ var ErrEmptyQuery = errors.New("the query has no words to search for")
 var ErrTooManyWords = fmt.Errorf("the query has more than %d different words", maxTerms)
 
 const maxTerms = 32
+
+// SearchTimeout is how long a search may take. It's shorter than a request's deadline so a slow search
+// can't hold a vault's few reader connections for long.
+const SearchTimeout = 5 * time.Second
 
 // Source is one index to search, with the name results carry.
 type Source struct {

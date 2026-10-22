@@ -50,6 +50,11 @@ slightly higher than the same hit in a large one.
 Each result has a snippet of up to 32 words from the body around the best match, with matched words in
 `**bold**`. If the match was only in the title or tags, the snippet is the description.
 
+### Limits
+
+A search may take 5 seconds. Past that it fails with `timeout`; name fewer vaults, or narrow it with
+`path` or `tags`.
+
 ## Query
 
 `query` runs one SQLite `SELECT` against these views. Every view has a `vault` column, and `vault` plus

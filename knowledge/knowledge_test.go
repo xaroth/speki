@@ -1,6 +1,7 @@
 package knowledge_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -408,6 +409,19 @@ func TestSearch(t *testing.T) {
 				t.Errorf("got repository %q searched %v, want %q searched %v", got.Repository, got.Searched, testCase.wantRepo, testCase.wantSearch)
 			}
 		})
+	}
+}
+
+// The request's expired deadline stands in for index.SearchTimeout, which is longer.
+func TestSearchTimeout(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	_, err := f.base.Search(ctx, f.grant, knowledge.SearchRequest{Query: "zeppelin"})
+	kerr := wantError(t, err, knowledge.CodeTimeout)
+	if !strings.Contains(kerr.Message, "search ran longer than") {
+		t.Errorf("got %q, want it to say the search ran too long", kerr.Message)
 	}
 }
 
