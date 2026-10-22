@@ -10,6 +10,7 @@ linters:
     - bodyclose
     - copyloopvar
     - errorlint
+    - forbidigo
     - gocritic
     - misspell
     - nilerr
@@ -19,6 +20,10 @@ linters:
     - unparam
     - usestdlibvars
   settings:
+    forbidigo:
+      forbid:
+        - pattern: errors\.As\b
+          msg: use errors.AsType
     misspell:
       ignore-rules:
         - signins # speki_signins_total

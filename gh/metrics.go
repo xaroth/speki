@@ -107,8 +107,7 @@ func (m *metrics) observed(kind string, installation int64, counts func(*http.Re
 	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		count := counts(r)
 		resp, err := next.RoundTrip(r)
-		var terr *ghinstallation.HTTPError
-		if !count || errors.As(err, &terr) { // a failed token request isn't this kind's call
+		if _, ok := errors.AsType[*ghinstallation.HTTPError](err); !count || ok { // a failed token request isn't this kind's call
 			return resp, err
 		}
 		if err != nil {

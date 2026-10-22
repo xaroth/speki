@@ -312,12 +312,12 @@ func checkGeneration(ctx context.Context, db *sql.DB) (string, error) {
 
 // unusable marks the errors that mean a generation is unusable for good.
 func unusable(err error) error {
-	var serr sqlite3.Error
+	serr, isSQLite := errors.AsType[sqlite3.Error](err)
 	switch {
 	case errors.Is(err, errUnusable):
 		return err
 	case errors.Is(err, sql.ErrNoRows):
-	case errors.As(err, &serr) && (serr.Code == sqlite3.ErrCorrupt || serr.Code == sqlite3.ErrNotADB ||
+	case isSQLite && (serr.Code == sqlite3.ErrCorrupt || serr.Code == sqlite3.ErrNotADB ||
 		(serr.Code == sqlite3.ErrError && strings.Contains(serr.Error(), "no such table"))):
 	default:
 		return err

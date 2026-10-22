@@ -180,10 +180,10 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 		}
 		out, text, err := f(ctx, g, in)
 		outcome := "ok"
-		var kerr *knowledge.Error
+		kerr, isKnowledge := errors.AsType[*knowledge.Error](err)
 		switch {
 		case err == nil:
-		case errors.As(err, &kerr):
+		case isKnowledge:
 			outcome = string(kerr.Code)
 			err = kerr                                  // drop wrapping context
 			if kerr.Code == knowledge.CodeUnavailable { // every unavailable carries the request ID

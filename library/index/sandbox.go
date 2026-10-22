@@ -125,8 +125,7 @@ func (s *Sandbox) Query(ctx context.Context, sources []Source, query string) (Ro
 	err = conn.Raw(func(dc any) error {
 		return setUp(dc.(*sqlite3.SQLiteConn), sources, gens)
 	})
-	var serr sqlite3.Error
-	if errors.As(err, &serr) && serr.Code == sqlite3.ErrInterrupt && ctx.Err() == nil {
+	if serr, ok := errors.AsType[sqlite3.Error](err); ok && serr.Code == sqlite3.ErrInterrupt && ctx.Err() == nil {
 		return Rows{}, fmt.Errorf("%w: speki is short of memory", ErrQueryBusy)
 	}
 	if err != nil {
@@ -481,8 +480,8 @@ func queryError(ctx context.Context, err error, sources []Source) error {
 	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: it ran longer than allowed", ErrQueryTimeout)
 	}
-	var serr sqlite3.Error
-	if !errors.As(err, &serr) {
+	serr, ok := errors.AsType[sqlite3.Error](err)
+	if !ok {
 		return err
 	}
 	msg := scrubPaths(serr.Error(), sources) // before vault names, which contain a slash

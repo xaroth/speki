@@ -93,6 +93,6 @@ func overQueryBudget() bool { return C.spekiOverQueryBudget() != 0 }
 // OutOfMemory reports whether err is SQLite running into the hard heap limit. Other work, such as a
 // heavy query, can cause it, so it passes on its own.
 func OutOfMemory(err error) bool {
-	var serr sqlite3.Error
-	return errors.As(err, &serr) && serr.Code == sqlite3.ErrNomem
+	serr, ok := errors.AsType[sqlite3.Error](err)
+	return ok && serr.Code == sqlite3.ErrNomem
 }
