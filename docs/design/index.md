@@ -217,13 +217,18 @@ vault's vocabulary.
    the expression.
 4. Rank inside the full-text table, deprecated documents halved there through a partial index on them,
    so they can't push an active document out of the top, and join only the best. Broken documents are
-   left out through a partial index on them too, in the ranking and in the `names` query:
+   left out through a partial index on them too, in the ranking and in the `names` query. Filters apply
+   inside the ranking as well, each a list of IDs from an index (`tags_tag`, `documents_key`, the
+   deprecated partial index), so a filtered search also ranks only up to the limit and never reads the
+   bodies of documents it filters out. Each filter is written on `+rowid`: given a plain `rowid IN (...)`,
+   SQLite runs the full-text match once per listed ID instead.
 
    ```sql
    WITH ranked AS (
      SELECT rowid AS id, bm25(fts, 10, 10, 6, 4, 3, 1) *
             CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
      FROM fts WHERE fts MATCH ? AND rowid NOT IN (SELECT id FROM documents WHERE status = 'broken')
+       AND +rowid IN (SELECT doc_id FROM tags WHERE tag = ?) -- one line per filter
      ORDER BY rank LIMIT ?)
    SELECT d.path, d.title, ..., ranked.rank AS score FROM ranked JOIN documents d ON d.id = ranked.id
    ORDER BY score;

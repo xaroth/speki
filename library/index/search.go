@@ -165,25 +165,20 @@ func searchAll(ctx context.Context, sources []Source, gens []*generation, terms 
 }
 
 func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded string, opt Options) ([]Hit, error) {
-	filter, args := filters(opt)
 	// Rank inside the full-text table and join only the best few documents: reading a document row reads
 	// its body, which costs far more than ranking. Deprecated documents are halved inside the ranking,
-	// through a partial index, so they can't crowd active ones out of the top. Broken documents are left
-	// out the same way. Filters can drop any number of candidates, so a filtered search joins every match.
-	ranked := `SELECT rowid AS id, bm25(fts, ` + bm25Weights + `) *
-			CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
-		FROM fts WHERE fts MATCH ? AND rowid NOT IN (SELECT id FROM documents WHERE status = 'broken')`
-	rankArgs := []any{expr}
-	if filter == "" {
-		ranked += ` ORDER BY rank LIMIT ?`
-		rankArgs = append(rankArgs, opt.Limit)
-	}
-	q := `WITH ranked AS (` + ranked + `)
+	// through a partial index, so they can't crowd active ones out of the top. Broken documents and the
+	// filters are left out there too, through indexes, so the ranking stays limited when filtering.
+	filter, args := filters(opt, "rowid")
+	q := `WITH ranked AS (
+			SELECT rowid AS id, bm25(fts, ` + bm25Weights + `) *
+				CASE WHEN rowid IN (SELECT id FROM documents WHERE status = 'deprecated') THEN 0.5 ELSE 1 END AS rank
+			FROM fts WHERE fts MATCH ? AND rowid NOT IN (SELECT id FROM documents WHERE status = 'broken')` + filter + `
+			ORDER BY rank LIMIT ?)
 		SELECT d.id, d.path, d.title, d.description, d.tags, d.status, d.updated, d.version, ranked.rank AS score
 		FROM ranked JOIN documents d ON d.id = ranked.id
-		WHERE 1` + filter + `
-		ORDER BY score LIMIT ?`
-	found, err := queryHits(ctx, g.reader, q, slices.Concat(rankArgs, args, []any{opt.Limit}))
+		ORDER BY score`
+	found, err := queryHits(ctx, g.reader, q, slices.Concat([]any{expr}, args, []any{opt.Limit}))
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +195,7 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 		return hits, nil
 	}
 
+	filter, args = filters(opt, "d.id")
 	nameArgs := []any{namesExpr}
 	if excluded != "" { // an excluded word anywhere in the document rules it out, not just in its name
 		filter += " AND d.id NOT IN (SELECT rowid FROM fts WHERE fts MATCH ?)"
@@ -297,18 +293,25 @@ func addSnippets(ctx context.Context, db *sql.DB, expr string, hits []found) err
 	return nil
 }
 
-func filters(opt Options) (string, []any) {
+// filters returns conditions on the document ID in col, each answered by an index without reading
+// document rows, and their arguments.
+func filters(opt Options, col string) (string, []any) {
+	// The unary plus keeps SQLite from handing an IN list to the full-text table, which then runs the
+	// match once per listed ID: several times slower than checking each match against the list.
+	col = "+" + col
 	var b strings.Builder
 	var args []any
 	if opt.ExcludeDeprecated {
-		b.WriteString(" AND d.status != 'deprecated'")
+		b.WriteString(" AND " + col + " NOT IN (SELECT id FROM documents WHERE status = 'deprecated')")
 	}
 	if p := norm.NFC.String(strings.Trim(opt.PathPrefix, "/")); p != "" {
-		b.WriteString(" AND substr(d.key, 1, length(?)) = ?") // in NFC, so a folder matches however it's typed
-		args = append(args, p+"/", p+"/")
+		// Keys under p/ sort from p/ to just before p0, '0' being the byte after '/'. In NFC, so a folder
+		// matches however it's typed.
+		b.WriteString(" AND " + col + " IN (SELECT id FROM documents WHERE key >= ? AND key < ?)")
+		args = append(args, p+"/", p+"0")
 	}
 	for _, t := range opt.Tags {
-		b.WriteString(" AND EXISTS (SELECT 1 FROM tags t WHERE t.doc_id = d.id AND t.tag = ?)")
+		b.WriteString(" AND " + col + " IN (SELECT doc_id FROM tags WHERE tag = ?)")
 		args = append(args, strings.ToLower(strings.TrimPrefix(t, "#")))
 	}
 	return b.String(), args
