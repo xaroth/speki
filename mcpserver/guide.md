@@ -66,7 +66,8 @@ It starts with a YAML frontmatter block:
 - `description`: one or two sentences about what the document covers.
 - `tags`: a list of topics, at most 20. `aliases`: other names for the subject, at most 10.
 - `status`: `draft`, `active` (the default) or `deprecated`.
-- `related`: paths of other documents in the same vault worth reading alongside it.
+- `related`: paths of other documents in the same vault worth reading alongside it, relative to the
+  document or starting with `/` from the vault root. Each must point to an existing document.
 - `created` and `updated`: set by speki.
 
 Other keys are kept as they are: you can't add, change or remove them, unless the vault lists them

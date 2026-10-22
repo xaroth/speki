@@ -79,6 +79,7 @@ type Document struct {
 	// the field it's about.
 	Warnings []string
 
+	path  string
 	raw   []byte
 	front *frontmatter // nil when the file has no frontmatter block
 	// titleFromPath is set when no title was found and the path stands in for it.
@@ -110,6 +111,7 @@ func Parse(docPath string, raw []byte) (*Document, error) {
 	}
 
 	d := &Document{
+		path:  docPath,
 		raw:   raw,
 		front: front,
 		Body:  string(raw[bodyOff:]),

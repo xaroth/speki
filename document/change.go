@@ -52,6 +52,18 @@ func grown(key string, current, next, limit int) error {
 	return nil
 }
 
+// AddedRelated returns the links of the related entries in next that current (nil for a new document)
+// doesn't have.
+func AddedRelated(current, next *Document) []Link {
+	var out []Link
+	for _, r := range next.Meta.Related {
+		if current == nil || !slices.Contains(current.Meta.Related, r) {
+			out = append(out, relatedLink(r, next.path))
+		}
+	}
+	return out
+}
+
 // writerKeys are the frontmatter keys agents may always set.
 var writerKeys = []string{keyTitle, keyDescription, keyTags, keyAliases, keyStatus, keyRelated}
 

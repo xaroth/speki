@@ -102,7 +102,7 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 			if err != nil {
 				return plan{}, err
 			}
-			out, err := prepareDocument(newPath, nil, []byte(req.Content), b.now(), st.vault.Config.Frontmatter.Allow)
+			out, err := st.prepareDocument(ctx, newPath, nil, []byte(req.Content), b.now())
 			if err != nil {
 				return plan{}, err
 			}
@@ -124,7 +124,7 @@ func (b *Base) Write(ctx context.Context, g *access.Grant, req WriteRequest) (Re
 		if err != nil {
 			return plan{}, err
 		}
-		out, err := prepareDocument(cur.Path, raw, []byte(req.Content), b.now(), st.vault.Config.Frontmatter.Allow)
+		out, err := st.prepareDocument(ctx, cur.Path, raw, []byte(req.Content), b.now())
 		if err != nil {
 			return plan{}, err
 		}
@@ -178,7 +178,7 @@ func (b *Base) Edit(ctx context.Context, g *access.Grant, req EditRequest) (Resu
 			limit = -1
 		}
 		next := strings.Replace(text, req.OldText, req.NewText, limit)
-		out, err := prepareDocument(cur.Path, raw, []byte(next), b.now(), st.vault.Config.Frontmatter.Allow)
+		out, err := st.prepareDocument(ctx, cur.Path, raw, []byte(next), b.now())
 		if err != nil {
 			return plan{}, err
 		}
@@ -415,9 +415,8 @@ func next(p string, i int) int {
 
 // prepareDocument checks the new content of a document against its current content (nil for a new
 // one) and sets its dates. created is speki's: now for a new document, and kept from the current one
-// when the agent's content leaves it out. allowed are the frontmatter keys the vault lets agents set on
-// top of speki's.
-func prepareDocument(path string, current, next []byte, now time.Time, allowed []string) ([]byte, error) {
+// when the agent's content leaves it out.
+func (st state) prepareDocument(ctx context.Context, path string, current, next []byte, now time.Time) ([]byte, error) {
 	var cur *document.Document
 	created := now
 	if current != nil {
@@ -433,8 +432,12 @@ func prepareDocument(path string, current, next []byte, now time.Time, allowed [
 	if err != nil {
 		return nil, errorf(CodeInvalid, "the content can't be used: %s", err)
 	}
-	err = document.Check(cur, d, allowed)
+	err = errors.Join(document.Check(cur, d, st.vault.Config.Frontmatter.Allow), st.checkRelated(ctx, cur, d))
 	if err != nil {
+		var e *Error
+		if errors.As(err, &e) {
+			return nil, e
+		}
 		return nil, documentError(err)
 	}
 	out, err := d.Touch(now, created)
@@ -442,6 +445,22 @@ func prepareDocument(path string, current, next []byte, now time.Time, allowed [
 		return nil, documentError(err)
 	}
 	return out, nil
+}
+
+// checkRelated returns an error for each related entry next adds that doesn't point to a document in the
+// vault. Entries current already has are left alone, so deleting a document doesn't block its referrers.
+func (st state) checkRelated(ctx context.Context, cur, next *document.Document) error {
+	var problems []error
+	for _, l := range document.AddedRelated(cur, next) {
+		ok, err := st.copy.Index().Resolves(ctx, l)
+		if err != nil {
+			return indexError(st.vault.Name, err)
+		}
+		if !ok {
+			problems = append(problems, fmt.Errorf("related: %q isn't a document in this vault", l.Target))
+		}
+	}
+	return errors.Join(problems...)
 }
 
 func documentError(err error) *Error {
