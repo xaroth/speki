@@ -180,8 +180,19 @@ Start it with `bin/speki --config /path/to/config.yaml`, or set `SPEKI_CONFIG=/p
 neither it reads `config.yaml` in the working directory if there is one, and otherwise runs on environment variables alone. `speki --version`
 prints the version.
 
-Each release publishes an image to `ghcr.io/xaroth/speki`, tagged with its version (`1.2.3`) and, for
-non-prereleases, `1.2` and `latest`. To build it yourself, the Dockerfile builds a small image that runs as a
+Each release publishes an image to `ghcr.io/xaroth/speki` for `linux/amd64` and `linux/arm64`, tagged with
+its version (`1.2.3`) and, for non-prereleases, `1.2` and `latest`. The image is signed with cosign, and
+carries an SBOM and build provenance. To check that an image came from this repository's release workflow:
+
+```sh
+cosign verify ghcr.io/xaroth/speki:1.2.3 \
+  --certificate-identity-regexp '^https://github.com/xaroth/speki/.github/workflows/release.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+docker buildx imagetools inspect ghcr.io/xaroth/speki:1.2.3 --format '{{json .Provenance}}'
+docker buildx imagetools inspect ghcr.io/xaroth/speki:1.2.3 --format '{{json .SBOM}}'
+```
+
+To build it yourself, the Dockerfile builds a small image that runs as a
 non-root user:
 
 ```sh
