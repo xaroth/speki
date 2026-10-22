@@ -134,14 +134,22 @@ callback carries `code` and `state` there, and names spans from a fixed set of r
 
 The SQLite driver needs cgo, so builds need a C compiler.
 
-- `Taskfile.yml` with `build`, `test`, `lint`, `vet`, `vuln`, `fuzz`, `run` and `ci` tasks. Build tags
-  `sqlite_fts5,sqlite_omit_load_extension`. `cmd/speki` doesn't compile without
+- `Taskfile.yml` with `build`, `test`, `lint`, `vet`, `vuln`, `vuln:image`, `fuzz`, `run` and `ci`
+  tasks. Build tags `sqlite_fts5,sqlite_omit_load_extension`. `cmd/speki` doesn't compile without
   `sqlite_omit_load_extension`, so the binary never links SQLite's extension loading.
+- `go.mod` pins the Go toolchain (`toolchain go1.27.3`). With the default `GOTOOLCHAIN=auto`, an older
+  local Go downloads it. Go patch releases often fix standard library vulnerabilities. Dependabot bumps
+  the Dockerfile's `golang` tag; the `toolchain` line is bumped by hand in the same pull request.
 - CI (`.github/workflows/ci.yml`, on pull requests and pushes to `main`, skipping docs-only changes):
-  the latest Go 1.27 with cgo, `golangci-lint` (govet and staticcheck included) and `go test -race`, the
+  the Go from `go.mod`'s `toolchain` line with cgo, `golangci-lint` (govet and staticcheck included) and `go test -race`, the
   same as a local `task ci`. `go test` runs the `FuzzParseTouch` seed corpus. `docker build` runs on
   pushes to `main` and on Dependabot's base image pull requests.
-- `govulncheck` (`vuln.yml`) runs on pull requests that change `go.mod` or `go.sum`, and weekly on Mondays.
+- `govulncheck` (`vuln.yml`, pinned in `Taskfile.yml`) runs on pull requests that change `go.mod` or
+  `go.sum`, and weekly on Mondays.
+- The same weekly run scans the binary in `ghcr.io/xaroth/speki:latest` (`task vuln:image`), since an image
+  that has shipped keeps the Go and dependencies it was built with. It fails only on vulnerabilities that
+  have a fix, because binary mode also reports linked code the program never calls. A failure means a
+  release is due, after bumping Go or the module if the fix isn't on `main` yet.
 - Fuzzing (`fuzz.yml`) runs `FuzzParseTouch` on manual dispatch only, for 5 minutes by default.
 - Publishing a GitHub release (`release.yml`) builds the image and pushes it to `ghcr.io/xaroth/speki`,
   tagged with the release version (`v1.2.3` gives `1.2.3`). Non-prerelease versions also get `1.2` and
@@ -151,7 +159,7 @@ The SQLite driver needs cgo, so builds need a C compiler.
   and opens one grouped pull request for updates.
 - The image `EXPOSE`s only the public port (8080). The metrics port is reachable on the container network
   but not published by default.
-- The image is built in two stages: `golang:1.27-bookworm` to build, `gcr.io/distroless/base-debian12` to
+- The image is built in two stages: `golang:1.27.3-bookworm` to build, `gcr.io/distroless/base-debian12` to
   run, as a non-root user, with the data directory as a volume.
 - Both base images are pinned by digest, so a build is reproducible and a base image change is a pull
   request. Dependabot checks the digests weekly. A merged bump reaches users with the next release.

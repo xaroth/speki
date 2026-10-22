@@ -6,6 +6,7 @@ vars:
   BIN_DIR: bin
   # The search index needs FTS5; loading extensions is compiled out.
   TAGS: sqlite_fts5,sqlite_omit_load_extension
+  GOVULNCHECK: golang.org/x/vuln/cmd/govulncheck@v1.9.0
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -34,7 +35,27 @@ tasks:
   vuln:
     summary: Check dependencies and code for known vulnerabilities
     cmds:
-      - go run golang.org/x/vuln/cmd/govulncheck@latest -tags '{{.TAGS}}' ./...
+      - go run {{.GOVULNCHECK}} -tags '{{.TAGS}}' ./...
+
+  vuln:image:
+    summary: Check the binary in a published image for known vulnerabilities
+    vars:
+      IMAGE: '{{.IMAGE | default "ghcr.io/xaroth/speki:latest"}}'
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        id=$(docker create --pull always {{.IMAGE}})
+        docker cp "$id:/usr/local/bin/speki" {{.BIN_DIR}}/speki-image
+        docker rm "$id" >/dev/null
+      - go run {{.GOVULNCHECK}} -mode=binary -format json {{.BIN_DIR}}/speki-image > {{.BIN_DIR}}/speki-image.vuln.json
+      # Binary mode can't rule out linked but unreachable code, so only findings with a fix fail: a
+      # rebuild or dependency bump clears those.
+      - |
+        ids=$(jq -r 'select(.finding.trace[0].function and .finding.fixed_version) | .finding.osv' {{.BIN_DIR}}/speki-image.vuln.json | sort -u)
+        if [ -n "$ids" ]; then
+          echo "{{.IMAGE}} has fixed vulnerabilities, cut a release:" $ids
+          exit 1
+        fi
 
   fuzz:
     summary: Fuzz Parse and Touch for a short while
