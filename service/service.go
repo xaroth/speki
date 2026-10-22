@@ -56,9 +56,8 @@ type Service struct {
 	ready    atomic.Bool // read by /readyz; set through markReady and markStopping
 	readyMu  sync.Mutex
 	stopping bool // guarded by readyMu: once set, the service never turns ready again
-	vaultsMu sync.Mutex
-	vaults   *vault.Registry // nil until the allowed accounts are known
-	ran      atomic.Bool     // Run was called: it closes the components, so a service runs once
+	vaults   *vault.Registry
+	ran      atomic.Bool // Run was called: it closes the components, so a service runs once
 
 	// started is closed once both listeners are bound; publicAddr and internalAddr are set by then.
 	started      chan struct{}
@@ -207,6 +206,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		resolver:   resolver,
 		kb:         kb,
 		mcp:        mcp,
+		vaults:     vault.NewRegistry(polled, cfg.GitHub.AllowedAccounts, logger),
 		started:    make(chan struct{}),
 		discovered: make(chan struct{}),
 

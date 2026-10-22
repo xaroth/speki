@@ -28,6 +28,21 @@ type fakeGitHub struct {
 	files            map[string]string // repo, or repo@branch off main -> speki.yaml
 	fileErr          map[string]error
 	fileReads        int
+	owner            int64
+	ownerFails       int // AppOwner fails this many times before it answers
+	ownerCalls       int
+}
+
+var errOwner = errors.New("owner unavailable")
+
+func (f *fakeGitHub) AppOwner(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ownerCalls++
+	if f.ownerCalls <= f.ownerFails {
+		return 0, errOwner
+	}
+	return f.owner, nil
 }
 
 func (f *fakeGitHub) Installations(context.Context) ([]gh.Installation, error) {
@@ -70,7 +85,7 @@ const goodConfig = "title: KB\ndescription: Knowledge.\n"
 
 var pushed = time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
 
-// newFakeGitHub has installation 1 on allowed account 42 with vault ours/kb (100) and plain repository
+// newFakeGitHub has installation 1 on account 42, which owns the app, with vault ours/kb (100) and plain repository
 // ours/code, and installation 2 on account 7 with vault stranger/kb (200).
 func newFakeGitHub() *fakeGitHub {
 	return &fakeGitHub{
@@ -91,6 +106,7 @@ func newFakeGitHub() *fakeGitHub {
 			"stranger/kb": goodConfig,
 		},
 		fileErr: map[string]error{},
+		owner:   42,
 	}
 }
 
@@ -363,4 +379,71 @@ func TestRun(t *testing.T) {
 		cancel()
 		<-done
 	})
+}
+
+// Without configured accounts, Run asks GitHub for the app's owner, retrying with backoff and reporting
+// each failure as a failed round.
+func TestRunFindsAppOwner(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name           string
+		accounts       []int64
+		ownerFails     int
+		wantRounds     []string
+		wantOwnerCalls int
+		wantElapsed    time.Duration
+	}{
+		{
+			name:       "configured accounts",
+			accounts:   []int64{42},
+			wantRounds: []string{"added ours/kb"},
+		},
+		{
+			name:           "app owner",
+			wantRounds:     []string{"added ours/kb"},
+			wantOwnerCalls: 1,
+		},
+		{
+			name:           "app owner after failures",
+			ownerFails:     2,
+			wantRounds:     []string{"owner failed", "owner failed", "added ours/kb"},
+			wantOwnerCalls: 3,
+			wantElapsed:    3 * time.Second,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFakeGitHub()
+				f.ownerFails = testCase.ownerFails
+				r := vault.NewRegistry(f, testCase.accounts, slog.New(slog.NewTextHandler(io.Discard, nil)))
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				start := time.Now()
+				var rounds []string
+				r.Run(ctx, time.Hour, func(c vault.Changes, err error) {
+					if errors.Is(err, errOwner) {
+						rounds = append(rounds, "owner failed")
+						return
+					}
+					if err != nil {
+						t.Errorf("round failed: %v", err)
+					}
+					rounds = append(rounds, "added "+strings.Join(names(c.Added), ","))
+					cancel()
+				})
+
+				if diff := cmp.Diff(testCase.wantRounds, rounds); diff != "" {
+					t.Errorf("rounds (-want +got):\n%s", diff)
+				}
+				if f.ownerCalls != testCase.wantOwnerCalls {
+					t.Errorf("got %d owner lookups, want %d", f.ownerCalls, testCase.wantOwnerCalls)
+				}
+				if got := time.Since(start); got != testCase.wantElapsed {
+					t.Errorf("got first discovery after %v, want %v", got, testCase.wantElapsed)
+				}
+			})
+		})
+	}
 }

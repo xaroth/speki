@@ -49,15 +49,18 @@ type githubAPI interface {
 	Installations(ctx context.Context) ([]gh.Installation, error)
 	Repositories(ctx context.Context, installationID int64) ([]gh.Repository, error)
 	File(ctx context.Context, installationID int64, repo, ref, path string) ([]byte, error)
+	AppOwner(ctx context.Context) (int64, error)
 }
 
 // Registry holds the current set of vaults.
 type Registry struct {
-	github  githubAPI
-	allowed map[int64]bool // account IDs whose installations count
-	logger  *slog.Logger
+	github githubAPI
+	logger *slog.Logger
 
 	round sync.Mutex // one discovery round at a time
+	// allowed holds the account IDs whose installations count. Empty until Run finds the app's owner, when
+	// none were configured. Guarded by round.
+	allowed map[int64]bool
 	// checked holds, per repository, what it looked like when its speki.yaml was last read. Only
 	// discover uses it, under round.
 	checked map[int64]checkedRepo
@@ -72,7 +75,8 @@ type checkedRepo struct {
 	branch   string
 }
 
-// NewRegistry returns an empty registry. Only installations on the allowed accounts are used.
+// NewRegistry returns an empty registry. Only installations on the allowed accounts are used; with none,
+// those on the account that owns the app.
 func NewRegistry(github githubAPI, allowedAccounts []int64, logger *slog.Logger) *Registry {
 	allowed := make(map[int64]bool, len(allowedAccounts))
 	for _, id := range allowedAccounts {
@@ -111,8 +115,13 @@ func (r *Registry) Problems() []Problem {
 }
 
 // Run discovers vaults now and then every interval until ctx ends, passing every round's outcome to
-// onRound. A failed round still carries the changes from the requests that succeeded.
+// onRound. A failed round still carries the changes from the requests that succeeded. Without allowed
+// accounts, Run first asks GitHub for the app's owner until it answers, passing each failed attempt to
+// onRound as a failed round.
 func (r *Registry) Run(ctx context.Context, interval time.Duration, onRound func(Changes, error)) {
+	if !r.findOwner(ctx, onRound) {
+		return
+	}
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
@@ -129,6 +138,37 @@ func (r *Registry) Run(ctx context.Context, interval time.Duration, onRound func
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// findOwner allows the account that owns the app when no accounts were configured, retrying with backoff.
+// It reports whether the allowed accounts are known before ctx ended.
+func (r *Registry) findOwner(ctx context.Context, onRound func(Changes, error)) bool {
+	r.round.Lock()
+	known := len(r.allowed) > 0
+	r.round.Unlock()
+	if known {
+		return true
+	}
+	wait := time.Second
+	for {
+		owner, err := r.github.AppOwner(ctx)
+		if err == nil {
+			r.round.Lock()
+			r.allowed = map[int64]bool{owner: true}
+			r.round.Unlock()
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		onRound(Changes{}, fmt.Errorf("find the app's owner: %w", err))
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, 5*time.Minute)
 	}
 }
 
