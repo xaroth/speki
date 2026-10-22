@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -63,14 +64,33 @@ func SetBySpeki(key string) bool { return key == keyCreated || key == keyUpdated
 // lockedChanges returns an error for each frontmatter key outside the writer fields and allowed that next
 // adds, removes or changes. The text doesn't vary with the value, like the warnings'.
 func lockedChanges(current, next *Document, allowed []string) []error {
+	free := func(key string) bool {
+		return slices.Contains(writerKeys, key) || slices.Contains(allowed, key) || key == keyUpdated // updated is always overwritten
+	}
+	createdSet := current == nil || !current.Meta.Created.IsZero() // Touch sets it to now, or to the current value
+	if current != nil && current.front != nil && current.front.broken != "" {
+		// Its keys can't be compared, so a repair may only drop keys agents can set anyway.
+		keys, ok := topLevelKeys(current.front.content)
+		if !ok {
+			return []error{errors.New("frontmatter: the current frontmatter is broken and speki can't tell which keys it holds; a person has to fix it")}
+		}
+		var problems []error
+		for _, k := range keys {
+			if !free(k) && k != keyCreated {
+				problems = append(problems, fmt.Errorf("frontmatter: the current frontmatter is broken and holds %q, which agents can't set; a person has to fix it", k))
+			}
+		}
+		if problems != nil {
+			return problems
+		}
+		createdSet = createdSet || slices.Contains(keys, keyCreated)
+	}
+
 	cur, nxt := properties(current), properties(next)
 	var problems []error
 	check := func(key string) {
-		switch {
-		case slices.Contains(writerKeys, key), slices.Contains(allowed, key), key == keyUpdated:
-			return // updated is always overwritten
-		case key == keyCreated && (current == nil || !current.Meta.Created.IsZero()):
-			return // Touch sets it to now, or to the current value
+		if free(key) || key == keyCreated && createdSet {
+			return
 		}
 		a, inCur := cur[key]
 		b, inNext := nxt[key]
@@ -99,6 +119,28 @@ func lockedChanges(current, next *Document, allowed []string) []error {
 	return problems
 }
 
+// topLevelKey matches a line holding a top-level key: plain, or in single or double quotes.
+var topLevelKey = regexp.MustCompile(`^(?:"([^"]*)"|'([^']*)'|([^\s#'"\-\[{][^:#]*?))\s*:(?:\s|$)`)
+
+// topLevelKeys reads the top-level key names from a frontmatter block that isn't valid YAML, line by line.
+// It returns false when a line at the top level isn't a key, so the names may be incomplete.
+func topLevelKeys(content []byte) ([]string, bool) {
+	var keys []string
+	for l := range strings.SplitSeq(string(content), "\n") {
+		l = strings.TrimSuffix(l, "\r")
+		if l == "" || l[0] == ' ' || l[0] == '\t' || l[0] == '#' {
+			continue // nested, blank or a comment
+		}
+		m := topLevelKey.FindStringSubmatch(l)
+		if m == nil {
+			return nil, false
+		}
+		keys = append(keys, m[1]+m[2]+strings.TrimSpace(m[3]))
+	}
+	return keys, true
+}
+
+// keysOf and properties read keys as text: decode refuses blocks with other keys or duplicates.
 func keysOf(d *Document) []string {
 	if d == nil || d.front == nil || d.front.node == nil {
 		return nil

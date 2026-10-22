@@ -79,8 +79,9 @@ frontmatter only works if the change fixes the frontmatter, because speki has to
 `aliases`, `status`, `related`) and `allowed` (the vault's `frontmatter.allow`) must have the same value in
 `next` as in `current`, compared on the YAML node tree, ignoring style and comments. `updated` is exempt,
 and so is `created` when `Touch` will set it. Locking applies to new documents too, where `current` has no
-keys. When the current frontmatter is broken, all its keys count as absent, so the fix can't keep keys
-agents may not set; a person has to fix it.
+keys. When the current frontmatter is broken, its values can't be compared, so `Check` reads its top-level
+key names line by line and only lets an agent repair it when none of them is locked (`created` aside). A
+block with a locked key, or a top-level line that isn't a key, has to be fixed by a person.
 
 `Touch` edits the `yaml.Node` tree in place: it updates the value node for `updated` (and `created`), or
 appends key and value nodes at the end of the mapping. Then it re-encodes only the frontmatter block, using

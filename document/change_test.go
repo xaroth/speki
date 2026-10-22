@@ -113,10 +113,27 @@ func TestCheck(t *testing.T) {
 			next:    "---\ntitle: A\ncreated: 2020-01-01\n---\n",
 		},
 		{
+			name:    "fixing broken frontmatter with a locked key",
+			current: "---\ntitle: [a\n'owner': me\n---\nText\n",
+			next:    "---\ntitle: a\n---\nText\n",
+			wantErr: `broken and holds "owner"`,
+		},
+		{
+			name:    "fixing broken frontmatter keeps created",
+			current: "---\ntitle: [a\ntags:\n  - x\n# note\ncreated: 2026-01-01T00:00:00Z\n---\nText\n",
+			next:    "---\ntitle: a\ntags: [x]\ncreated: 2026-01-01T00:00:00Z\n---\nText\n",
+		},
+		{
 			name:    "fixing broken frontmatter can't add keys",
-			current: "---\ntitle: [a\nowner: me\n---\nText\n",
+			current: "---\ntitle: [a\n---\nText\n",
 			next:    "---\ntitle: a\nowner: me\n---\nText\n",
 			wantErr: `"owner" can't be added`,
+		},
+		{
+			name:    "fixing broken frontmatter whose keys can't be read",
+			current: "---\ntitle: a\n[owner]\n---\nText\n",
+			next:    "---\ntitle: a\n---\nText\n",
+			wantErr: "can't tell which keys",
 		},
 		{name: "too many tags", next: "---\ntitle: A\ntags: [" + list("t", document.MaxTags+1) + "]\n---\n", wantErr: "tags: more than 20"},
 		{name: "too many aliases", next: "---\ntitle: A\naliases: [" + list("a", document.MaxAliases+1) + "]\n---\n", wantErr: "aliases: more than 10"},

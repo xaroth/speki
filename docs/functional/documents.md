@@ -72,7 +72,8 @@ Documents changed outside speki may break these rules. Speki still indexes them:
 type is ignored, and frontmatter that isn't valid YAML is ignored as a whole (the body is still searchable).
 `read` lists the problems under `warnings`. An agent can change such a document as long as it doesn't add
 new problems. If the frontmatter as a whole is broken, the change has to fix it, because speki rewrites
-the frontmatter to set `updated`.
+the frontmatter to set `updated`. An agent can only make that fix when the broken block holds no keys
+agents may not set; otherwise a person has to.
 
 ## Body
 
