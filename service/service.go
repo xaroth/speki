@@ -21,6 +21,7 @@ import (
 	"github.com/xaroth/speki/auth/access"
 	"github.com/xaroth/speki/auth/oauth"
 	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghcache"
 	"github.com/xaroth/speki/knowledge"
 	"github.com/xaroth/speki/library"
 	"github.com/xaroth/speki/library/gitsync"
@@ -49,6 +50,7 @@ type Service struct {
 	cfg      Config
 	logger   *slog.Logger
 	github   *gh.Client
+	polled   polledAPI // github, with the reads polling makes shared between instances
 	library  *library.Library
 	sandbox  *index.Sandbox
 	store    sharedStore
@@ -122,16 +124,6 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		return nil, fmt.Errorf("configuration: %w", err)
 	}
 
-	lib := library.New(
-		github,
-		library.Options{
-			DataDir: cfg.Sync.DataDir,
-			GitURL:  cfg.GitHub.GitURL,
-			Tokens:  func(id int64) gitsync.TokenSource { return github.InstallationTokens(id) },
-		},
-		logger,
-	)
-
 	keys, err := cfg.Auth.keyring()
 	if err != nil {
 		return nil, fmt.Errorf("configuration: %w", err)
@@ -140,6 +132,18 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	polled := newPolledGitHub(cfg, github, shared)
+
+	lib := library.New(
+		polled,
+		library.Options{
+			DataDir: cfg.Sync.DataDir,
+			GitURL:  cfg.GitHub.GitURL,
+			Tokens:  func(id int64) gitsync.TokenSource { return github.InstallationTokens(id) },
+		},
+		logger,
+	)
+
 	resolver := access.NewResolver(
 		github,
 		lib,
@@ -200,6 +204,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		cfg:        cfg,
 		logger:     logger,
 		github:     github,
+		polled:     polled,
 		library:    lib,
 		sandbox:    sandbox,
 		store:      shared,
@@ -373,7 +378,7 @@ func (s *Service) discover(ctx context.Context) {
 	if !ok {
 		return
 	}
-	registry := vault.NewRegistry(s.github, allowed, s.logger)
+	registry := vault.NewRegistry(s.polled, allowed, s.logger)
 	s.vaultsMu.Lock()
 	s.vaults = registry
 	s.vaultsMu.Unlock()
@@ -549,6 +554,50 @@ func (l libraryVaults) Sync(ctx context.Context, repoID int64) error {
 		return knowledge.ErrRebuilding
 	}
 	return err
+}
+
+// polledAPI is what discovery and the poller read from GitHub.
+type polledAPI interface {
+	Installations(ctx context.Context) ([]gh.Installation, error)
+	Repositories(ctx context.Context, installationID int64) ([]gh.Repository, error)
+	File(ctx context.Context, installationID int64, repo, ref, path string) ([]byte, error)
+	BranchHead(ctx context.Context, installationID int64, repo, branch, etag string) (gh.Head, error)
+	RepositoryID(ctx context.Context, installationID int64, repo string) (int64, error)
+}
+
+// newPolledGitHub shares the reads every round of discovery and polling makes between instances, when
+// there is Redis to share them through. A single instance reads GitHub directly.
+func newPolledGitHub(cfg Config, github *gh.Client, shared sharedStore) polledAPI {
+	if cfg.Redis.URL == "" {
+		return github
+	}
+	// A little under the intervals, so each round asks GitHub once across instances.
+	return sharedPolls{
+		Client: github,
+		shared: ghcache.New(github, shared, ghcache.Options{
+			Heads:     cfg.Sync.PollInterval * 9 / 10,
+			Discovery: cfg.Sync.DiscoveryInterval * 9 / 10,
+		}),
+	}
+}
+
+// sharedPolls reads installations, repositories and branch heads through the shared answers, and the
+// rest from GitHub.
+type sharedPolls struct {
+	*gh.Client
+	shared *ghcache.Client
+}
+
+func (p sharedPolls) Installations(ctx context.Context) ([]gh.Installation, error) {
+	return p.shared.Installations(ctx)
+}
+
+func (p sharedPolls) Repositories(ctx context.Context, installationID int64) ([]gh.Repository, error) {
+	return p.shared.Repositories(ctx, installationID)
+}
+
+func (p sharedPolls) BranchHead(ctx context.Context, installationID int64, repo, branch, etag string) (gh.Head, error) {
+	return p.shared.BranchHead(ctx, installationID, repo, branch, etag)
 }
 
 // sharedStore is the state instances share, and the channel they tell each other about changes on.
