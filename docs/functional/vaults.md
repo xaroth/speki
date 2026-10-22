@@ -99,7 +99,9 @@ vault. Members of a child team count as members of its parent. Checking teams us
 read" organisation permission, which speki already needs.
 
 A key that's left out doesn't narrow anything. An empty list is rejected, so a typo can't silently open or
-close a vault. Users are matched by login. A renamed account needs its new login listed.
+close a vault. Users are matched by login. A renamed account needs its new login listed. Speki learns
+the new login when the user's client next refreshes its access, within an hour of the rename. Until then
+the old login still matches.
 
 Anyone who can push to the default branch can change these keys. When that matters, protect `speki.yaml`
 with a push ruleset that restricts its path. Speki only writes `.md` files, so the ruleset doesn't block it.

@@ -189,7 +189,8 @@ func TestTokenRefreshGrant(t *testing.T) {
 		want           tokenResponse
 		wantErr        oauthError
 		wantRetryAfter string
-		wantShared     bool // the answer is the one the first refresh got
+		wantShared     bool   // the answer is the one the first refresh got
+		wantLogin      string // empty is octocat
 	}{
 		{name: "refreshed", wantStatus: http.StatusOK, want: bothScopes},
 		{name: "refreshed again with the same token", before: scope(""), wantStatus: http.StatusOK, want: bothScopes, wantShared: true},
@@ -197,6 +198,10 @@ func TestTokenRefreshGrant(t *testing.T) {
 		{name: "narrowed to read", form: scope("speki:read"), wantStatus: http.StatusOK, want: readScope},
 		{name: "write alone keeps read", form: scope("speki:write"), wantStatus: http.StatusOK, want: bothScopes},
 		{name: "unknown scopes ignored", form: scope("offline_access speki:read"), wantStatus: http.StatusOK, want: readScope},
+
+		{name: "user renamed on GitHub", github: func(f *fakeGitHub) { f.me.Login = "octokitten" }, wantStatus: http.StatusOK, want: bothScopes, wantLogin: "octokitten"},
+		{name: "user lookup fails", github: func(f *fakeGitHub) { f.meErr = errors.New("connection reset") }, wantStatus: http.StatusOK, want: bothScopes},
+		{name: "token of another user", github: func(f *fakeGitHub) { f.me = gh.User{ID: 8, Login: "mallory"} }, wantStatus: http.StatusOK, want: bothScopes},
 
 		{name: "not a refresh token", form: set("refresh_token", "v1.k1.xyz"), wantStatus: http.StatusBadRequest, wantErr: invalidGrant("the refresh token is invalid or expired")},
 		{name: "expired", wait: 90*24*time.Hour + skew + time.Second, wantStatus: http.StatusBadRequest, wantErr: invalidGrant("the refresh token is invalid or expired")},
@@ -299,7 +304,11 @@ func TestTokenRefreshGrant(t *testing.T) {
 					t.Errorf("got a new pair, want the one the first refresh got")
 				}
 				got, _ := e.identity(t, resp.AccessToken)
-				want := oauth.Identity{UserID: 7, Login: "octocat", GitHubToken: "ghu_2", Client: "Claude Code", Write: strings.Contains(resp.Scope, "speki:write")}
+				login := testCase.wantLogin
+				if login == "" {
+					login = "octocat"
+				}
+				want := oauth.Identity{UserID: 7, Login: login, GitHubToken: "ghu_2", Client: "Claude Code", Write: strings.Contains(resp.Scope, "speki:write")}
 				if diff := cmp.Diff(want, got); diff != "" {
 					t.Errorf("identity mismatch (-want +got):\n%s", diff)
 				}

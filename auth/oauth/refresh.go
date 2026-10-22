@@ -144,7 +144,7 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 			retryAfter:  "5",
 		}
 	}
-	user := gh.User{ID: rv.UserID, Login: rv.Login}
+	user := s.currentUser(gctx, rv, tokens.AccessToken)
 	resp, err = s.issue(user, tokens, scopes, rv.ClientID, rv.Client, rv.SignedIn)
 	if err != nil {
 		return tokenResponse{}, err
@@ -174,6 +174,24 @@ func (s *Server) refreshLocked(ctx context.Context, lock refreshLock, rv refresh
 	defer cancel()
 	_, _, _ = s.store.GetDel(dctx, unknownOutcomeKey(key))
 	return resp, nil
+}
+
+// currentUser asks GitHub for the user's login, which changes when they rename their account: readers
+// and writers are listed by login. The GitHub refresh token is spent by now, so a failed lookup keeps
+// the old login rather than failing the refresh, which would sign the user out.
+func (s *Server) currentUser(ctx context.Context, rv refreshValue, githubToken string) gh.User {
+	user := gh.User{ID: rv.UserID, Login: rv.Login}
+	me, err := s.github.Me(ctx, githubToken)
+	if err != nil {
+		s.logger.WarnContext(ctx, "GitHub user lookup on refresh failed; keeping the old login", "login", rv.Login, "err", err)
+		return user
+	}
+	if me.ID != rv.UserID {
+		s.logger.WarnContext(ctx, "GitHub token belongs to another user; keeping the old login", "login", rv.Login, "uid", rv.UserID, "github_uid", me.ID)
+		return user
+	}
+	user.Login = me.Login
+	return user
 }
 
 // lostError turns a lost result into its answer. A lost result means another request refreshed this

@@ -409,3 +409,27 @@ func signIn(tb testing.TB, s *service.Service) signedIn {
 	tokens.ClientID = client.ClientID
 	return tokens
 }
+
+// refresh trades the client's refresh token for new tokens.
+func refresh(tb testing.TB, s *service.Service, tokens signedIn) signedIn {
+	tb.Helper()
+	public, _ := s.URLs()
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tokens.RefreshToken}, "client_id": {tokens.ClientID}}
+	req, err := http.NewRequestWithContext(tb.Context(), http.MethodPost, public+"/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var got signedIn
+	err = json.NewDecoder(resp.Body).Decode(&got)
+	if resp.StatusCode != http.StatusOK || err != nil || got.AccessToken == "" {
+		tb.Fatalf("refresh: got %d %v, want 200 with tokens", resp.StatusCode, err)
+	}
+	got.ClientID = tokens.ClientID
+	return got
+}

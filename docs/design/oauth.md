@@ -183,7 +183,13 @@ Details per step:
    connecting or in the TLS handshake is tried up to three times in all, a moment apart: nothing of it
    was sent, so the token is still good. One that may have been sent is never tried again. A
    `bad_refresh_token` becomes `invalid_grant`, which sends the user to sign in again.
-5. Seal the new pair. Store it for a minute under the old token's hash, encrypted with a key derived
+5. Ask GitHub for the user with the new access token (`GET /user`), so the new pair carries the user's
+   current login: `readers` and `writers` match by login, and a renamed user's old login may be taken by
+   someone else. This bounds a stale login to one access token's lifetime (1 hour). The lookup shares the
+   20 seconds of step 4. If it fails, or returns another user ID, the pair keeps the old login and speki
+   logs a warning: the GitHub refresh token is spent by then, so failing the refresh would sign the user
+   out.
+6. Seal the new pair. Store it for a minute under the old token's hash, encrypted with a key derived
    from the old refresh token itself, so the store (Redis, in a cluster) never holds a usable token.
    Return it. Storing should finish before the lock runs out. If it fails twice, speki stores a marker
    instead, and a request waiting with the same token gets `temporarily_unavailable`: the client may

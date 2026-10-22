@@ -52,6 +52,7 @@ type fakeGitHub struct {
 	callback    string // where GitHub must send the user back
 	exchangeErr error
 	meErr       error
+	me          gh.User                   // who Me says the token's user is
 	refreshErr  error                     // returned before GitHub spends the token
 	afterSpend  func(ctx context.Context) // runs once GitHub spent the token, before it answers
 }
@@ -114,7 +115,7 @@ func (f *fakeGitHub) Me(context.Context, string) (gh.User, error) {
 	if f.meErr != nil {
 		return gh.User{}, f.meErr
 	}
-	return gh.User{ID: 7, Login: "octocat"}, nil
+	return f.me, nil
 }
 
 // fakeStore is a memory store whose operations can be made to fail.
@@ -285,6 +286,7 @@ func newEnv(tb testing.TB, opts ...option) *env {
 		issuer:  strings.TrimSuffix(s.cfg.Issuer, "/"),
 		github: &fakeGitHub{
 			spent:     map[string]bool{},
+			me:        gh.User{ID: 7, Login: "octocat"},
 			accessTTL: 8 * time.Hour,
 			callback:  strings.TrimSuffix(s.cfg.Issuer, "/") + "/oauth/github/callback",
 		},
