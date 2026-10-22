@@ -678,7 +678,7 @@ type QueryInput struct {
 type QueryOutput struct {
 	Columns   []string       `json:"columns"`
 	Rows      [][]any        `json:"rows"`
-	Truncated bool           `json:"truncated" jsonschema:"true when rows were cut at 500 rows or 1 MiB"`
+	Truncated bool           `json:"truncated" jsonschema:"true when rows were cut at 200 rows or the size of one answer"`
 	Skipped   []SkippedVault `json:"skipped_vaults,omitempty" jsonschema:"vaults you can read that weren't queried because speki can't serve them right now. The rows say nothing about what they hold"`
 }
 
@@ -688,21 +688,20 @@ func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (Que
 		return QueryOutput{}, "", err
 	}
 	r := res.Rows
-	out := QueryOutput{Columns: r.Columns, Rows: r.Rows, Truncated: r.Truncated, Skipped: skippedVaults(res.Skipped)}
+	out := QueryOutput{Columns: r.Columns, Rows: [][]any{}, Truncated: r.Truncated, Skipped: skippedVaults(res.Skipped)}
 	if out.Columns == nil {
 		out.Columns = []string{}
 	}
-	if out.Rows == nil {
-		out.Rows = [][]any{}
-	}
+	var skipped strings.Builder
+	writeSkipped(&skipped, "queried", out.Skipped)
 	var b strings.Builder
 	cells := make([]string, len(out.Columns))
 	for i, c := range out.Columns {
 		cells[i] = oneLine(c)
 	}
 	b.WriteString(strings.Join(cells, "\t") + "\n")
-	size, shown := 0, 0
-	for _, row := range out.Rows {
+	size := encodedSize(out) + encodedSize(b.String()+skipped.String()) + answerOverhead
+	for _, row := range r.Rows {
 		for i, v := range row {
 			if v == nil {
 				cells[i] = "NULL"
@@ -711,30 +710,37 @@ func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (Que
 			}
 		}
 		line := strings.Join(cells, "\t") + "\n"
-		size += jsonSize(line)
-		if size > maxQueryText { // the text goes out JSON-encoded too, beside the structured rows
+		// Each row goes out twice: in the structured rows and as a line of text.
+		size += encodedSize(row) + 1 + encodedSize(line) - 2
+		if size > maxAnswer {
+			out.Truncated = true
 			break
 		}
 		b.WriteString(line)
-		shown++
+		out.Rows = append(out.Rows, row)
 	}
 	fmt.Fprintf(&b, "%d rows", len(out.Rows))
-	if shown < len(out.Rows) {
-		fmt.Fprintf(&b, ", the first %d shown here; the structured result has them all", shown)
-	}
 	if out.Truncated {
 		b.WriteString(", truncated: add a LIMIT or narrow the query to see the rest")
 	}
 	b.WriteString("\n")
-	writeSkipped(&b, "queried", out.Skipped)
+	b.WriteString(skipped.String())
 	return out, b.String(), nil
 }
 
-// maxQueryText caps the text rendering of a query result, as it'll be encoded.
-const maxQueryText = 1 << 20
+// maxAnswer is the most one tool result may take, JSON-encoded. Claude Code cuts MCP tool output at
+// about 25k tokens by default, and 80 KiB of text is about 20k.
+const maxAnswer = 80 << 10
 
-// jsonSize is how many bytes s takes encoded as a JSON string.
-func jsonSize(s string) int {
-	raw, _ := json.Marshal(s) // a string always marshals
+// answerOverhead is room for what a result carries beside its content: the JSON-RPC envelope, field
+// names and short lines of text.
+const answerOverhead = 1 << 10
+
+// encodedSize is how many bytes v takes JSON-encoded, or 0 if it can't be.
+func encodedSize(v any) int {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
 	return len(raw)
 }

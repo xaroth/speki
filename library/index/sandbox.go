@@ -28,7 +28,7 @@ const (
 	// QueryTimeout is how long a query may take, waiting for a connection included.
 	QueryTimeout    = 3 * time.Second
 	MaxQuerySources = 10
-	maxQueryRows    = 500
+	maxQueryRows    = 200
 	maxQueryBytes   = 1 << 20
 	maxValueBytes   = 100_000 // one string or blob
 	maxQueryColumns = 50      // so a row is at most a few MB before the size check

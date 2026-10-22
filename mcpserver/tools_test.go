@@ -532,14 +532,14 @@ func TestTools(t *testing.T) {
 			wantOut:  mcpserver.QueryOutput{Columns: []string{}, Rows: [][]any{}},
 		},
 		{
-			// The text is capped by its encoded size, as it goes out beside the structured rows.
-			name:     "query text is capped",
-			kb:       &fakeKB{rows: knowledge.QueryResult{Rows: index.Rows{Columns: []string{"x"}, Rows: [][]any{{big}, {big}}}}},
+			// Rows are cut by their encoded size, in the structured rows and the text together.
+			name:     "query cut to fit one answer",
+			kb:       &fakeKB{rows: knowledge.QueryResult{Rows: index.Rows{Columns: []string{"x"}, Rows: [][]any{{"a"}, {big}}}}},
 			tool:     "query",
 			args:     map[string]any{"sql": "SELECT x"},
 			wantReq:  knowledge.QueryRequest{SQL: "SELECT x"},
-			wantText: "x\n" + big + "\n2 rows, the first 1 shown here; the structured result has them all\n",
-			wantOut:  mcpserver.QueryOutput{Columns: []string{"x"}, Rows: [][]any{{big}, {big}}},
+			wantText: "x\na\n1 rows, truncated: add a LIMIT or narrow the query to see the rest\n",
+			wantOut:  mcpserver.QueryOutput{Columns: []string{"x"}, Rows: [][]any{{"a"}}, Truncated: true},
 		},
 		{
 			name:     "write",
@@ -596,6 +596,73 @@ func TestTools(t *testing.T) {
 			}
 			if diff := cmp.Diff(testCase.wantOut, decodeLike(t, res.structured, testCase.wantOut)); diff != "" {
 				t.Errorf("structured content (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// The largest result a tool can give fits in one answer, as encoded on the wire.
+func TestAnswerSize(t *testing.T) {
+	t.Parallel()
+	wide := make([]any, 50) // index.maxQueryColumns
+	for i := range wide {
+		wide[i] = strings.Repeat("<", 40) // 240 bytes encoded, each < as six
+	}
+	long := []any{strings.Repeat("<", 100_000)} // index.maxValueBytes
+	narrow := []any{nil, int64(-1 << 62), 1.5e300, "a\tb"}
+	many := func(row []any) [][]any {
+		rows := make([][]any, 200) // index.maxQueryRows
+		for i := range rows {
+			rows[i] = row
+		}
+		return rows
+	}
+	columns := func(n int) []string {
+		c := make([]string, n)
+		for i := range c {
+			c[i] = fmt.Sprintf("column_<%d>", i)
+		}
+		return c
+	}
+	var vaults []knowledge.Skipped
+	for i := range 20 {
+		vaults = append(vaults, knowledge.Skipped{Name: fmt.Sprintf("ours/building-%02d", i), State: access.StateBuilding})
+	}
+	testCases := []struct {
+		name string
+		kb   *fakeKB
+		tool string
+		args map[string]any
+	}{
+		{
+			name: "query with wide rows",
+			kb:   &fakeKB{rows: knowledge.QueryResult{Rows: index.Rows{Columns: columns(len(wide)), Rows: many(wide)}, Skipped: vaults}},
+			tool: "query",
+			args: map[string]any{"sql": "SELECT 1"},
+		},
+		{
+			name: "query with long values",
+			kb:   &fakeKB{rows: knowledge.QueryResult{Rows: index.Rows{Columns: columns(len(long)), Rows: many(long)}, Skipped: vaults}},
+			tool: "query",
+			args: map[string]any{"sql": "SELECT 1"},
+		},
+		{
+			name: "query with narrow rows",
+			kb:   &fakeKB{rows: knowledge.QueryResult{Rows: index.Rows{Columns: columns(len(narrow)), Rows: many(narrow)}, Skipped: vaults}},
+			tool: "query",
+			args: map[string]any{"sql": "SELECT 1"},
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHandler(t, testCase.kb, mcpserver.Identity{}, nil)
+			rec := post(t, h, "alice", callBody(t, testCase.tool, testCase.args))
+			if res := toolResultOf(t, rec); res.isError {
+				t.Fatalf("got error %q, want a result", res.text)
+			}
+			if got := rec.Body.Len(); got > mcpserver.MaxAnswer {
+				t.Errorf("got %d bytes, want at most %d", got, mcpserver.MaxAnswer)
 			}
 		})
 	}

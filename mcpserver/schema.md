@@ -81,6 +81,7 @@ Text search combined with metadata:
 
 - One statement. Core, JSON, date and time functions, aggregates and window functions. No `PRAGMA`,
   `ATTACH`, writes or temporary tables.
-- 500 rows and 1 MiB of results (and 1 MiB more for the same rows as text); `truncated` says when rows
-  were cut. 3 seconds, one query at a time.
+- 200 rows, and as many as fit in one answer of 80 KiB (about 20k tokens), counting each row twice: in
+  `rows` and as a line of text. `truncated` says when rows were cut; add a `LIMIT`, select fewer or
+  shorter columns, or narrow the query. 3 seconds, one query at a time.
 - At most 10 vaults per query. If you can read more, name them in `vaults`.

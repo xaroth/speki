@@ -191,8 +191,11 @@ A user who can read more than 10 vaults has to name the ones to query.
   "truncated": false }
 ```
 
-Limits: 500 rows, 1 MiB of result, 3 seconds, one query per user at a time. Hitting the row or size limit
-sets `truncated`. Hitting the time limit is a `timeout` error, and needing more memory than queries may
+Limits: 200 rows, 3 seconds, one query per user at a time. Rows also stop when the next one wouldn't fit
+in one answer of 80 KiB, JSON-encoded, with each row counted twice: in `rows` and as a line of the text
+result. That keeps a result under the roughly 25k tokens Claude Code accepts from an MCP tool by default.
+Hitting either limit sets `truncated`, and the text ends with "truncated: add a LIMIT or narrow the query
+to see the rest". Hitting the time limit is a `timeout` error, and needing more memory than queries may
 use is `too_large`. When two queries are already running, across all users, a query waits up to a second,
 then fails with `unavailable`.
 

@@ -288,10 +288,10 @@ generation's file.
    statement and returns the last one's rows.
 4. Run it with a context that ends at the 3-second limit. The driver interrupts SQLite when the context ends.
    This is the only bound on running time: SQLite has no limit on instructions executed.
-5. Read at most 500 rows and 1 MiB, then stop and mark `truncated`. The 1 MiB is the rows as they'll go
+5. Read at most 200 rows and 1 MiB, then stop and mark `truncated`. The 1 MiB is the rows as they'll go
    out, measured with `json.Marshal` on each value: escapes for `<`, `>` and `&`, for invalid UTF-8 and
-   line separators, numbers in full, separators and column names included. The text rendering beside
-   them has its own 1 MiB cap and says when it shows fewer rows than the structured part.
+   line separators, numbers in full, separators and column names included. It bounds memory; the MCP
+   server cuts the rows further to fit one answer (see [mcp.md](mcp.md)).
 6. Close the connection, marked bad (`driver.ErrBadConn` from `Raw`) so the pool discards it. The idle
    limit alone isn't enough: `database/sql` hands a released connection straight to a waiting caller.
 
