@@ -25,6 +25,7 @@ const (
 	maxGuidelines  = 2000
 	maxAllow       = 50
 	maxAllowKey    = 100
+	maxRepos       = 50
 )
 
 // Config is a vault's speki.yaml.
@@ -38,6 +39,41 @@ type Config struct {
 	Readers     []Principal `yaml:"readers"`
 	Writers     []Principal `yaml:"writers"`
 	Frontmatter Frontmatter `yaml:"frontmatter"`
+	// Repositories are the code repositories the vault's knowledge is about.
+	Repositories Repositories `yaml:"repositories"`
+}
+
+// Repositories lists the repositories a vault covers.
+type Repositories []Repository
+
+// UnmarshalYAML reads the list, naming the line of an entry it can't read instead of quoting it.
+func (rs *Repositories) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("repositories, line %d: not a list", node.Line)
+	}
+	out := make(Repositories, 0, len(node.Content))
+	for _, n := range node.Content {
+		var r Repository
+		if n.Kind != yaml.ScalarNode {
+			return fmt.Errorf("repositories, line %d: not a repository", n.Line)
+		}
+		err := r.UnmarshalText([]byte(n.Value))
+		if err != nil {
+			return fmt.Errorf("repositories, line %d: %w", n.Line, err)
+		}
+		out = append(out, r)
+	}
+	*rs = out
+	return nil
+}
+
+// Strings returns the entries normalised, as speki shows them.
+func (rs Repositories) Strings() []string {
+	var out []string
+	for _, r := range rs {
+		out = append(out, r.String())
+	}
+	return out
 }
 
 // Frontmatter says which frontmatter keys agents may set, on top of speki's writer fields. Other keys
@@ -109,6 +145,7 @@ func ParseConfig(raw []byte, owner string) (Config, error) {
 		checkPrincipals("readers", c.Readers, owner),
 		checkPrincipals("writers", c.Writers, owner),
 		checkAllow(c.Frontmatter.Allow),
+		checkRepositories(c.Repositories),
 	)
 	err = errors.Join(errs...)
 	if err != nil {
@@ -133,6 +170,20 @@ func checkAllow(keys []string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func checkRepositories(rs Repositories) error {
+	if len(rs) > maxRepos {
+		return fmt.Errorf("repositories has %d entries, at most %d allowed", len(rs), maxRepos)
+	}
+	seen := make(map[Repository]bool, len(rs))
+	for _, r := range rs {
+		if seen[r] {
+			return fmt.Errorf("repositories lists %s twice", r)
+		}
+		seen[r] = true
+	}
+	return nil
 }
 
 func checkLength(field, s string, limit int) error {

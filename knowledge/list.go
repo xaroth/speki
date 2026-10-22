@@ -16,14 +16,15 @@ const listLimit = 200
 
 // VaultInfo describes a vault the user may read.
 type VaultInfo struct {
-	Name        string
-	Title       string
-	Description string
-	Guidelines  string
-	Frontmatter []string // keys agents may set on top of speki's writer fields
-	CanWrite    bool
-	Documents   int
-	State       access.State // why speki doesn't serve the vault right now; empty when it does
+	Name         string
+	Title        string
+	Description  string
+	Guidelines   string
+	Frontmatter  []string // keys agents may set on top of speki's writer fields
+	Repositories []string // the repositories the vault covers, normalised
+	CanWrite     bool
+	Documents    int
+	State        access.State // why speki doesn't serve the vault right now; empty when it does
 }
 
 // Vaults returns the vaults the user may read, sorted by name. Those speki doesn't serve right now come
@@ -32,11 +33,12 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 	var out []VaultInfo
 	for _, v := range g.Readable() {
 		gone := VaultInfo{
-			Name:        v.Name,
-			Title:       v.Config.Title,
-			Description: v.Config.Description,
-			Guidelines:  v.Config.Guidelines,
-			State:       access.StateGone,
+			Name:         v.Name,
+			Title:        v.Config.Title,
+			Description:  v.Config.Description,
+			Guidelines:   v.Config.Guidelines,
+			Repositories: v.Config.Repositories.Strings(),
+			State:        access.StateGone,
 		}
 		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
@@ -53,22 +55,24 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 			continue
 		}
 		out = append(out, VaultInfo{
-			Name:        v.Name,
-			Title:       v.Config.Title,
-			Description: v.Config.Description,
-			Guidelines:  v.Config.Guidelines,
-			Frontmatter: v.Config.Frontmatter.Allow,
-			CanWrite:    g.CanWrite(v.RepoID),
-			Documents:   stats.Documents,
+			Name:         v.Name,
+			Title:        v.Config.Title,
+			Description:  v.Config.Description,
+			Guidelines:   v.Config.Guidelines,
+			Frontmatter:  v.Config.Frontmatter.Allow,
+			Repositories: v.Config.Repositories.Strings(),
+			CanWrite:     g.CanWrite(v.RepoID),
+			Documents:    stats.Documents,
 		})
 	}
 	for _, u := range g.Unavailable() {
 		out = append(out, VaultInfo{
-			Name:        u.Vault.Name,
-			Title:       u.Vault.Config.Title,
-			Description: u.Vault.Config.Description,
-			Guidelines:  u.Vault.Config.Guidelines,
-			State:       u.State,
+			Name:         u.Vault.Name,
+			Title:        u.Vault.Config.Title,
+			Description:  u.Vault.Config.Description,
+			Guidelines:   u.Vault.Config.Guidelines,
+			Repositories: u.Vault.Config.Repositories.Strings(),
+			State:        u.State,
 		})
 	}
 	slices.SortFunc(out, func(a, b VaultInfo) int { return cmp.Compare(a.Name, b.Name) })

@@ -78,7 +78,7 @@ Input: none.
 
 Output: a longer explanation than the handshake instructions (what to search for, when to write, the
 document format, link style, how versions work), then the user's vaults. Each vault comes with its title,
-description, guidelines and whether the user can write to it.
+description, guidelines, the repositories it covers and whether the user can write to it.
 
 ## list
 
@@ -89,6 +89,7 @@ Without `vault`: the user's vaults, sorted by name. One speki can't serve right 
 { "vaults": [
   { "vault": "acme/kb", "title": "Infrastructure knowledge",
     "description": "How our services are deployed and operated...",
+    "repositories": ["github.com/acme/infra", "github.com/acme/svc-*"],
     "can_write": true, "documents": 412 },
   { "vault": "acme/new", "can_write": false, "documents": 0, "state": "building" }
 ] }

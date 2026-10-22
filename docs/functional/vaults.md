@@ -30,6 +30,10 @@ guidelines: |
   Mark anything that describes the old Nomad setup as deprecated instead of deleting it.
 frontmatter:
   allow: [owner, review_by]
+repositories:
+  - xaroth/speki-infra
+  - github.com/xaroth/mantine-*
+  - gitlab.com/team/sub/deploy
 ```
 
 | Field | Required | Used for |
@@ -41,6 +45,7 @@ frontmatter:
 | `readers` | no | Users and teams that may read the vault. Leave it out to let everyone with read access in |
 | `writers` | no | Users and teams that may write to the vault. Leave it out to let every reader with push access write |
 | `frontmatter.allow` | no | Frontmatter keys agents may set on top of `title`, `description`, `tags`, `aliases`, `status` and `related`. Leave it out to allow none. At most 50; `created` and `updated` can't be listed. Returned by `guide` |
+| `repositories` | no | The code repositories the vault's knowledge is about, shown in `list` and `guide`. At most 50. See [Repositories](#repositories) |
 
 Speki ignores unknown keys, so a newer `speki.yaml` doesn't break an older speki.
 
@@ -48,6 +53,23 @@ A `speki.yaml` that doesn't parse, misses a required field, goes over a length l
 64 KiB is rejected. A new vault with a bad file isn't added. An existing vault keeps running with its last
 good configuration. Either way the problem is logged and shown on speki's status page, so an operator can
 see what's wrong.
+
+## Repositories
+
+`repositories` tells agents which code repositories a vault covers. A vault can cover several
+repositories, and several vaults can cover the same one.
+
+Each entry is `host/owner/repo`, or `owner/repo` for github.com. A git remote URL works too
+(`https://github.com/xaroth/speki.git`, `git@gitlab.com:team/sub/deploy.git`): speki drops the scheme,
+user, port and `.git` and lower-cases the rest. `owner` can hold GitLab subgroups, but a github.com entry
+is always exactly `owner/repo`.
+
+A `*` in the repository name covers every repository of that owner whose name matches:
+`xaroth/mantine-*` covers `xaroth/mantine-core` but not `xaroth/mantine`. `*` can't be used in the host
+or owner, and covers one level only: `gitlab.com/team/*` doesn't cover `gitlab.com/team/sub/deploy`.
+
+Speki doesn't check that the repositories exist or who can see them. Entries are shown to everyone who
+can read the vault, so don't list a private repository's name in a vault with a wider audience.
 
 ## Limiting who reads and writes a vault
 
