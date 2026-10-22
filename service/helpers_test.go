@@ -24,7 +24,9 @@ import (
 
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/gh/ghtest"
+	"github.com/xaroth/speki/library"
 	"github.com/xaroth/speki/service"
+	"github.com/xaroth/speki/vault"
 )
 
 const (
@@ -33,6 +35,12 @@ const (
 	userToken  = "ghu_test"
 	branch     = "master" // go-git's default
 )
+
+var kbFiles = map[string]string{
+	"speki.yaml":   "title: KB\ndescription: Test vault.\n",
+	"fleet.md":     "# Fleet\n\nWe fly zeppelins.\n",
+	"ops/roles.md": "# Roles\n",
+}
 
 // gitHub is a fake GitHub whose repositories are also real git repositories under gitURL, which speki
 // clones and fetches. Commits through the API land in both.
@@ -432,4 +440,36 @@ func refresh(tb testing.TB, s *service.Service, tokens signedIn) signedIn {
 	}
 	got.ClientID = tokens.ClientID
 	return got
+}
+
+// holdRoute makes GitHub hold requests to route until release is closed or the request ends.
+func holdRoute(route string, release <-chan struct{}) ghtest.Option {
+	return ghtest.ExpectRoute(route, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+}
+
+type statusPage struct {
+	Ready    bool             `json:"ready"`
+	Store    string           `json:"store"`
+	Vaults   []library.Status `json:"vaults"`
+	Problems []vault.Problem  `json:"problems"`
+	Warnings []string         `json:"warnings"`
+}
+
+func getStatus(tb testing.TB, s *service.Service) statusPage {
+	tb.Helper()
+	_, internal := s.URLs()
+	var page statusPage
+	if err := json.Unmarshal(get(tb, internal+"/status").body, &page); err != nil {
+		tb.Fatal(err)
+	}
+	return page
 }
