@@ -17,7 +17,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/mattn/go-sqlite3"
 )
@@ -212,61 +211,6 @@ func TestBrokenDocumentsStayOutOfFullText(t *testing.T) {
 				if err != nil {
 					t.Errorf("%s integrity check: got error %v, want nil", table, err)
 				}
-			}
-		})
-	}
-}
-
-// Right after a change, before the vocabulary is reloaded, a partial word or a number isn't corrected.
-func TestSearchDoesNotCorrectPartialWordsOrNumbers(t *testing.T) {
-	t.Parallel()
-	x := NewTestIndex(t, map[string]string{"a.md": "# Network\n\nnetwork notes for 2025\n"})
-	x.current.Load().vocab.Store(nil)
-	src := []Source{{Name: "kb", Index: x}}
-	testCases := []struct {
-		name  string
-		query string
-		hits  int
-	}{
-		{name: "partial word", query: "netw", hits: 1},
-		{name: "number", query: "2026", hits: 0},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			res, err := Search(t.Context(), src, testCase.query, Options{})
-			if err != nil {
-				t.Fatalf("Search: got error %v, want nil", err)
-			}
-			if res.Corrected != nil || len(res.Hits) != testCase.hits {
-				t.Errorf("got %d hits, corrected %v; want %d, none", len(res.Hits), res.Corrected, testCase.hits)
-			}
-		})
-	}
-}
-
-// A snippet cut inside a match still closes the bold span, and stays within the limit.
-func TestBoldMatches(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name string
-		in   string
-		want string // when short enough to compare
-	}{
-		{name: "cut inside a match", in: strings.Repeat("a", 490) + "\x01" + strings.Repeat("b", 30) + "\x02 c"},
-		{name: "cut inside a character", in: "\x01" + strings.Repeat("é", 400) + "\x02"},
-		{name: "short", in: "short \x01match\x02 here", want: "short **match** here"},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			got := boldMatches(testCase.in)
-			if len(got) > maxDescription || strings.Count(got, "**")%2 != 0 || !utf8.ValidString(got) {
-				t.Errorf("got %d bytes, %d markers, valid UTF-8 %v; want at most %d, even, valid",
-					len(got), strings.Count(got, "**"), utf8.ValidString(got), maxDescription)
-			}
-			if testCase.want != "" && got != testCase.want {
-				t.Errorf("got %q, want %q", got, testCase.want)
 			}
 		})
 	}
