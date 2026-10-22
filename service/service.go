@@ -235,27 +235,11 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}()
 
-	var lc net.ListenConfig
-	public, err := lc.Listen(ctx, "tcp", s.cfg.Listen)
-	if err != nil {
-		_ = s.closeComponents()
-		return fmt.Errorf("listen: %w", err)
-	}
-	internal, err := lc.Listen(ctx, "tcp", s.cfg.MetricsListen)
-	if err != nil {
-		_ = public.Close()
-		_ = s.closeComponents()
-		return fmt.Errorf("metrics_listen: %w", err)
-	}
-	s.publicAddr = public.Addr()
-	s.internalAddr = internal.Addr()
-
-	publicSrv := newServer(s.publicHandler())
-	internalSrv := newServer(s.internalHandler())
-
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error { return serve(publicSrv, public) })
-	g.Go(func() error { return serve(internalSrv, internal) })
+	servers, err := s.listenAndServe(ctx, g)
+	if err != nil {
+		return err
+	}
 	close(s.started)
 	s.logger.InfoContext(ctx, "speki started", "listen", s.publicAddr.String(), "metrics_listen", s.internalAddr.String())
 
@@ -271,61 +255,92 @@ func (s *Service) Run(ctx context.Context) error {
 
 	g.Go(func() error {
 		<-gctx.Done()
-		s.markStopping()
-		stopped := context.WithoutCancel(ctx)
-
-		// Running requests finish first, with vaults still open and polled. When their time runs out,
-		// their connections are cut: a routine stop, not a failure.
-		drainCtx, cancel := context.WithTimeout(stopped, s.drainTimeout)
-		defer cancel()
-		for _, srv := range []*http.Server{publicSrv, internalSrv} {
-			err := srv.Shutdown(drainCtx)
-			if errors.Is(err, context.DeadlineExceeded) {
-				s.logger.WarnContext(ctx, "requests still running at shutdown; closing their connections")
-				err = srv.Close()
-			}
-			if err != nil {
-				s.logger.WarnContext(ctx, "stopping a server failed", "err", err)
-			}
-		}
-		// Close doesn't wait for handlers, and closing components under one would fail its request.
-		hctx, cancel := context.WithTimeout(stopped, s.handlerWait)
-		defer cancel()
-		s.handlersMu.Lock()
-		s.handlersClosed = true // no Add after this, so Wait can't race one
-		s.handlersMu.Unlock()
-		handlersDone := waitFor(hctx, &s.handlers)
-
-		bgCtx, cancel := context.WithTimeout(stopped, s.backgroundTimeout)
-		defer cancel()
-		stopWork()
-		workDone := true
-		err := s.kb.Stop(bgCtx)
-		if err != nil {
-			s.logger.WarnContext(ctx, "work after commits didn't finish in time")
-			workDone = false
-		}
-		if !waitFor(bgCtx, &s.background) {
-			s.logger.WarnContext(ctx, "background work didn't stop in time")
-			workDone = false
-		}
-
-		// The process is about to end; whatever still runs goes with it, but not with components closed
-		// under it.
-		if !handlersDone {
-			s.logger.WarnContext(ctx, "requests still running after their connections were cut; leaving components open")
-			return nil
-		}
-		if !workDone {
-			s.logger.WarnContext(ctx, "leaving components open for the background work still running")
-			return nil
-		}
-		return s.closeComponents()
+		return s.shutdown(ctx, stopWork, servers)
 	})
 
 	err = g.Wait()
 	s.logger.InfoContext(ctx, "speki stopped")
 	return err
+}
+
+// listenAndServe opens the public and internal listeners and serves them in g. When a listener can't be
+// opened, it closes the components, since Run won't get to.
+func (s *Service) listenAndServe(ctx context.Context, g *errgroup.Group) ([]*http.Server, error) {
+	var lc net.ListenConfig
+	public, err := lc.Listen(ctx, "tcp", s.cfg.Listen)
+	if err != nil {
+		_ = s.closeComponents()
+		return nil, fmt.Errorf("listen: %w", err)
+	}
+	internal, err := lc.Listen(ctx, "tcp", s.cfg.MetricsListen)
+	if err != nil {
+		_ = public.Close()
+		_ = s.closeComponents()
+		return nil, fmt.Errorf("metrics_listen: %w", err)
+	}
+	s.publicAddr = public.Addr()
+	s.internalAddr = internal.Addr()
+
+	publicSrv := newServer(s.publicHandler())
+	internalSrv := newServer(s.internalHandler())
+	g.Go(func() error { return serve(publicSrv, public) })
+	g.Go(func() error { return serve(internalSrv, internal) })
+	return []*http.Server{publicSrv, internalSrv}, nil
+}
+
+// shutdown stops the service once Run's context ends: it drains the servers, waits for handlers, stops
+// background work, and closes the components if nothing still uses them.
+func (s *Service) shutdown(ctx context.Context, stopWork context.CancelFunc, servers []*http.Server) error {
+	s.markStopping()
+	stopped := context.WithoutCancel(ctx)
+
+	// Running requests finish first, with vaults still open and polled. When their time runs out,
+	// their connections are cut: a routine stop, not a failure.
+	drainCtx, cancel := context.WithTimeout(stopped, s.drainTimeout)
+	defer cancel()
+	for _, srv := range servers {
+		err := srv.Shutdown(drainCtx)
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.logger.WarnContext(ctx, "requests still running at shutdown; closing their connections")
+			err = srv.Close()
+		}
+		if err != nil {
+			s.logger.WarnContext(ctx, "stopping a server failed", "err", err)
+		}
+	}
+	// Close doesn't wait for handlers, and closing components under one would fail its request.
+	hctx, cancel := context.WithTimeout(stopped, s.handlerWait)
+	defer cancel()
+	s.handlersMu.Lock()
+	s.handlersClosed = true // no Add after this, so Wait can't race one
+	s.handlersMu.Unlock()
+	handlersDone := waitFor(hctx, &s.handlers)
+
+	bgCtx, cancel := context.WithTimeout(stopped, s.backgroundTimeout)
+	defer cancel()
+	stopWork()
+	workDone := true
+	err := s.kb.Stop(bgCtx)
+	if err != nil {
+		s.logger.WarnContext(ctx, "work after commits didn't finish in time")
+		workDone = false
+	}
+	if !waitFor(bgCtx, &s.background) {
+		s.logger.WarnContext(ctx, "background work didn't stop in time")
+		workDone = false
+	}
+
+	// The process is about to end; whatever still runs goes with it, but not with components closed
+	// under it.
+	if !handlersDone {
+		s.logger.WarnContext(ctx, "requests still running after their connections were cut; leaving components open")
+		return nil
+	}
+	if !workDone {
+		s.logger.WarnContext(ctx, "leaving components open for the background work still running")
+		return nil
+	}
+	return s.closeComponents()
 }
 
 // waitFor waits for wg until ctx ends, and reports whether it finished.
