@@ -348,7 +348,8 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 	if len(res.Hits) == 0 {
 		b.WriteString("No documents found. Try other words, or list a vault to browse it.\n")
 	}
-	for _, h := range res.Hits {
+	var hits strings.Builder
+	for i, h := range res.Hits {
 		out.Results = append(out.Results, SearchHit{
 			Vault:       h.Source,
 			Path:        h.Path,
@@ -365,8 +366,14 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 		if h.Status != "" && h.Status != document.StatusActive {
 			status = " [" + oneLine(string(h.Status)) + "]"
 		}
-		fmt.Fprintf(&b, "\n%s %s  %s%s  version %s\n%s\n",
+		if i > 0 {
+			hits.WriteString("\n")
+		}
+		fmt.Fprintf(&hits, "%s %s  %s%s  version %s\n%s\n",
 			oneLine(h.Source), oneLine(h.Path), oneLine(h.Title), status, h.Version, oneLine(h.Snippet))
+	}
+	if hits.Len() > 0 {
+		b.WriteString(fence("results", hits.String()))
 	}
 	return out, b.String(), nil
 }
@@ -460,10 +467,11 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 		fmt.Fprintf(&b, "warning: %s\n", oneLine(w))
 	}
 	if len(out.Outline) > 0 {
-		b.WriteString("outline:\n")
+		var outline strings.Builder
 		for _, h := range out.Outline {
-			fmt.Fprintf(&b, "  line %d: %s %s\n", h.Line, strings.Repeat("#", h.Level), oneLine(h.Text))
+			fmt.Fprintf(&outline, "line %d: %s %s\n", h.Line, strings.Repeat("#", h.Level), oneLine(h.Text))
 		}
+		b.WriteString(fence("outline", outline.String()))
 	}
 	b.WriteString(fence("document", p.Content))
 	return out, b.String(), nil

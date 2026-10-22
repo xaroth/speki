@@ -122,12 +122,13 @@ that `edit` is the tool for changing part of one.
 Every result has structured content matching the output schema, and a text rendering for clients that only
 show text. Versions are always shown in full in both, because agents copy them into the next call.
 
-`search` renders one line per hit (vault, path, title, version) plus its snippet. `search` and `query`
+`search` renders one line per hit (vault, path, title, version) plus its snippet, all inside one fence
+named `results`. `search` and `query`
 over all vaults put the vaults they skipped, because speki doesn't serve them, in `skipped_vaults` and
 in one text line ("Not searched, so this result says nothing about them: ..."), so an agent doesn't take
 their silence for absence. `list` without a vault shows those vaults with their `state`, and `guide`
 shows the state instead of their guidelines. `read` renders a header
-line and the content in a fence:
+line and the content in a fence, with the outline, when there is one, in a fence named `outline` before it:
 
 ```text
 acme/kb services/esi-proxy.md
@@ -143,13 +144,13 @@ Vault guidelines get the same kind of fence, named `guidelines`. Each fence has 
 every response, and only a closing tag with that boundary ends it. Content can't know the boundary, so it
 can't end the block early.
 
-As a second line of defence, every `<` in content that starts something a reader could take for a
-`document` or `guidelines` tag is escaped as `&lt;`. "Could take for" is decided loosely: invisible
+As a second line of defense, every `<` in content that starts something a reader could take for a
+`document`, `guidelines`, `results` or `outline` tag is escaped as `&lt;`. "Could take for" is decided loosely: invisible
 characters (controls, format characters, combining marks, any kind of space) are skipped, a slash is
 allowed, and look-alike letters (fullwidth, mathematical and Cyrillic or Greek forms) are folded to ASCII
-before comparing. Vault-supplied text that isn't a whole document (titles, descriptions, snippets) has
-control and format characters and line breaks stripped where it's meant to be one line, and is escaped
-the same way. Structured content carries the raw text unchanged.
+before comparing. Vault-supplied text that isn't a whole document (titles, descriptions, snippets,
+headings) has control and format characters and line breaks stripped where it's meant to be one line, and
+is escaped the same way. Structured content carries the raw text unchanged.
 
 `read` returns at most 64 KiB of content per call, so a result stays well below client limits even with the
 content in both the structured part and the text.
