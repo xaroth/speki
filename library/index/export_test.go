@@ -67,3 +67,9 @@ const (
 	SandboxConns    = sandboxConns
 	MaxTerms        = maxTerms
 )
+
+var vault = map[string]string{
+	"README.md":    "# About\n\nKnowledge about our fleet.\n",
+	"cache.md":     "# Cache\n\nHard problems: cache invalidation and naming things.\n",
+	"ops/fleet.md": "# Fleet\n\nSee [the readme](../README.md).\n",
+}

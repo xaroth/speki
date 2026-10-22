@@ -148,7 +148,7 @@ fusion would throw away, at the cost of treating every vault's best match as equ
 
 Measured 2026-10-10 with the index as built (mattn/go-sqlite3, the schema in
 [design/index.md](../design/index.md)), on generated vaults: documents of about 5 KB with frontmatter,
-headings and links, words drawn from a 20,000-word vocabulary with a Zipf distribution. `library/index/measure_internal_test.go`
+headings and links, words drawn from a 20,000-word vocabulary with a Zipf distribution. `library/index/build_internal_test.go`
 reproduces them (`SPEKI_MEASURE=1`). Limited to 4 cores:
 
 | What | Result | Target |
