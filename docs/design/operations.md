@@ -141,7 +141,7 @@ The SQLite driver needs cgo, so builds need a C compiler.
   the latest Go 1.27 with cgo, `golangci-lint` (govet and staticcheck included) and `go test -race`, the
   same as a local `task ci`. `go test` runs the `FuzzParseTouch` seed corpus. `docker build` runs on
   pushes to `main` only.
-- `govulncheck` (`vuln.yml`) runs on pull requests that change `go.mod` or `go.sum`, and monthly.
+- `govulncheck` (`vuln.yml`) runs on pull requests that change `go.mod` or `go.sum`, and weekly on Mondays.
 - Fuzzing (`fuzz.yml`) runs `FuzzParseTouch` on manual dispatch only, for 5 minutes by default.
 - Publishing a GitHub release (`release.yml`) builds the image and pushes it to `ghcr.io/xaroth/speki`,
   tagged with the release version (`v1.2.3` gives `1.2.3`). Non-prerelease versions also get `1.2` and
