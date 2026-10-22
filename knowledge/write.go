@@ -432,12 +432,12 @@ func (st state) prepareDocument(ctx context.Context, path string, current, next 
 	if err != nil {
 		return nil, errorf(CodeInvalid, "the content can't be used: %s", err)
 	}
-	err = errors.Join(document.Check(cur, d, st.vault.Config.Frontmatter.Allow), st.checkRelated(ctx, cur, d))
+	unresolved, err := st.checkRelated(ctx, cur, d)
 	if err != nil {
-		var e *Error
-		if errors.As(err, &e) {
-			return nil, e
-		}
+		return nil, err
+	}
+	err = errors.Join(document.Check(cur, d, st.vault.Config.Frontmatter.Allow), unresolved)
+	if err != nil {
 		return nil, documentError(err)
 	}
 	out, err := d.Touch(now, created)
@@ -447,20 +447,21 @@ func (st state) prepareDocument(ctx context.Context, path string, current, next 
 	return out, nil
 }
 
-// checkRelated returns an error for each related entry next adds that doesn't point to a document in the
-// vault. Entries current already has are left alone, so deleting a document doesn't block its referrers.
-func (st state) checkRelated(ctx context.Context, cur, next *document.Document) error {
-	var problems []error
+// checkRelated returns a problem for each related entry next adds that doesn't point to a document in
+// the vault, and err when the index can't answer. Entries current already has are left alone, so deleting
+// a document doesn't block its referrers.
+func (st state) checkRelated(ctx context.Context, cur, next *document.Document) (problems, err error) {
+	var found []error
 	for _, l := range document.AddedRelated(cur, next) {
 		ok, err := st.copy.Index().Resolves(ctx, l)
 		if err != nil {
-			return indexError(st.vault.Name, err)
+			return nil, indexError(st.vault.Name, err)
 		}
 		if !ok {
-			problems = append(problems, fmt.Errorf("related: %q isn't a document in this vault", l.Target))
+			found = append(found, fmt.Errorf("related: %q isn't a document in this vault", l.Target))
 		}
 	}
-	return errors.Join(problems...)
+	return errors.Join(found...), nil
 }
 
 func documentError(err error) *Error {
