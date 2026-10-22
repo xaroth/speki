@@ -79,7 +79,7 @@ func parseRepository(s string, pattern bool) (Repository, error) {
 		return Repository{}, errNotRepository
 	}
 	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, ".") || strings.HasPrefix(s, "~") ||
-		strings.HasPrefix(strings.ToLower(s), "file:") {
+		strings.HasPrefix(strings.ToLower(s), "file:") || isDrivePath(s) {
 		return Repository{}, errLocalPath
 	}
 
@@ -109,7 +109,7 @@ func parseRepository(s string, pattern bool) (Repository, error) {
 		rest = s
 	}
 
-	rest = strings.ToLower(strings.Trim(rest, "/"))
+	rest = lowerASCII(strings.Trim(rest, "/"))
 	rest = strings.TrimSuffix(rest, ".git")
 	segments := strings.Split(rest, "/")
 	if host == "" {
@@ -118,7 +118,10 @@ func parseRepository(s string, pattern bool) (Repository, error) {
 			host, segments = first, segments[1:]
 		}
 	}
-	host = strings.ToLower(host)
+	host = lowerASCII(host)
+	if host == "ssh.github.com" { // GitHub's SSH over port 443
+		host = defaultHost
+	}
 	if strings.Contains(host, "*") {
 		if !pattern {
 			return Repository{}, errPattern
@@ -154,6 +157,23 @@ func parseRepository(s string, pattern bool) (Repository, error) {
 		return Repository{}, errTooLong
 	}
 	return r, nil
+}
+
+// isDrivePath reports whether s starts like a Windows path, C:\ or C:/, which would otherwise read as
+// scp-style.
+func isDrivePath(s string) bool {
+	return len(s) >= 3 && (s[0] >= 'a' && s[0] <= 'z' || s[0] >= 'A' && s[0] <= 'Z') && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
+}
+
+// lowerASCII lower-cases ASCII letters only: Unicode folding would turn the Kelvin sign into k, passing
+// validation as a name nobody wrote.
+func lowerASCII(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, s)
 }
 
 // hostOf returns the host of an authority, [user[:password]@]host[:port], or "" for an IPv6 literal.
