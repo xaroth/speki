@@ -2,3 +2,5 @@
 bin
 data
 config.yaml
+.github
+docs
