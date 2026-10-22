@@ -42,6 +42,10 @@ const (
 	rateBurst     = 30
 )
 
+// limiterIdle is how long a user's limiter goes unused before it's dropped. Any bucket refills within
+// rateBurst/ratePerSecond seconds, so a dropped limiter is as full as the new one that replaces it.
+const limiterIdle = 5 * time.Minute
+
 // authenticator signs requests in.
 type authenticator interface {
 	Middleware(next http.Handler) http.Handler
@@ -63,7 +67,13 @@ type Server struct {
 	mcp    *mcp.Server
 
 	mu       sync.Mutex
-	limiters map[int64]*rate.Limiter
+	limiters map[int64]*userLimiter
+	swept    time.Time
+}
+
+type userLimiter struct {
+	*rate.Limiter
+	used time.Time
 }
 
 // Identity says which speki this is, for clients connected to more than one. The zero value is a plain
@@ -120,7 +130,7 @@ func New(auth authenticator, grants resolver, kb knowledgeBase, id Identity, ver
 		kb:       kb,
 		logger:   logger,
 		mcp:      srv,
-		limiters: make(map[int64]*rate.Limiter),
+		limiters: make(map[int64]*userLimiter),
 	}
 	s.addTools()
 	return s
@@ -228,13 +238,24 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 	})
 }
 
+// limiter returns the user's limiter, dropping idle ones at most once per limiterIdle.
 func (s *Server) limiter(user int64) *rate.Limiter {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
+	if now.Sub(s.swept) >= limiterIdle {
+		for id, l := range s.limiters {
+			if now.Sub(l.used) >= limiterIdle {
+				delete(s.limiters, id)
+			}
+		}
+		s.swept = now
+	}
 	l, ok := s.limiters[user]
 	if !ok {
-		l = rate.NewLimiter(ratePerSecond, rateBurst)
+		l = &userLimiter{Limiter: rate.NewLimiter(ratePerSecond, rateBurst)}
 		s.limiters[user] = l
 	}
-	return l
+	l.used = now
+	return l.Limiter
 }
