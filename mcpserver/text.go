@@ -38,7 +38,7 @@ func fence(kind, content string) string {
 	return "<" + kind + " boundary=\"" + boundary + "\">\n" + content + "</" + kind + " boundary=\"" + boundary + "\">\n"
 }
 
-var fenceNames = []string{"document", "guidelines"}
+var fenceNames = []string{"document", "guidelines", "results", "outline"}
 
 // escapeMarkers escapes every "<" that starts something a reader could take for a fence tag: the name
 // after it, with invisible characters, spacing and a slash skipped, and look-alike letters folded to
