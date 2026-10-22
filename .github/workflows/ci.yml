@@ -50,7 +50,8 @@ jobs:
 
   image:
     name: Image build
-    if: github.event_name == 'push'
+    # Dependabot's base image bumps build here too, before they merge.
+    if: github.event_name == 'push' || startsWith(github.head_ref, 'dependabot/docker/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

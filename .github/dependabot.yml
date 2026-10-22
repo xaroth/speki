@@ -9,3 +9,14 @@ updates:
     groups:
       github-actions:
         patterns: ['*']
+
+  # Dockerfile base images, pinned by digest: a moved tag gets a pull request.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build(docker)
+    groups:
+      docker:
+        patterns: ['*']
