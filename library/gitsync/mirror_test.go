@@ -485,32 +485,6 @@ func TestOpenLocal(t *testing.T) {
 	}
 }
 
-func TestUsable(t *testing.T) {
-	t.Parallel()
-	src := newSource(t)
-	src.commit(map[string]*string{"a.md": new("a")})
-	dir := filepath.Join(t.TempDir(), "copy")
-	open(t, src, dir)
-	testCases := []struct {
-		name   string
-		dir    string
-		branch string
-		want   bool
-	}{
-		{name: "healthy copy", dir: dir, branch: "master", want: true},
-		{name: "other branch", dir: dir, branch: "main"},
-		{name: "empty folder", dir: t.TempDir(), branch: "master"},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			if got := gitsync.Usable(testCase.dir, testCase.branch); got != testCase.want {
-				t.Errorf("got Usable %v, want %v", got, testCase.want)
-			}
-		})
-	}
-}
-
 func TestFetchAndDiff(t *testing.T) {
 	t.Parallel()
 	src := newSource(t)

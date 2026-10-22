@@ -150,8 +150,9 @@ skipped by the round and checked again at the next.
 A vault whose head check or sync fails keeps serving its last good index, shows the error on the status
 page, and is retried with backoff that grows from two minutes to 30, across restarts of its clone too.
 
-On startup, `library` restores only vaults whose git copy is usable without the network. The rest are
-cloned again in the background once discovery finds them. An index file that can't be opened for a
+On startup, `library` restores only vaults whose git copy is usable without the network, up to the
+opening limit at once. It opens each copy with `gitsync.OpenLocal`, which walks the tree once to check it,
+and leaves a copy it can't use in place. Those are cloned again in the background once discovery finds them. An index file that can't be opened for a
 reason that may pass (a cancelled start, too many open files) is kept; only a corrupt one, one of another
 schema or one without a recorded commit is discarded.
 

@@ -252,7 +252,7 @@ dependency for a fake happens through `Config`, not through globals or build tag
    every other component. Nothing connects to anything yet.
 3. Start the HTTP servers. `/healthz` answers right away. `/readyz` and `/mcp` answer 503 until step 5.
 4. Remove leftovers of interrupted index builds. Open every vault that already has a usable copy and
-   index on disk, so it can be served as is.
+   index on disk, so it can be served as is (4 at a time).
 5. Run discovery once, successful or not. Mark ready. Without `allowed_accounts`, discovery first looks
    up the app's owner; if that fails, speki marks ready anyway and keeps retrying. A vault that isn't on
    disk yet is cloned and indexed in the background (4 at a time). It shows up in tools once it's done. A

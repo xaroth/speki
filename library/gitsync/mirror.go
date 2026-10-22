@@ -129,12 +129,6 @@ func newMirror(dir string, src Source) *Mirror {
 	}
 }
 
-// Usable reports whether dir holds a copy of branch that can be used without the network.
-func Usable(dir, branch string) bool {
-	_, err := OpenLocal(dir, Source{Branch: branch})
-	return err == nil
-}
-
 func healthy(repo *git.Repository, branch plumbing.ReferenceName) bool {
 	ref, err := repo.Reference(branch, true)
 	if err != nil {
