@@ -150,7 +150,7 @@ Search is forgiving. "configuring" finds "configured", "kubrenetes" finds "kuber
   { "vault": "acme/kb", "path": "services/esi-proxy.md",
     "title": "ESI proxy", "description": "...", "tags": ["esi", "proxy"],
     "status": "active", "updated": "...", "version": "...",
-    "snippet": "... the proxy **caches** ESI responses for ...", "score": 12.4 }
+    "snippet": "... the proxy **caches** ESI responses for ...", "score": 1 }
 ],
   "corrected": { "kubrenetes": "kubernetes" },
   "relaxed": false,

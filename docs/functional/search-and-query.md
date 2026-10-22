@@ -42,8 +42,11 @@ occur:
 
 A `deprecated` document's score is halved. A `draft` keeps its score.
 
-Each vault has its own index and its own idea of which words are rare. So a hit in a small vault can rank
-slightly higher than the same hit in a large one.
+Each vault has its own index and its own idea of which words are rare, so raw scores from different vaults
+don't compare. Scores are therefore relative to the best match in the same vault: it scores 1 (0.5 if
+deprecated), and the others score their share of it. Results from all vaults are merged on that score, so
+the best match of a small vault isn't buried under a large vault's weaker ones. A `score` says how good a
+match is within its vault, not how good it is overall.
 
 ### Snippets
 

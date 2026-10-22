@@ -140,7 +140,9 @@ SQLite allows at most 10 attached databases by default. `query` therefore takes 
 ## Scores across vaults
 
 Each vault has its own BM25 statistics, so the same match scores differently in a small vault than in a
-large one. At our sizes we merge raw scores and accept the imprecision.
+large one, and one vault can crowd out the others. Search divides each vault's scores by its best one
+before merging. That keeps how much better one hit is than the next within a vault, which reciprocal rank
+fusion would throw away, at the cost of treating every vault's best match as equally good.
 
 ## Measured on speki's own index
 
