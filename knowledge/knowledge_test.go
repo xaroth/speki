@@ -21,7 +21,7 @@ import (
 
 func TestVaults(t *testing.T) {
 	t.Parallel()
-	kb := knowledge.VaultInfo{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", Frontmatter: []string{"owner"}, CanWrite: true, Documents: 3}
+	kb := knowledge.VaultInfo{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", Frontmatter: []string{"owner"}, Repositories: []string{"github.com/ours/api-*"}, CanWrite: true, Documents: 3}
 	testCases := []struct {
 		name  string
 		setup func(testing.TB, *fixture)
@@ -39,7 +39,7 @@ func TestVaults(t *testing.T) {
 			},
 			want: []knowledge.VaultInfo{
 				kb,
-				{Name: "ours/new", Title: "New", State: access.StateBuilding},
+				{Name: "ours/new", Title: "New", Repositories: []string{"github.com/ours/zeppelin"}, State: access.StateBuilding},
 				{Name: "ours/old", State: access.StateFailed},
 				{Name: "ours/shared", State: access.StateGone},
 			},
@@ -48,7 +48,7 @@ func TestVaults(t *testing.T) {
 			name:  "index closed",
 			setup: func(_ testing.TB, f *fixture) { f.copy(ours.RepoID).idx.Close() },
 			want: []knowledge.VaultInfo{
-				{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", State: access.StateGone},
+				{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", Repositories: []string{"github.com/ours/api-*"}, State: access.StateGone},
 				{Name: "ours/shared", Documents: 1},
 			},
 		},

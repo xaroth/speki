@@ -24,6 +24,8 @@ vault's guidelines below.
 - Every word has to match. If nothing does, speki retries with any word and marks the result relaxed.
 - Matches in titles, aliases and tags count for more than matches in the body. Deprecated documents rank
   lower.
+- A vault can name the code `repositories` its knowledge is about, as `host/owner/repo`. A `*` in the
+  name covers every repository of that owner whose name matches.
 - `list` shows a vault's folders and documents, 200 at a time. Without a vault, it lists your vaults,
   with a `state` on those speki can't serve right now: `building` (indexing it for the first time),
   `failed` (it couldn't be opened) or `gone` (just removed or reopening).

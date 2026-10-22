@@ -16,26 +16,28 @@ import (
 
 // VaultSummary describes a vault the user can read.
 type VaultSummary struct {
-	Vault       string   `json:"vault" jsonschema:"the vault's name, owner/repo"`
-	Title       string   `json:"title,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Guidelines  string   `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
-	Frontmatter []string `json:"frontmatter,omitempty" jsonschema:"frontmatter keys you may set on top of title, description, tags, aliases, status and related"`
-	CanWrite    bool     `json:"can_write"`
-	Documents   int      `json:"documents"`
-	State       string   `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly), failed (it couldn't be opened; tell the user) or gone (just removed or reopening; try again shortly)"`
+	Vault        string   `json:"vault" jsonschema:"the vault's name, owner/repo"`
+	Title        string   `json:"title,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Guidelines   string   `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
+	Frontmatter  []string `json:"frontmatter,omitempty" jsonschema:"frontmatter keys you may set on top of title, description, tags, aliases, status and related"`
+	Repositories []string `json:"repositories,omitempty" jsonschema:"the code repositories the vault's knowledge is about, as host/owner/repo. A * in the name covers every repository of that owner whose name matches"`
+	CanWrite     bool     `json:"can_write"`
+	Documents    int      `json:"documents"`
+	State        string   `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly), failed (it couldn't be opened; tell the user) or gone (just removed or reopening; try again shortly)"`
 }
 
 func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummary {
 	out := make([]VaultSummary, 0, len(vaults))
 	for _, v := range vaults {
 		s := VaultSummary{
-			Vault:       v.Name,
-			Title:       v.Title,
-			Description: v.Description,
-			CanWrite:    v.CanWrite,
-			Documents:   v.Documents,
-			State:       string(v.State),
+			Vault:        v.Name,
+			Title:        v.Title,
+			Description:  v.Description,
+			Repositories: v.Repositories,
+			CanWrite:     v.CanWrite,
+			Documents:    v.Documents,
+			State:        string(v.State),
 		}
 		if guidelines && v.State == "" { // an unserved vault's config may be stale, and it can't be written yet
 			s.Guidelines = v.Guidelines
@@ -149,6 +151,9 @@ func writeVaultDetails(b *strings.Builder, v VaultSummary) {
 	}
 	if v.Description != "" {
 		fmt.Fprintf(b, "Description: %s\n", oneLine(v.Description))
+	}
+	if len(v.Repositories) > 0 {
+		fmt.Fprintf(b, "Repositories: %s\n", strings.Join(v.Repositories, ", "))
 	}
 	if v.State != "" {
 		fmt.Fprintf(b, "Not available: %s\n", stateText(v.State))
