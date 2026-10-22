@@ -3,6 +3,7 @@ package document_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,13 @@ func TestCheck(t *testing.T) {
 			name:    "fixing broken frontmatter",
 			current: "---\ntitle: [a\n---\nText\n",
 			next:    "---\ntitle: a\n---\nText\n",
+		},
+		{name: "too many tags", next: "---\ntitle: A\ntags: [" + list("t", document.MaxTags+1) + "]\n---\n", wantErr: "tags: more than 20"},
+		{name: "too many aliases", next: "---\ntitle: A\naliases: [" + list("a", document.MaxAliases+1) + "]\n---\n", wantErr: "aliases: more than 10"},
+		{
+			name:    "too many tags from outside speki",
+			current: "---\ntitle: A\ntags: [" + list("t", document.MaxTags+1) + "]\n---\n",
+			next:    "---\ntitle: B\ntags: [" + list("t", document.MaxTags+1) + "]\n---\n",
 		},
 		{name: "too large", next: "# A\n" + strings.Repeat("x", document.MaxSize), wantErr: "larger than"},
 	}
@@ -282,4 +290,13 @@ func FuzzParseTouch(f *testing.F) {
 			t.Fatalf("got body %q, want %q", d2.Body, d.Body)
 		}
 	})
+}
+
+// list returns n distinct items for a YAML flow list.
+func list(prefix string, n int) string {
+	items := make([]string, n)
+	for i := range items {
+		items[i] = fmt.Sprintf("%s%d", prefix, i)
+	}
+	return strings.Join(items, ", ")
 }

@@ -64,7 +64,7 @@ It starts with a YAML frontmatter block:
 
 - `title`: display title. Without it, the first `#` heading counts, then the path in the vault.
 - `description`: one or two sentences about what the document covers.
-- `tags`: a list of topics. `aliases`: other names for the subject.
+- `tags`: a list of topics, at most 20. `aliases`: other names for the subject, at most 10.
 - `status`: `draft`, `active` (the default) or `deprecated`.
 - `related`: paths of other documents in the same vault worth reading alongside it.
 - `created` and `updated`: set by speki.

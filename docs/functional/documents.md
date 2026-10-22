@@ -50,8 +50,8 @@ Lowercase names with `-` between words are the convention, but speki doesn't enf
 |---|---|---|---|
 | `title` | text | writer | Display title. If missing, speki uses the first `#` heading, then the path in the vault |
 | `description` | text | writer | One or two sentences about what the document covers. Shown in search results and listings |
-| `tags` | list of text | writer | Topics. No leading `#`. Matched case-insensitively |
-| `aliases` | list of text | writer | Other names for the subject. Searched like the title |
+| `tags` | list of text | writer | Topics. No leading `#`. Matched case-insensitively. At most 20 |
+| `aliases` | list of text | writer | Other names for the subject. Searched like the title. At most 10 |
 | `status` | `draft`, `active`, `deprecated` | writer | Missing means `active`. Search ranks `deprecated` documents lower |
 | `related` | list of paths | writer | Other documents in the same vault worth reading alongside this one |
 | `created` | UTC datetime | speki | Set when speki creates the document. A change that leaves it out keeps it |
@@ -61,7 +61,7 @@ Values that don't fit the table are rejected on write: a `status` of `wip`, `tag
 with commas. The error says which field and why.
 
 A `title` longer than 200 bytes or a `description` longer than 500 is kept, with a warning; answers show
-only its start.
+only its start. More than 20 tags or 10 aliases are kept too, with a warning, so a change can't add them.
 
 Any other key is kept as is. `query` exposes these keys as JSON in the `extra` column. Speki never removes
 or reorders keys it doesn't own.
