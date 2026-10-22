@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/xaroth/speki/gh"
@@ -39,7 +40,7 @@ type Options struct {
 	GitURL string
 	// Tokens returns the git credentials for an installation. Nil means no credentials.
 	Tokens func(installationID int64) gitsync.TokenSource
-	// Opening is how many vaults are cloned and indexed at once.
+	// Opening is how many vaults are cloned and indexed, or restored from disk, at once.
 	Opening int
 	// StallTimeout cancels a clone or build that makes no progress for this long. Zero means 5 minutes.
 	StallTimeout time.Duration
@@ -92,7 +93,7 @@ func New(github githubAPI, opts Options, logger *slog.Logger) *Library {
 }
 
 // Restore opens every vault that already has a usable copy and index in the data directory, so they can
-// be served before GitHub has been asked anything.
+// be served before GitHub has been asked anything. It opens up to Options.Opening vaults at once.
 func (l *Library) Restore(ctx context.Context) error {
 	err := os.MkdirAll(l.opts.DataDir, 0o755)
 	if err != nil {
@@ -102,21 +103,27 @@ func (l *Library) Restore(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("data dir: %w", err)
 	}
+	var g errgroup.Group
+	g.SetLimit(l.opts.Opening)
 	for _, e := range entries {
 		id, err := strconv.ParseInt(e.Name(), 10, 64)
 		if err != nil || !e.IsDir() {
 			continue
 		}
-		v, err := l.restore(ctx, id)
-		if err != nil {
-			l.logger.WarnContext(ctx, "can't reuse local copy", "repo_id", id, "err", err)
-			continue
-		}
-		l.mu.Lock()
-		l.vaults[id] = v
-		l.mu.Unlock()
-		l.logger.InfoContext(ctx, "vault restored from disk", "vault", v.Info().Name, "commit", v.index.Commit())
+		g.Go(func() error {
+			v, err := l.restore(ctx, id)
+			if err != nil {
+				l.logger.WarnContext(ctx, "can't reuse local copy", "repo_id", id, "err", err)
+				return nil
+			}
+			l.mu.Lock()
+			l.vaults[id] = v
+			l.mu.Unlock()
+			l.logger.InfoContext(ctx, "vault restored from disk", "vault", v.Info().Name, "commit", v.index.Commit())
+			return nil
+		})
 	}
+	_ = g.Wait() // each vault's error is logged; none fails the restore
 	l.notify()
 	l.publish()
 	return nil
@@ -135,12 +142,15 @@ func (l *Library) restore(ctx context.Context, id int64) (*Vault, error) {
 	}
 	// Only a copy that's usable without the network: a restart serves from disk within seconds, and
 	// discovery clones the rest in the background.
-	if !gitsync.Usable(filepath.Join(dir, gitDir), info.DefaultBranch) {
-		return nil, errors.New("no usable git copy; it's cloned again once discovery finds the vault")
+	url, auth := l.source(info)
+	m, err := gitsync.OpenLocal(filepath.Join(dir, gitDir), gitsync.Source{URL: url, Branch: info.DefaultBranch, Auth: auth})
+	if err != nil {
+		return nil, fmt.Errorf("open git copy: %w; it's cloned again once discovery finds the vault", err)
 	}
 	v := newVault(info, dir, l.now)
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
+	v.mirror = m // open keeps it and only opens the index
 	err = v.open(ctx, l)
 	if err != nil {
 		v.close()
