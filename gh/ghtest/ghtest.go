@@ -737,7 +737,7 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 	in := req.Variables.Input
 	repo := c.visible(f, in.Branch.Repo)
 	if repo == nil {
-		fail("NOT_FOUND", fmt.Sprintf("Could not resolve to a gh.Repository with the name '%s'.", in.Branch.Repo))
+		fail("NOT_FOUND", fmt.Sprintf("Could not resolve to a Repository with the name '%s'.", in.Branch.Repo))
 		return
 	}
 	if c.user.roles[in.Branch.Repo] < gh.RoleWrite {
