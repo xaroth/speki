@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/xaroth/speki/auth/access"
@@ -13,6 +14,7 @@ import (
 type SearchRequest struct {
 	Query             string
 	Vaults            []string // empty means every vault the user may read
+	Repository        string   // only vaults covering this repository, a git remote or host/owner/repo
 	Path              string   // only documents under this folder
 	Tags              []string // documents must have all of them
 	ExcludeDeprecated bool
@@ -23,6 +25,9 @@ type SearchRequest struct {
 type SearchResult struct {
 	index.Results
 	Skipped []Skipped // only when no vault was named
+	// With a Repository: the repository normalised, and the vaults that cover it that were searched.
+	Repository string
+	Searched   []string
 }
 
 // Search runs a full-text search across vaults, best match first. Hits carry the vault name as Source.
@@ -34,9 +39,33 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 		return SearchResult{}, errorf(CodeInvalid, "the query is empty. Give one or more words to search for")
 	}
 
+	var covered map[string]bool
+	var repository string
+	if req.Repository != "" {
+		repo, names, err := covering(g, req.Repository)
+		if err != nil {
+			return SearchResult{}, err
+		}
+		covered, repository = names, repo.String()
+	}
 	sources, notServed, err := b.sources(g, req.Vaults)
 	if err != nil {
 		return SearchResult{}, err
+	}
+	var searched []string
+	if covered != nil {
+		sources = slices.DeleteFunc(sources, func(s index.Source) bool { return !covered[s.Name] })
+		notServed = slices.DeleteFunc(notServed, func(s Skipped) bool { return !covered[s.Name] })
+		if len(notServed) == 0 {
+			notServed = nil
+		}
+		for _, s := range sources {
+			searched = append(searched, s.Name)
+		}
+		slices.Sort(searched)
+		if len(sources) == 0 {
+			return SearchResult{Skipped: notServed, Repository: repository}, nil
+		}
 	}
 
 	prefix := strings.Trim(req.Path, "/")
@@ -59,5 +88,5 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	case err != nil:
 		return SearchResult{}, err
 	}
-	return SearchResult{Results: res, Skipped: notServed}, nil
+	return SearchResult{Results: res, Skipped: notServed, Repository: repository, Searched: searched}, nil
 }

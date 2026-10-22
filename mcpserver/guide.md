@@ -25,7 +25,9 @@ vault's guidelines below.
 - Matches in titles, aliases and tags count for more than matches in the body. Deprecated documents rank
   lower.
 - A vault can name the code `repositories` its knowledge is about, as `host/owner/repo`. A `*` in the
-  name covers every repository of that owner whose name matches.
+  name covers every repository of that owner whose name matches. When you work in a git repository, pass
+  its remote (`git remote get-url origin`) as `repository` to `list` for the vaults that cover it, or to
+  `search` to search only those.
 - `list` shows a vault's folders and documents, 200 at a time. Without a vault, it lists your vaults,
   with a `state` on those speki can't serve right now: `building` (indexing it for the first time),
   `failed` (it couldn't be opened) or `gone` (just removed or reopening).
