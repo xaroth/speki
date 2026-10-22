@@ -28,11 +28,25 @@ func Check(current, next *Document) error {
 				problems = append(problems, errors.New(w))
 			}
 		}
+		if current != nil {
+			// The warnings match when the current document is over a limit too, but it mustn't grow.
+			problems = append(problems,
+				grown(keyTags, len(current.Meta.Tags), len(next.Meta.Tags), MaxTags),
+				grown(keyAliases, len(current.Meta.Aliases), len(next.Meta.Aliases), MaxAliases))
+		}
 	}
 	if current == nil && next.titleFromPath {
 		problems = append(problems, errors.New("title: missing; add a title to the frontmatter or start with a # heading"))
 	}
 	return errors.Join(problems...)
+}
+
+// grown returns an error when a list over its limit got longer.
+func grown(key string, current, next, limit int) error {
+	if next > limit && next > current {
+		return fmt.Errorf("%s: more than %d; a change can't add more", key, limit)
+	}
+	return nil
 }
 
 // Touch sets updated to now in the frontmatter, and created to created unless that's zero. It returns the

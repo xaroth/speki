@@ -156,6 +156,12 @@ const (
 	MaxDescription = 500
 )
 
+// The most tags and aliases a change can leave a document with. More are kept, with a warning.
+const (
+	MaxTags    = 20
+	MaxAliases = 10
+)
+
 // readMeta fills m from the block and returns the problems it ignored.
 func (f *frontmatter) readMeta(m *Meta) []string {
 	if f.broken != "" {
@@ -185,8 +191,14 @@ func (f *frontmatter) readMeta(m *Meta) []string {
 			}
 		case keyTags:
 			m.Tags = normaliseTags(listField(key, value, warn))
+			if len(m.Tags) > MaxTags {
+				warn("tags: more than %d", MaxTags)
+			}
 		case keyAliases:
 			m.Aliases = listField(key, value, warn)
+			if len(m.Aliases) > MaxAliases {
+				warn("aliases: more than %d", MaxAliases)
+			}
 		case keyRelated:
 			m.Related = listField(key, value, warn)
 		case keyStatus:
