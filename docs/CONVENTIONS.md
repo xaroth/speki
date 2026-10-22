@@ -47,7 +47,7 @@ if err != nil {
 - Log an error or return it, not both.
 - Log with the `...Context` methods whenever a context is in scope: the handler takes the request ID from it.
 - Errors that callers act on are sentinel values or types (`gh.ErrHeadMoved`), checked with `errors.Is` and
-  `errors.As`.
+  `errors.AsType`.
 
 ## Declarations
 
