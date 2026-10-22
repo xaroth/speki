@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -13,8 +14,9 @@ import (
 
 // Check compares a document an agent wants to write with the current one (nil for a new document) and
 // returns the problems the change brings in. Problems the current document already had are left alone,
-// so an agent fixing a typo isn't blocked by a person's messy frontmatter.
-func Check(current, next *Document) error {
+// so an agent fixing a typo isn't blocked by a person's messy frontmatter. Frontmatter keys other than
+// the writer fields and allowed must keep the value they have in current.
+func Check(current, next *Document, allowed []string) error {
 	var problems []error
 	if len(next.raw) > MaxSize {
 		problems = append(problems, fmt.Errorf("%w: the document is larger than %d bytes", ErrTooLarge, MaxSize))
@@ -35,6 +37,7 @@ func Check(current, next *Document) error {
 				grown(keyAliases, len(current.Meta.Aliases), len(next.Meta.Aliases), MaxAliases))
 		}
 	}
+	problems = append(problems, lockedChanges(current, next, allowed)...)
 	if current == nil && next.titleFromPath {
 		problems = append(problems, errors.New("title: missing; add a title to the frontmatter or start with a # heading"))
 	}
@@ -47,6 +50,150 @@ func grown(key string, current, next, limit int) error {
 		return fmt.Errorf("%s: more than %d; a change can't add more", key, limit)
 	}
 	return nil
+}
+
+// writerKeys are the frontmatter keys agents may always set.
+var writerKeys = []string{keyTitle, keyDescription, keyTags, keyAliases, keyStatus, keyRelated}
+
+// WriterKeys returns the frontmatter keys agents may always set.
+func WriterKeys() []string { return slices.Clone(writerKeys) }
+
+// SetBySpeki reports whether speki sets key itself.
+func SetBySpeki(key string) bool { return key == keyCreated || key == keyUpdated }
+
+// lockedChanges returns an error for each frontmatter key outside the writer fields and allowed that next
+// adds, removes or changes. The text doesn't vary with the value, like the warnings'.
+func lockedChanges(current, next *Document, allowed []string) []error {
+	free := func(key string) bool {
+		return slices.Contains(writerKeys, key) || slices.Contains(allowed, key) || key == keyUpdated // updated is always overwritten
+	}
+	createdSet := current == nil || !current.Meta.Created.IsZero() // Touch sets it to now, or to the current value
+	if current != nil && current.front != nil && current.front.broken != "" {
+		// Its keys can't be compared, so a repair may only drop keys agents can set anyway.
+		keys, ok := topLevelKeys(current.front.content)
+		if !ok {
+			return []error{errors.New("frontmatter: the current frontmatter is broken and speki can't tell which keys it holds; a person has to fix it")}
+		}
+		var problems []error
+		for _, k := range keys {
+			if !free(k) && k != keyCreated {
+				problems = append(problems, fmt.Errorf("frontmatter: the current frontmatter is broken and holds %q, which agents can't set; a person has to fix it", k))
+			}
+		}
+		if problems != nil {
+			return problems
+		}
+		createdSet = createdSet || slices.Contains(keys, keyCreated)
+	}
+
+	cur, nxt := properties(current), properties(next)
+	var problems []error
+	check := func(key string) {
+		if free(key) || key == keyCreated && createdSet {
+			return
+		}
+		a, inCur := cur[key]
+		b, inNext := nxt[key]
+		var what string
+		switch {
+		case !inCur && inNext:
+			what = "added"
+		case inCur && !inNext:
+			what = "removed"
+		case inCur && !sameValue(a, b):
+			what = "changed"
+		default:
+			return
+		}
+		problems = append(problems, fmt.Errorf("frontmatter: %q can't be %s; agents may only set %s in this vault, other keys must stay as they are",
+			key, what, strings.Join(append(slices.Clone(writerKeys), allowed...), ", ")))
+	}
+	for _, key := range keysOf(next) {
+		check(key)
+	}
+	for _, key := range keysOf(current) {
+		if _, ok := nxt[key]; !ok {
+			check(key)
+		}
+	}
+	return problems
+}
+
+// topLevelKey matches a line holding a top-level key: plain, or in single or double quotes.
+var topLevelKey = regexp.MustCompile(`^(?:"([^"]*)"|'([^']*)'|([^\s#'"\-\[{][^:#]*?))\s*:(?:\s|$)`)
+
+// topLevelKeys reads the top-level key names from a frontmatter block that isn't valid YAML, line by line.
+// It returns false for anything it can't be sure about, since a missed key could be dropped unseen: other
+// line breaks than YAML's usual, tabs or an indented root, and indented lines under a key whose value is
+// on its own line.
+func topLevelKeys(content []byte) ([]string, bool) {
+	s := strings.ReplaceAll(string(content), "\r\n", "\n")
+	if strings.ContainsAny(s, "\r\u0085\u2028\u2029") {
+		return nil, false
+	}
+	var keys []string
+	nested := false // whether indented lines and list items can belong to the last key
+	for l := range strings.SplitSeq(s, "\n") {
+		switch {
+		case strings.TrimLeft(l, " ") == "", strings.HasPrefix(strings.TrimLeft(l, " "), "#"):
+			continue
+		case l[0] == ' ' || l == "-" || strings.HasPrefix(l, "- "):
+			if !nested {
+				return nil, false
+			}
+			continue
+		}
+		m := topLevelKey.FindStringSubmatch(l)
+		if m == nil {
+			return nil, false
+		}
+		keys = append(keys, m[1]+m[2]+strings.TrimSpace(m[3]))
+		v := strings.TrimSpace(l[len(m[0]):])
+		nested = v == "" || v[0] == '|' || v[0] == '>' || v[0] == '#'
+	}
+	return keys, true
+}
+
+// keysOf and properties read keys as text: decode refuses blocks with other keys or duplicates.
+func keysOf(d *Document) []string {
+	if d == nil || d.front == nil || d.front.node == nil {
+		return nil
+	}
+	var keys []string
+	pairs := d.front.node.Content
+	for i := 0; i+1 < len(pairs); i += 2 {
+		keys = append(keys, pairs[i].Value)
+	}
+	return keys
+}
+
+// properties maps the frontmatter's keys to their values. It's empty without usable frontmatter.
+func properties(d *Document) map[string]*yaml.Node {
+	out := make(map[string]*yaml.Node)
+	if d == nil || d.front == nil || d.front.node == nil {
+		return out
+	}
+	pairs := d.front.node.Content
+	for i := 0; i+1 < len(pairs); i += 2 {
+		out[pairs[i].Value] = pairs[i+1]
+	}
+	return out
+}
+
+// sameValue compares two YAML values, ignoring style, comments and position.
+func sameValue(a, b *yaml.Node) bool {
+	if a.Kind != b.Kind || a.ShortTag() != b.ShortTag() || len(a.Content) != len(b.Content) {
+		return false
+	}
+	if a.Kind == yaml.ScalarNode && a.ShortTag() != "!!null" && a.Value != b.Value { // null, ~ and empty are one value
+		return false
+	}
+	for i := range a.Content {
+		if !sameValue(a.Content[i], b.Content[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // Touch sets updated to now in the frontmatter, and created to created unless that's zero. It returns the

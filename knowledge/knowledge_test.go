@@ -21,7 +21,7 @@ import (
 
 func TestVaults(t *testing.T) {
 	t.Parallel()
-	kb := knowledge.VaultInfo{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", CanWrite: true, Documents: 3}
+	kb := knowledge.VaultInfo{Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", Frontmatter: []string{"owner"}, CanWrite: true, Documents: 3}
 	testCases := []struct {
 		name  string
 		setup func(testing.TB, *fixture)

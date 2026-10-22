@@ -63,14 +63,17 @@ with commas. The error says which field and why.
 A `title` longer than 200 bytes or a `description` longer than 500 is kept, with a warning; answers show
 only its start. More than 20 tags or 10 aliases are kept too, with a warning, so a change can't add them.
 
-Any other key is kept as is. `query` exposes these keys as JSON in the `extra` column. Speki never removes
-or reorders keys it doesn't own.
+Agents may only set the writer fields above, plus the keys the vault lists under `frontmatter.allow` in
+its [speki.yaml](vaults.md#spekiyaml). Any other key must keep the value it has: a change can't add,
+change or remove it. People can still set such keys outside speki. `query` exposes them as JSON in the
+`extra` column. Speki never removes or reorders keys it doesn't own.
 
 Documents changed outside speki may break these rules. Speki still indexes them: a field with the wrong
 type is ignored, and frontmatter that isn't valid YAML is ignored as a whole (the body is still searchable).
 `read` lists the problems under `warnings`. An agent can change such a document as long as it doesn't add
 new problems. If the frontmatter as a whole is broken, the change has to fix it, because speki rewrites
-the frontmatter to set `updated`.
+the frontmatter to set `updated`. An agent can only make that fix when the broken block holds no keys
+agents may not set; otherwise a person has to.
 
 ## Body
 

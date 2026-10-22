@@ -23,6 +23,7 @@ func TestCheck(t *testing.T) {
 		name    string
 		current string // empty: a new document
 		next    string
+		allowed []string
 		wantErr string // empty: no error
 	}{
 		{name: "valid new document", next: "---\ntitle: A\n---\nText\n"},
@@ -57,6 +58,136 @@ func TestCheck(t *testing.T) {
 			current: "---\ntitle: [a\n---\nText\n",
 			next:    "---\ntitle: a\n---\nText\n",
 		},
+		{name: "new document with unknown key", next: "---\ntitle: A\npublish: true\n---\n", wantErr: `"publish" can't be added`},
+		{name: "new document with allowed key", next: "---\ntitle: A\nowner: me\n---\n", allowed: []string{"owner"}},
+		{name: "new document with created", next: "---\ntitle: A\ncreated: 2020-01-01\n---\n"},
+		{
+			name:    "unknown key kept",
+			current: "---\ntitle: A\nowner: \"me\" # who\nlist: [a, {b: c}]\nempty: ~\n---\n",
+			next:    "---\ntitle: B\nowner: me\nlist:\n  - a\n  - b: c\nempty:\n---\n",
+		},
+		{
+			name:    "unknown key changed",
+			current: "---\ntitle: A\nowner: me\n---\n",
+			next:    "---\ntitle: A\nowner: you\n---\n",
+			wantErr: `"owner" can't be changed`,
+		},
+		{
+			name:    "unknown key changed type",
+			current: "---\ntitle: A\nversion: 1\n---\n",
+			next:    "---\ntitle: A\nversion: \"1\"\n---\n",
+			wantErr: `"version" can't be changed`,
+		},
+		{
+			name:    "unknown key removed",
+			current: "---\ntitle: A\nowner: me\n---\n",
+			next:    "---\ntitle: A\n---\n",
+			wantErr: `"owner" can't be removed`,
+		},
+		{
+			name:    "allowed key changed",
+			current: "---\ntitle: A\nowner: me\n---\n",
+			next:    "---\ntitle: A\nowner: you\n---\n",
+			allowed: []string{"owner"},
+		},
+		{
+			name:    "writer keys changed",
+			current: "---\ntitle: A\n---\n",
+			next:    "---\ntitle: B\ndescription: D\ntags: [x]\naliases: [y]\nstatus: draft\nrelated: [b.md]\n---\n",
+		},
+		{
+			name:    "key names are case sensitive",
+			current: "---\ntitle: A\n---\n",
+			next:    "---\ntitle: A\nTitle: B\n---\n",
+			wantErr: `"Title" can't be added`,
+		},
+		{
+			name:    "created added where speki didn't set it",
+			current: "---\ntitle: A\n---\n",
+			next:    "---\ntitle: A\ncreated: 2020-01-01\n---\n",
+			wantErr: `"created" can't be added`,
+		},
+		{
+			name:    "created changed or dropped is restored",
+			current: "---\ntitle: A\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n",
+			next:    "---\ntitle: A\ncreated: 2020-01-01\n---\n",
+		},
+		{
+			name:    "fixing broken frontmatter with a locked key",
+			current: "---\ntitle: [a\n'owner': me\n---\nText\n",
+			next:    "---\ntitle: a\n---\nText\n",
+			wantErr: `broken and holds "owner"`,
+		},
+		{
+			name:    "fixing broken frontmatter keeps created",
+			current: "---\ntitle: [a\ntags:\n  - x\n# note\ncreated: 2026-01-01T00:00:00Z\n---\nText\n",
+			next:    "---\ntitle: a\ntags: [x]\ncreated: 2026-01-01T00:00:00Z\n---\nText\n",
+		},
+		{
+			name:    "fixing broken frontmatter can't add keys",
+			current: "---\ntitle: [a\n---\nText\n",
+			next:    "---\ntitle: a\nowner: me\n---\nText\n",
+			wantErr: `"owner" can't be added`,
+		},
+		{
+			name:    "fixing broken frontmatter with a list and a block",
+			current: "---\ntitle: [a\ntags:\n- x\n- y\ndescription: |\n  Two\n\n  lines\n---\nText\n",
+			next:    "---\ntitle: a\ntags: [x, y]\n---\nText\n",
+		},
+		{
+			name:    "fixing broken frontmatter with an indented root",
+			current: "---\n  owner: x\n  title: a\n  title: b\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
+			name:    "fixing broken frontmatter with a tab",
+			current: "---\ntitle: a\n\towner: x\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
+			name:    "fixing broken frontmatter with a lone carriage return",
+			current: "---\ntitle: a\rowner: x\ntitle: b\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
+			name:    "fixing broken frontmatter with a key indented under a value",
+			current: "---\ntitle: a\n  owner: x\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
+			name:    "fixing broken frontmatter with an anchored key",
+			current: "---\n&a secret: x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
+			name:    "fixing broken frontmatter with a tagged key",
+			current: "---\n!!str secret: x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
+			name:    "fixing broken frontmatter with an escaped key",
+			current: "---\n\"sec\\x72et\": x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
+			name:    "fixing broken frontmatter with an explicit key",
+			current: "---\n? secret : x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
+			name:    "fixing broken frontmatter whose keys can't be read",
+			current: "---\ntitle: a\n[owner]\n---\nText\n",
+			next:    "---\ntitle: a\n---\nText\n",
+			wantErr: "can't tell which keys",
+		},
 		{name: "too many tags", next: "---\ntitle: A\ntags: [" + list("t", document.MaxTags+1) + "]\n---\n", wantErr: "tags: more than 20"},
 		{name: "too many aliases", next: "---\ntitle: A\naliases: [" + list("a", document.MaxAliases+1) + "]\n---\n", wantErr: "aliases: more than 10"},
 		{
@@ -87,7 +218,7 @@ func TestCheck(t *testing.T) {
 			}
 			next := mustParse(t, "a.md", []byte(testCase.next))
 
-			err := document.Check(current, next)
+			err := document.Check(current, next, testCase.allowed)
 
 			if testCase.wantErr == "" {
 				if err != nil {

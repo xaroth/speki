@@ -28,6 +28,8 @@ guidelines: |
   Put one document per service under services/, named after the service.
   Runbooks go under runbooks/ and start with a "When to use this" section.
   Mark anything that describes the old Nomad setup as deprecated instead of deleting it.
+frontmatter:
+  allow: [owner, review_by]
 ```
 
 | Field | Required | Used for |
@@ -38,6 +40,7 @@ guidelines: |
 | `read_role` | no | The lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`, `maintain` or `admin` |
 | `readers` | no | Users and teams that may read the vault. Leave it out to let everyone with read access in |
 | `writers` | no | Users and teams that may write to the vault. Leave it out to let every reader with push access write |
+| `frontmatter.allow` | no | Frontmatter keys agents may set on top of `title`, `description`, `tags`, `aliases`, `status` and `related`. Leave it out to allow none. At most 50; `created` and `updated` can't be listed. Returned by `guide` |
 
 Speki ignores unknown keys, so a newer `speki.yaml` doesn't break an older speki.
 

@@ -20,6 +20,7 @@ type VaultInfo struct {
 	Title       string
 	Description string
 	Guidelines  string
+	Frontmatter []string // keys agents may set on top of speki's writer fields
 	CanWrite    bool
 	Documents   int
 	State       access.State // why speki doesn't serve the vault right now; empty when it does
@@ -56,6 +57,7 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 			Title:       v.Config.Title,
 			Description: v.Config.Description,
 			Guidelines:  v.Config.Guidelines,
+			Frontmatter: v.Config.Frontmatter.Allow,
 			CanWrite:    g.CanWrite(v.RepoID),
 			Documents:   stats.Documents,
 		})

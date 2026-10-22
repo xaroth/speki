@@ -63,7 +63,7 @@ lowercased. Dates accept RFC 3339 and Obsidian's `2026-10-09`, `2026-10-09T10:30
 ```go
 // Check compares a document an agent wants to write with the current one (nil for a new document) and
 // returns the problems the change introduces.
-func Check(current, next *Document) error
+func Check(current, next *Document, allowed []string) error
 
 // Touch sets updated to now, and created to created unless that's zero, and returns the new bytes.
 func (d *Document) Touch(now, created time.Time) ([]byte, error)
@@ -74,6 +74,14 @@ document whose `tags` a person wrote as `tags: a, b` shouldn't be blocked by tha
 no problems at all and must have a title (frontmatter or `#` heading). Changing a document with broken
 frontmatter only works if the change fixes the frontmatter, because speki has to rewrite it to set
 `updated`. The error says so and quotes the problem.
+
+`Check` also locks frontmatter keys: any key outside the writer fields (`title`, `description`, `tags`,
+`aliases`, `status`, `related`) and `allowed` (the vault's `frontmatter.allow`) must have the same value in
+`next` as in `current`, compared on the YAML node tree, ignoring style and comments. `updated` is exempt,
+and so is `created` when `Touch` will set it. Locking applies to new documents too, where `current` has no
+keys. When the current frontmatter is broken, its values can't be compared, so `Check` reads its top-level
+key names line by line and only lets an agent repair it when none of them is locked (`created` aside). A
+block with a locked key, or a top-level line that isn't a key, has to be fixed by a person.
 
 `Touch` edits the `yaml.Node` tree in place: it updates the value node for `updated` (and `created`), or
 appends key and value nodes at the end of the mapping. Then it re-encodes only the frontmatter block, using
