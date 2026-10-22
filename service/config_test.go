@@ -82,12 +82,7 @@ func TestNew(t *testing.T) {
 			cfg: with(func(c *service.Config) {
 				c.Instance = service.Instance{Name: "Work!", Title: "hidden\u202etext", Description: "tag\U000E0041"}
 			}),
-			want: []string{"instance.name", "instance.title", "instance.description"},
-		},
-		{
-			name: "long instance description",
-			cfg:  with(func(c *service.Config) { c.Instance.Description = strings.Repeat("x", 301) }),
-			want: []string{"instance.description"},
+			want: []string{"instance.name:", "instance.title must", "instance.description must"},
 		},
 		{
 			name: "negative interval",

@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/time/rate"
@@ -83,6 +86,36 @@ type Identity struct {
 	Name        string // speki-<Name> is the advertised name
 	Title       string
 	Description string // what belongs in this speki
+}
+
+// identityName is what Identity.Name must look like.
+var identityName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// maxDescription is the longest Identity.Description, in characters. It goes into the instructions, which
+// Claude Code cuts at 2,048 characters.
+const maxDescription = 300
+
+// hiddenOrBreak reports whether r breaks a line, or is a control or format character that can hide or
+// reorder text. Identity texts go to every user's agent.
+func hiddenOrBreak(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// Validate reports every problem with id at once, each starting with the field it concerns: name, title
+// or description.
+func (id Identity) Validate() error {
+	var errs []error
+	if id.Name != "" && !identityName.MatchString(id.Name) {
+		errs = append(errs, fmt.Errorf("name: %q must be lower-case letters, digits and dashes, at most 32", id.Name))
+	}
+	if strings.ContainsFunc(id.Title, hiddenOrBreak) || utf8.RuneCountInString(id.Title) > 100 {
+		errs = append(errs, errors.New("title must be one line of at most 100 characters, without control or format characters"))
+	}
+	desc := strings.Join(strings.Fields(id.Description), " ") // line breaks fold to spaces, as YAML's > does
+	if strings.ContainsFunc(desc, hiddenOrBreak) || utf8.RuneCountInString(desc) > maxDescription {
+		errs = append(errs, fmt.Errorf("description must be at most %d characters, without control or format characters", maxDescription))
+	}
+	return errors.Join(errs...)
 }
 
 func (id Identity) name() string {

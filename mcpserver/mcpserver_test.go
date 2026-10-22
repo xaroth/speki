@@ -275,6 +275,59 @@ func TestRateLimit(t *testing.T) {
 	})
 }
 
+func TestIdentityValidate(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		id   mcpserver.Identity
+		want []string // in the error; none for a valid identity
+	}{
+		{name: "zero identity"},
+		{
+			name: "longest of each",
+			id: mcpserver.Identity{
+				Name:        "a" + strings.Repeat("-", 31),
+				Title:       strings.Repeat("t", 100),
+				Description: strings.Repeat("d", 150) + "\n  " + strings.Repeat("d", 149),
+			},
+		},
+		{
+			name: "every problem at once",
+			id:   mcpserver.Identity{Name: "Work!", Title: "hidden\u202etext", Description: "tag\U000E0041"},
+			want: []string{"name: \"Work!\"", "title must", "description must"},
+		},
+		{name: "name starting with a dash", id: mcpserver.Identity{Name: "-work"}, want: []string{"name:"}},
+		{name: "long name", id: mcpserver.Identity{Name: strings.Repeat("a", 33)}, want: []string{"name:"}},
+		{name: "title over two lines", id: mcpserver.Identity{Title: "one\ntwo"}, want: []string{"title must"}},
+		{name: "long title", id: mcpserver.Identity{Title: strings.Repeat("t", 101)}, want: []string{"title must"}},
+		{
+			name: "long description",
+			id:   mcpserver.Identity{Description: strings.Repeat("d", 301)},
+			want: []string{"description must be at most 300 characters"},
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			err := testCase.id.Validate()
+			if len(testCase.want) == 0 {
+				if err != nil {
+					t.Errorf("got %v, want no error", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("got no error, want one mentioning %q", testCase.want)
+			}
+			for _, w := range testCase.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("got error %q, want it to mention %q", err, w)
+				}
+			}
+		})
+	}
+}
+
 // The instructions must fit Claude Code's 2,048 characters with or without an identity.
 func TestHandshake(t *testing.T) {
 	t.Parallel()

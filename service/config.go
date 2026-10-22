@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/xaroth/speki/auth/seal"
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/mcpserver"
 	"github.com/xaroth/speki/telemetry"
 )
 
@@ -120,18 +118,13 @@ type Instance struct {
 	Description string `yaml:"description"`
 }
 
-// instanceName is what Instance.Name must look like.
-var instanceName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
-
-// hiddenOrBreak reports whether r breaks a line, or is a control or format character that can hide or
-// reorder text. Instance texts go to every user's agent.
-func hiddenOrBreak(r rune) bool {
-	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+func (i Instance) identity() mcpserver.Identity {
+	return mcpserver.Identity{
+		Name:        i.Name,
+		Title:       i.Title,
+		Description: i.Description,
+	}
 }
-
-// maxInstanceDescription is the longest Instance.Description, in characters. It goes into the MCP
-// instructions, which Claude Code cuts at 2,048 characters.
-const maxInstanceDescription = 300
 
 // Telemetry configures logging and tracing.
 type Telemetry struct {
@@ -232,21 +225,35 @@ func (c Config) validate() error {
 	if c.SQLite.QueryMemory <= 0 || c.SQLite.QueryMemory > c.SQLite.MemoryLimit*3/4 {
 		errs = append(errs, errors.New("sqlite.query_memory_mib must be positive and at most 3/4 of sqlite.memory_limit_mib, so searches and index builds keep some"))
 	}
-	if c.Instance.Name != "" && !instanceName.MatchString(c.Instance.Name) {
-		errs = append(errs, fmt.Errorf("instance.name: %q must be lower-case letters, digits and dashes, at most 32", c.Instance.Name))
-	}
-	if strings.ContainsFunc(c.Instance.Title, hiddenOrBreak) || utf8.RuneCountInString(c.Instance.Title) > 100 {
-		errs = append(errs, errors.New("instance.title must be one line of at most 100 characters, without control or format characters"))
-	}
-	desc := strings.Join(strings.Fields(c.Instance.Description), " ") // line breaks fold to spaces, as YAML's > does
-	if strings.ContainsFunc(desc, hiddenOrBreak) || utf8.RuneCountInString(desc) > maxInstanceDescription {
-		errs = append(errs, fmt.Errorf("instance.description must be at most %d characters, without control or format characters", maxInstanceDescription))
-	}
+	errs = append(errs, within("instance.", c.Instance.identity().Validate())...)
 	_, err := telemetry.ParseLevel(c.Telemetry.LogLevel)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("telemetry.log_level: %w", err))
 	}
 	return errors.Join(errs...)
+}
+
+// joinedError is what errors.Join returns.
+type joinedError interface {
+	error
+	Unwrap() []error
+}
+
+// within puts each of err's joined errors in the configuration section prefix names.
+func within(prefix string, err error) []error {
+	if err == nil {
+		return nil
+	}
+	errs := []error{err}
+	joined, ok := errors.AsType[joinedError](err)
+	if ok {
+		errs = joined.Unwrap()
+	}
+	out := make([]error, 0, len(errs))
+	for _, e := range errs {
+		out = append(out, fmt.Errorf("%s%w", prefix, e))
+	}
+	return out
 }
 
 // anyPort reports whether addr asks for a port picked by the system, which is different every time.
