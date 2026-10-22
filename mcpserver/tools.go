@@ -52,7 +52,7 @@ type knowledgeBase interface {
 	List(ctx context.Context, g *access.Grant, req knowledge.ListRequest) (knowledge.Listing, error)
 	Search(ctx context.Context, g *access.Grant, req knowledge.SearchRequest) (knowledge.SearchResult, error)
 	Read(ctx context.Context, g *access.Grant, req knowledge.ReadRequest) (knowledge.Page, error)
-	History(ctx context.Context, g *access.Grant, req knowledge.HistoryRequest) ([]knowledge.Commit, error)
+	History(ctx context.Context, g *access.Grant, req knowledge.HistoryRequest) (knowledge.HistoryPage, error)
 	Write(ctx context.Context, g *access.Grant, req knowledge.WriteRequest) (knowledge.Result, error)
 	Edit(ctx context.Context, g *access.Grant, req knowledge.EditRequest) (knowledge.Result, error)
 	Move(ctx context.Context, g *access.Grant, req knowledge.MoveRequest) (knowledge.Result, error)

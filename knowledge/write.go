@@ -679,7 +679,7 @@ func (b *Base) findCommit(ctx context.Context, g *access.Grant, v vault.Vault, p
 			case <-time.After(lookupRetry):
 			}
 		}
-		commits, err := b.github.Commits(fctx, g.User().Token, v.Name, v.DefaultBranch, path, 5)
+		commits, err := b.github.Commits(fctx, g.User().Token, v.Name, v.DefaultBranch, path, 0, 5)
 		if err != nil {
 			continue
 		}

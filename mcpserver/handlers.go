@@ -499,16 +499,16 @@ type HistoryOutput struct {
 }
 
 func (s *Server) history(ctx context.Context, g *access.Grant, in HistoryInput) (HistoryOutput, string, error) {
-	commits, err := s.kb.History(ctx, g, knowledge.HistoryRequest{Vault: in.Vault, Path: in.Path, Limit: in.Limit})
+	h, err := s.kb.History(ctx, g, knowledge.HistoryRequest{Vault: in.Vault, Path: in.Path, Limit: in.Limit})
 	if err != nil {
 		return HistoryOutput{}, "", err
 	}
-	out := HistoryOutput{Commits: make([]CommitSummary, 0, len(commits))}
+	out := HistoryOutput{Commits: make([]CommitSummary, 0, len(h.Commits))}
 	var b strings.Builder
-	if len(commits) == 0 {
+	if len(h.Commits) == 0 {
 		b.WriteString("No commits found.\n")
 	}
-	for _, c := range commits {
+	for _, c := range h.Commits {
 		cs := CommitSummary{
 			SHA:     c.SHA,
 			Author:  c.Author,

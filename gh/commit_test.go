@@ -83,7 +83,7 @@ func TestCommit(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("files (-want +got):\n%s", diff)
 	}
-	history, err := fake.Commits(t.Context(), writer, kb.FullName, "main", "", 1)
+	history, err := fake.Commits(t.Context(), writer, kb.FullName, "main", "", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,34 +228,121 @@ func checkCommitError(tb testing.TB, err, want error) {
 func TestCommits(t *testing.T) {
 	t.Parallel()
 	history := []gh.Commit{
-		{SHA: "c2", Author: "octocat", Date: time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC), Message: "Update a.md"},
+		{SHA: "c4", Author: "octocat", Date: time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC), Message: "Update a.md"},
+		{SHA: "c3", Author: "octocat", Date: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC), Message: "Fix a.md"},
+		{SHA: "c2", Author: "octocat", Date: time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC), Message: "Edit a.md"},
 		{SHA: "c1", Author: "Someone", Date: time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC), Message: "Create a.md"}, // no account
 	}
+	commits := "GET /repos/" + kb.FullName + "/commits?"
 	testCases := []struct {
-		name    string
-		token   string
-		repo    string
-		want    []gh.Commit
-		wantErr error
+		name         string
+		token        string
+		repo         string
+		from         string
+		skip         int
+		pageSize     int // the fake's; 0 for its default
+		want         []gh.Commit
+		wantErr      error
+		wantRequests []string
 	}{
-		{name: "history", token: writer, repo: kb.FullName, want: history},
-		{name: "token revoked", token: revoked, repo: kb.FullName, wantErr: gh.ErrUnauthorized},
-		{name: "repository not seen", token: writer, repo: "ours/gone", wantErr: gh.ErrNotFound},
+		{
+			name:         "first page",
+			token:        writer,
+			repo:         kb.FullName,
+			from:         "main",
+			want:         history[:2],
+			wantRequests: []string{commits + "page=1&path=a.md&per_page=2&sha=main"},
+		},
+		{
+			name:         "skip a whole page",
+			token:        writer,
+			repo:         kb.FullName,
+			from:         "c4",
+			skip:         2,
+			want:         history[2:],
+			wantRequests: []string{commits + "page=2&path=a.md&per_page=2&sha=c4"},
+		},
+		{
+			name:         "skip part of a page",
+			token:        writer,
+			repo:         kb.FullName,
+			from:         "c4",
+			skip:         1,
+			pageSize:     2,
+			want:         history[1:3],
+			wantRequests: []string{commits + "page=1&path=a.md&per_page=100&sha=c4", commits + "page=2&path=a.md&per_page=100&sha=c4"},
+		},
+		{
+			name:         "past the end",
+			token:        writer,
+			repo:         kb.FullName,
+			from:         "c3",
+			skip:         2,
+			want:         history[3:],
+			wantRequests: []string{commits + "page=2&path=a.md&per_page=2&sha=c3"},
+		},
+		{
+			name:         "token revoked",
+			token:        revoked,
+			repo:         kb.FullName,
+			from:         "main",
+			wantErr:      gh.ErrUnauthorized,
+			wantRequests: []string{commits + "page=1&path=a.md&per_page=2&sha=main"},
+		},
+		{
+			name:         "repository not seen",
+			token:        writer,
+			repo:         "ours/gone",
+			from:         "main",
+			wantErr:      gh.ErrNotFound,
+			wantRequests: []string{"GET /repos/ours/gone/commits?page=1&path=a.md&per_page=2&sha=main"},
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := ghtest.New(t, withKB(), withUsers(), ghtest.ExpectCommits(kb.FullName, history...))
-			got, err := fake.Commits(t.Context(), testCase.token, testCase.repo, "main", "a.md", 2)
+			opts := []ghtest.Option{withKB(), withUsers(), ghtest.ExpectCommits(kb.FullName, history...)}
+			if testCase.pageSize != 0 {
+				opts = append(opts, ghtest.ExpectPageSize(testCase.pageSize))
+			}
+			fake := ghtest.New(t, opts...)
+			got, err := fake.Commits(t.Context(), testCase.token, testCase.repo, testCase.from, "a.md", testCase.skip, 2)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)
 			}
 			if diff := cmp.Diff(testCase.want, got); diff != "" {
 				t.Errorf("commits (-want +got):\n%s", diff)
 			}
-			wantRequests := []string{"GET /repos/" + testCase.repo + "/commits?path=a.md&per_page=2&sha=main"}
-			if diff := cmp.Diff(wantRequests, fake.Requests()); diff != "" {
+			if diff := cmp.Diff(testCase.wantRequests, fake.Requests()); diff != "" {
 				t.Errorf("requests (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestBranchTip(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		token   string
+		branch  string
+		want    string
+		wantErr error
+	}{
+		{name: "head", token: reader, branch: "main", want: "abc123"},
+		{name: "token revoked", token: revoked, branch: "main", wantErr: gh.ErrUnauthorized},
+		{name: "no such branch", token: reader, branch: "gone", wantErr: gh.ErrNotFound},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			fake := ghtest.New(t, withKB(), withUsers())
+			got, err := fake.BranchTip(t.Context(), testCase.token, kb.FullName, testCase.branch)
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got %v, want %v", err, testCase.wantErr)
+			}
+			if got != testCase.want {
+				t.Errorf("got %q, want %q", got, testCase.want)
 			}
 		})
 	}

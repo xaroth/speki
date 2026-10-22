@@ -198,9 +198,9 @@ type Commit struct {
 	Message string
 }
 
-// Commits returns the newest commits on branch, at most limit, as the token's user sees them. With a
-// path, only commits that changed it.
-func (c *Client) Commits(ctx context.Context, token, repo, branch, path string, limit int) ([]Commit, error) {
+// Commits returns the commits reachable from from, a branch or a commit SHA, newest first, as the token's
+// user sees them: at most limit, after skipping the first skip. With a path, only commits that changed it.
+func (c *Client) Commits(ctx context.Context, token, repo, from, path string, skip, limit int) ([]Commit, error) {
 	client, err := c.userClient(token)
 	if err != nil {
 		return nil, err
@@ -209,16 +209,36 @@ func (c *Client) Commits(ctx context.Context, token, repo, branch, path string, 
 	if err != nil {
 		return nil, err
 	}
-	page, _, err := client.Repositories.ListCommits(ctx, owner, name, &github.CommitsListOptions{
-		SHA:     branch,
-		Path:    path,
-		PerPage: limit,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("commits of %s: %w", repo, userError(err))
+	if limit < 1 {
+		return nil, nil
 	}
-	out := make([]Commit, 0, len(page))
-	for _, rc := range page {
+	// GitHub pages by number. When skip isn't a multiple of limit, the commits span two full-size pages.
+	perPage := limit
+	if perPage > 100 || skip%perPage != 0 {
+		perPage = 100
+	}
+	opt := &github.CommitsListOptions{
+		SHA:         from,
+		Path:        path,
+		ListOptions: github.ListOptions{Page: skip/perPage + 1, PerPage: perPage},
+	}
+	start := skip % perPage
+	var listed []*github.RepositoryCommit
+	for {
+		page, resp, err := client.Repositories.ListCommits(ctx, owner, name, opt)
+		if err != nil {
+			return nil, fmt.Errorf("commits of %s: %w", repo, userError(err))
+		}
+		listed = append(listed, page...)
+		if len(listed) >= start+limit || resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	listed = listed[min(start, len(listed)):]
+	listed = listed[:min(limit, len(listed))]
+	out := make([]Commit, 0, len(listed))
+	for _, rc := range listed {
 		author := rc.GetAuthor().GetLogin()
 		if author == "" {
 			author = rc.GetCommit().GetAuthor().GetName()
@@ -231,4 +251,21 @@ func (c *Client) Commits(ctx context.Context, token, repo, branch, path string, 
 		})
 	}
 	return out, nil
+}
+
+// BranchTip returns the commit a branch points to, as the token's user sees it.
+func (c *Client) BranchTip(ctx context.Context, token, repo, branch string) (string, error) {
+	client, err := c.userClient(token)
+	if err != nil {
+		return "", err
+	}
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	ref, _, err := client.Git.GetRef(ctx, owner, name, "heads/"+branch)
+	if err != nil {
+		return "", fmt.Errorf("head of %s %s: %w", repo, branch, userError(err))
+	}
+	return ref.GetObject().GetSHA(), nil
 }

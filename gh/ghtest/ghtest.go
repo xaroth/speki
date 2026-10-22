@@ -187,8 +187,9 @@ func ExpectBranch(repo, branch, sha string) Option {
 	}
 }
 
-// ExpectCommits sets a repository's history, newest first. An author that's the login of a user added
-// with ExpectUser is linked to the account; others are git author names only.
+// ExpectCommits sets a repository's history, newest first. Listing from one of its SHAs starts there. An
+// author that's the login of a user added with ExpectUser is linked to the account; others are git author
+// names only.
 func ExpectCommits(repo string, commits ...gh.Commit) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
@@ -616,8 +617,16 @@ func (f *Fake) serveCommits(w *fakeWriter, r *http.Request, c credential) {
 	for _, u := range f.users {
 		logins[u.Login] = true
 	}
+	// The history is one line of commits: a SHA in it starts there, anything else is the branch head.
+	history := repo.history
+	for i, cm := range history {
+		if cm.SHA == r.URL.Query().Get("sha") {
+			history = history[i:]
+			break
+		}
+	}
 	var items []any
-	for _, cm := range repo.history {
+	for _, cm := range history {
 		var author any
 		if logins[cm.Author] {
 			author = map[string]any{"login": cm.Author}
