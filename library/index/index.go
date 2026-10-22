@@ -1,3 +1,5 @@
+//go:build sqlite_fts5
+
 // Package index keeps one SQLite full-text index per vault and searches across several of them. It works
 // on files: it knows nothing about vaults, users or git.
 //
