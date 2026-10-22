@@ -155,6 +155,12 @@ is escaped the same way. Structured content carries the raw text unchanged.
 `read` returns at most 64 KiB of content per call, so a result stays well below client limits even with the
 content in both the structured part and the text.
 
+A result is at most 80 KiB as it goes out, JSON-encoded (`maxAnswer` in `handlers.go`). Claude Code cuts
+MCP tool output at about 25k tokens by default, and cuts off or rejects a bigger result before the agent
+sees it, hints included. `query` adds rows while the structured rows and their lines of text, counted
+together, fit, then sets `truncated`, and the text ends with "truncated: add a LIMIT or narrow the query to
+see the rest". A test checks the encoded size of the largest results against the budget.
+
 ## Errors
 
 A `*knowledge.Error` becomes a tool result with `isError: true` and text only:

@@ -154,8 +154,8 @@ ORDER BY d.updated DESC LIMIT 20;
 - Core SQLite functions, JSON functions, date and time functions, and the usual aggregates and window
   functions.
 - No `PRAGMA`, `ATTACH`, writes, or temporary tables.
-- 500 rows, 1 MiB of results, 3 seconds, one query per user at a time. `truncated` tells you when rows
-  were cut.
+- 200 rows, and as many as fit in one answer of 80 KiB, 3 seconds, one query per user at a time.
+  `truncated` tells you when rows were cut.
 - A memory budget shared by all queries. A query that needs more fails with `too_large`; narrow it down.
 - Two queries running at once across all users. Past that, a query waits up to a second, then fails with
   `unavailable`; try again in a few seconds.

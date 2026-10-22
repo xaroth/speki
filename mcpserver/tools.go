@@ -132,7 +132,7 @@ func (s *Server) addTools() {
 		Name:  "query",
 		Title: "Query with SQL",
 		Description: "Run one read-only SQLite SELECT over your vaults, for questions search can't answer: documents by metadata, " +
-			"links between documents, missing descriptions, stale runbooks. Call schema first for the views and examples. At most 500 rows, 3 seconds.",
+			"links between documents, missing descriptions, stale runbooks. Call schema first for the views and examples. At most 200 rows and 80 KiB, 3 seconds.",
 		Annotations: readOnly(),
 	}, handle(s, "query", s.query))
 	mcp.AddTool(s.mcp, &mcp.Tool{
