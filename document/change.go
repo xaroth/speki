@@ -123,19 +123,33 @@ func lockedChanges(current, next *Document, allowed []string) []error {
 var topLevelKey = regexp.MustCompile(`^(?:"([^"]*)"|'([^']*)'|([^\s#'"\-\[{][^:#]*?))\s*:(?:\s|$)`)
 
 // topLevelKeys reads the top-level key names from a frontmatter block that isn't valid YAML, line by line.
-// It returns false when a line at the top level isn't a key, so the names may be incomplete.
+// It returns false for anything it can't be sure about, since a missed key could be dropped unseen: other
+// line breaks than YAML's usual, tabs or an indented root, and indented lines under a key whose value is
+// on its own line.
 func topLevelKeys(content []byte) ([]string, bool) {
+	s := strings.ReplaceAll(string(content), "\r\n", "\n")
+	if strings.ContainsAny(s, "\r\u0085\u2028\u2029") {
+		return nil, false
+	}
 	var keys []string
-	for l := range strings.SplitSeq(string(content), "\n") {
-		l = strings.TrimSuffix(l, "\r")
-		if l == "" || l[0] == ' ' || l[0] == '\t' || l[0] == '#' {
-			continue // nested, blank or a comment
+	nested := false // whether indented lines and list items can belong to the last key
+	for l := range strings.SplitSeq(s, "\n") {
+		switch {
+		case strings.TrimLeft(l, " ") == "", strings.HasPrefix(strings.TrimLeft(l, " "), "#"):
+			continue
+		case l[0] == ' ' || l == "-" || strings.HasPrefix(l, "- "):
+			if !nested {
+				return nil, false
+			}
+			continue
 		}
 		m := topLevelKey.FindStringSubmatch(l)
 		if m == nil {
 			return nil, false
 		}
 		keys = append(keys, m[1]+m[2]+strings.TrimSpace(m[3]))
+		v := strings.TrimSpace(l[len(m[0]):])
+		nested = v == "" || v[0] == '|' || v[0] == '>' || v[0] == '#'
 	}
 	return keys, true
 }

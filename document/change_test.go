@@ -130,6 +130,35 @@ func TestCheck(t *testing.T) {
 			wantErr: `"owner" can't be added`,
 		},
 		{
+			name:    "fixing broken frontmatter with a list and a block",
+			current: "---\ntitle: [a\ntags:\n- x\n- y\ndescription: |\n  Two\n\n  lines\n---\nText\n",
+			next:    "---\ntitle: a\ntags: [x, y]\n---\nText\n",
+		},
+		{
+			name:    "fixing broken frontmatter with an indented root",
+			current: "---\n  owner: x\n  title: a\n  title: b\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
+			name:    "fixing broken frontmatter with a tab",
+			current: "---\ntitle: a\n\towner: x\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
+			name:    "fixing broken frontmatter with a lone carriage return",
+			current: "---\ntitle: a\rowner: x\ntitle: b\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
+			name:    "fixing broken frontmatter with a key indented under a value",
+			current: "---\ntitle: a\n  owner: x\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "can't tell which keys",
+		},
+		{
 			name:    "fixing broken frontmatter whose keys can't be read",
 			current: "---\ntitle: a\n[owner]\n---\nText\n",
 			next:    "---\ntitle: a\n---\nText\n",
