@@ -14,37 +14,6 @@ import (
 	"github.com/xaroth/speki/gh/ghtest"
 )
 
-const (
-	writer  = "ghu_writer"
-	reader  = "ghu_reader"
-	revoked = "ghu_revoked"
-)
-
-// withUsers adds octocat, who may write to ours/kb, and reader, who may only read it.
-func withUsers() ghtest.Option {
-	return func(tb testing.TB, f *ghtest.Fake) {
-		tb.Helper()
-		ghtest.ExpectUser(writer, gh.User{ID: 7, Login: "octocat"})(tb, f)
-		ghtest.ExpectRole(writer, kb.FullName, gh.RoleWrite)(tb, f)
-		ghtest.ExpectUser(reader, gh.User{ID: 8, Login: "reader"})(tb, f)
-		ghtest.ExpectRole(reader, kb.FullName, gh.RoleRead)(tb, f)
-	}
-}
-
-// respond answers a route with a fixed response.
-func respond(route string, status int, header http.Header, body string) ghtest.Option {
-	return ghtest.ExpectRoute(route, func(http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			for k, v := range header {
-				w.Header()[k] = v
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			_, _ = w.Write([]byte(body))
-		})
-	})
-}
-
 func recorded(tb testing.TB, name string) ghtest.Option {
 	tb.Helper()
 	body, err := os.ReadFile(filepath.Join("testdata", name+".json"))

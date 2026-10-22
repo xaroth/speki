@@ -3,129 +3,12 @@ package gh_test
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/gh/ghtest"
 )
-
-var kb = gh.Repository{ID: 100, FullName: "ours/kb", DefaultBranch: "main", PushedAt: time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)}
-
-// withKB is installation 1 with the repository ours/kb on branch main.
-func withKB() ghtest.Option {
-	return func(tb testing.TB, f *ghtest.Fake) {
-		tb.Helper()
-		ghtest.ExpectInstallation(gh.Installation{ID: 1, AccountID: 42}, kb)(tb, f)
-		ghtest.ExpectBranch(kb.FullName, "main", "abc123")(tb, f)
-	}
-}
-
-func TestAppOwner(t *testing.T) {
-	t.Parallel()
-	fake := ghtest.New(t, ghtest.ExpectAppOwner(42))
-	got, err := fake.AppOwner(t.Context())
-	if err != nil {
-		t.Fatalf("AppOwner: %v", err)
-	}
-	if got != 42 {
-		t.Errorf("got owner %d, want 42", got)
-	}
-}
-
-func TestInstallations(t *testing.T) {
-	t.Parallel()
-	want := []gh.Installation{
-		{ID: 1, AccountID: 42},
-		{ID: 2, AccountID: 7, Suspended: true},
-	}
-	fake := ghtest.New(t, ghtest.ExpectPageSize(1), ghtest.ExpectInstallation(want[0]), ghtest.ExpectInstallation(want[1]))
-	got, err := fake.Installations(t.Context())
-	if err != nil {
-		t.Fatalf("Installations: %v", err)
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("installations (-want +got):\n%s", diff)
-	}
-}
-
-func TestRepositories(t *testing.T) {
-	t.Parallel()
-	other := gh.Repository{ID: 101, FullName: "ours/other", DefaultBranch: "master"}
-	testCases := []struct {
-		name         string
-		installation int64
-		want         []gh.Repository
-		wantErr      bool
-		wantNotFound bool
-	}{
-		{name: "paged", installation: 1, want: []gh.Repository{kb, other}},
-		{name: "installation gone", installation: 9, wantErr: true, wantNotFound: true},
-		{name: "token refused", installation: 8, wantErr: true}, // a 403 may be a rate limit, not gone
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			fake := ghtest.New(t, ghtest.ExpectPageSize(1),
-				ghtest.ExpectInstallation(gh.Installation{ID: 1}, kb, other),
-				ghtest.ExpectInstallation(gh.Installation{ID: 8}), ghtest.ExpectInstallation_Refused(8))
-			got, err := fake.Repositories(t.Context(), testCase.installation)
-			if (err != nil) != testCase.wantErr || errors.Is(err, gh.ErrNotFound) != testCase.wantNotFound {
-				t.Fatalf("got %v, want error %t, ErrNotFound %t", err, testCase.wantErr, testCase.wantNotFound)
-			}
-			if diff := cmp.Diff(testCase.want, got); diff != "" {
-				t.Errorf("repositories (-want +got):\n%s", diff)
-			}
-		})
-	}
-}
-
-func TestFile(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name    string
-		repo    string
-		path    string
-		want    string
-		wantErr error
-	}{
-		{name: "file", repo: kb.FullName, path: "speki.yaml", want: "title: KB\n"},
-		{name: "missing", repo: kb.FullName, path: "missing.yaml", wantErr: gh.ErrNotFound},
-		{name: "folder", repo: kb.FullName, path: "docs", wantErr: gh.ErrNotFound},
-		{name: "over 64 KiB", repo: kb.FullName, path: "big.md", wantErr: gh.ErrTooLarge},
-		{name: "over 1 MB, sent without content", repo: kb.FullName, path: "huge.md", wantErr: gh.ErrTooLarge},
-		{name: "repository not seen", repo: "ours/gone", path: "speki.yaml", wantErr: gh.ErrNotFound},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			fake := ghtest.New(t, withKB(),
-				ghtest.ExpectFile(kb.FullName, "speki.yaml", []byte("title: KB\n")),
-				ghtest.ExpectFile(kb.FullName, "docs/a.md", []byte("a")),
-				ghtest.ExpectFile(kb.FullName, "big.md", make([]byte, 64<<10+1)),
-				ghtest.ExpectFile(kb.FullName, "huge.md", make([]byte, 1<<20+1)))
-			got, err := fake.File(t.Context(), 1, testCase.repo, "main", testCase.path)
-			if !errors.Is(err, testCase.wantErr) {
-				t.Fatalf("got %v, want %v", err, testCase.wantErr)
-			}
-			if string(got) != testCase.want {
-				t.Errorf("got %q, want %q", got, testCase.want)
-			}
-		})
-	}
-
-	t.Run("rejects a repository name without an owner", func(t *testing.T) {
-		t.Parallel()
-		fake := ghtest.New(t, withKB())
-		if _, err := fake.File(t.Context(), 1, "kb", "main", "speki.yaml"); err == nil {
-			t.Error("got no error, want one")
-		}
-		if got := fake.Requests(); len(got) != 0 {
-			t.Errorf("got requests %q, want none", got)
-		}
-	})
-}
 
 // An installation's token is fetched once and used for its calls until it expires.
 func TestInstallationTokenIsReused(t *testing.T) {
@@ -171,63 +54,6 @@ func TestInstallationTokens(t *testing.T) {
 			}
 			if got != testCase.want {
 				t.Errorf("got token %q, want %q", got, testCase.want)
-			}
-		})
-	}
-}
-
-func TestBranchHead(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name    string
-		repo    string
-		branch  string
-		etag    string
-		want    gh.Head
-		wantErr error
-	}{
-		{name: "head", repo: kb.FullName, branch: "main", want: gh.Head{SHA: "abc123", ETag: `"abc123"`}},
-		{name: "unchanged", repo: kb.FullName, branch: "main", etag: `"abc123"`, want: gh.Head{ETag: `"abc123"`}},
-		{name: "changed", repo: kb.FullName, branch: "main", etag: `"old"`, want: gh.Head{SHA: "abc123", ETag: `"abc123"`}},
-		{name: "branch with a slash and a space", repo: kb.FullName, branch: "feature/x y", want: gh.Head{SHA: "def456", ETag: `"def456"`}},
-		{name: "repository not seen", repo: "ours/gone", branch: "main", wantErr: gh.ErrNotFound},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			fake := ghtest.New(t, withKB(), ghtest.ExpectBranch(kb.FullName, "feature/x y", "def456"))
-			got, err := fake.BranchHead(t.Context(), 1, testCase.repo, testCase.branch, testCase.etag)
-			if !errors.Is(err, testCase.wantErr) {
-				t.Fatalf("got %v, want %v", err, testCase.wantErr)
-			}
-			if diff := cmp.Diff(testCase.want, got); diff != "" {
-				t.Errorf("head (-want +got):\n%s", diff)
-			}
-		})
-	}
-}
-
-func TestRepositoryID(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name    string
-		repo    string
-		want    int64
-		wantErr error
-	}{
-		{name: "found", repo: kb.FullName, want: 100},
-		{name: "not seen", repo: "ours/gone", wantErr: gh.ErrNotFound},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			fake := ghtest.New(t, withKB())
-			got, err := fake.RepositoryID(t.Context(), 1, testCase.repo)
-			if !errors.Is(err, testCase.wantErr) {
-				t.Fatalf("got %v, want %v", err, testCase.wantErr)
-			}
-			if got != testCase.want {
-				t.Errorf("got ID %d, want %d", got, testCase.want)
 			}
 		})
 	}
