@@ -1,3 +1,4 @@
+// Internal: publicAddr is unexported, and the exported API can only reach it through loopback.
 package oauth
 
 import (
