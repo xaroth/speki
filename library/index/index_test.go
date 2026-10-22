@@ -868,6 +868,55 @@ func TestSearchRankingAndInput(t *testing.T) {
 	}
 }
 
+// Filters apply before the limit: documents that rank above every filtered match don't push those out.
+func TestSearchFiltersBelowManyBetterMatches(t *testing.T) {
+	t.Parallel()
+	// Long bodies with few matches rank low.
+	padding := func(n int) string { return strings.Repeat("words ", n) }
+	files := map[string]string{
+		"keep/a.md":  "---\ntitle: First\ntags: [keep]\n---\nGondola gondola " + padding(40) + "\n",
+		"keep/b.md":  "---\ntitle: Second\ntags: [keep]\n---\nGondola " + padding(40) + "\n",
+		"keep/c.md":  "---\ntitle: Third\ntags: [keep]\n---\nGondola " + padding(80) + "\n",
+		"other/d.md": "# Fourth\n\nGondola " + padding(160) + "\n",
+	}
+	for i := range 30 { // deprecated, so halved, but matching in the title they still rank above all of the above
+		files[fmt.Sprintf("popular/%02d.md", i)] = "---\ntitle: Gondola\nstatus: deprecated\n---\nGondola.\n"
+	}
+	for i := range 100 { // so that "gondola" is a rare word, and BM25 tells the documents apart
+		files[fmt.Sprintf("filler/%03d.md", i)] = fmt.Sprintf("# Filler %d\n\nNothing of interest here.\n", i)
+	}
+	src := kb(newIndex(t, files))
+
+	top := hitPaths(search(t, src, "gondola", index.Options{Limit: 30}))
+	for _, p := range top {
+		if !strings.HasPrefix(p, "popular/") {
+			t.Fatalf("unfiltered hits: got %v, want only popular/ documents", top)
+		}
+	}
+
+	testCases := []struct {
+		name string
+		opt  index.Options
+		want []string // in order
+	}{
+		{name: "tag", opt: index.Options{Tags: []string{"keep"}}, want: []string{"keep/a.md", "keep/b.md", "keep/c.md"}},
+		{name: "tag with a limit", opt: index.Options{Tags: []string{"keep"}, Limit: 2}, want: []string{"keep/a.md", "keep/b.md"}},
+		{name: "exclude deprecated", opt: index.Options{ExcludeDeprecated: true}, want: []string{"keep/a.md", "keep/b.md", "keep/c.md", "other/d.md"}},
+		{name: "tag and exclude deprecated", opt: index.Options{Tags: []string{"keep"}, ExcludeDeprecated: true}, want: []string{"keep/a.md", "keep/b.md", "keep/c.md"}},
+		{name: "path prefix", opt: index.Options{PathPrefix: "keep"}, want: []string{"keep/a.md", "keep/b.md", "keep/c.md"}},
+		{name: "path prefix of a longer folder name", opt: index.Options{PathPrefix: "kee"}, want: nil},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			got := hitPaths(search(t, src, "gondola", testCase.opt))
+			if diff := cmp.Diff(testCase.want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("hits (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // Close can race a build and applies: the index stays consistent and doesn't start work after closing.
 func TestCloseRacesWork(t *testing.T) {
 	t.Parallel()
