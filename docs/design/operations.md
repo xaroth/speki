@@ -146,6 +146,9 @@ The SQLite driver needs cgo, so builds need a C compiler.
 - Publishing a GitHub release (`release.yml`) builds the image and pushes it to `ghcr.io/xaroth/speki`,
   tagged with the release version (`v1.2.3` gives `1.2.3`). Non-prerelease versions also get `1.2` and
   move `latest`.
+- Workflows pin every action to a full commit SHA, with the version in a trailing comment, so a moved
+  or compromised tag can't change what runs. Dependabot (`.github/dependabot.yml`) checks the pins weekly
+  and opens one grouped pull request for updates.
 - The image `EXPOSE`s only the public port (8080). The metrics port is reachable on the container network
   but not published by default.
 - The image is built in two stages: `golang:1.27-bookworm` to build, `gcr.io/distroless/base-debian12` to
