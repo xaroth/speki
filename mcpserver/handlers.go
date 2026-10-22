@@ -292,7 +292,7 @@ type SearchHit struct {
 	Updated     string   `json:"updated,omitempty"`
 	Version     string   `json:"version"`
 	Snippet     string   `json:"snippet" jsonschema:"text around the best match, matched words in **bold**"`
-	Score       float64  `json:"score" jsonschema:"relevance; higher is better"`
+	Score       float64  `json:"score" jsonschema:"relevance from 0 to 1, higher is better; 1 is the best match in its vault"`
 }
 
 // SearchOutput is what a search found.

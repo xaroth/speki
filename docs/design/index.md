@@ -236,8 +236,11 @@ vault's vocabulary.
 
    plus a query on `names` (titles, aliases and file names, not folders) for substring hits on the raw
    words. Those rank below every full-text hit in their vault.
-5. Merge the hits of every vault by score (bm25 is negative, lower is better; the result shows its
-   absolute value), and keep the top `limit`.
+5. Divide each vault's scores by its best full-text score (bm25 is negative, lower is better; the
+   result shows its absolute value), taking a deprecated hit at twice its score so it stays halved. Each
+   vault's best match scores 1, which makes vaults of different sizes comparable. Substring hits then
+   score half the vault's lowest, at most 0.01. Merge the hits of every vault by score, then vault and
+   path, and keep the top `limit`.
 6. If there are no results and the query had more than one word, it runs again with `OR` and marks the
    result as relaxed.
 

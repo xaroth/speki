@@ -65,7 +65,7 @@ type Hit struct {
 	Updated     string
 	Version     string
 	Snippet     string
-	Score       float64 // higher is better
+	Score       float64 // 0 to 1, higher is better; 1 is the best match in its source
 }
 
 // Results is what a search found.
@@ -191,6 +191,7 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 		hits[i] = f.Hit
 		hits[i].Score = -f.Score // bm25 is negative, lower is better
 	}
+	normalise(hits)
 	if namesExpr == "" {
 		return hits, nil
 	}
@@ -227,6 +228,26 @@ func searchOne(ctx context.Context, g *generation, expr, namesExpr, excluded str
 		hits = append(hits, h)
 	}
 	return hits, nil
+}
+
+// normalise scales full-text scores so the best match in a vault scores 1: bm25 depends on the vault's
+// size and word counts, so raw scores from different vaults don't compare. A deprecated document is
+// measured unhalved, so it still scores half of what it would have.
+func normalise(hits []Hit) {
+	best := 0.0
+	for _, h := range hits {
+		s := h.Score
+		if h.Status == document.StatusDeprecated {
+			s *= 2
+		}
+		best = max(best, s)
+	}
+	if best <= 0 {
+		return
+	}
+	for i := range hits {
+		hits[i].Score /= best
+	}
 }
 
 // found is a hit with its document ID, while a search is in progress.

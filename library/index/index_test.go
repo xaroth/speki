@@ -131,13 +131,14 @@ func TestSearchDetails(t *testing.T) {
 	if diff := cmp.Diff(want, res.Hits, cmpopts.IgnoreFields(index.Hit{}, "Score"), cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("hits (-want +got):\n%s", diff)
 	}
-	if len(res.Hits) == 1 && res.Hits[0].Score <= 0 {
-		t.Errorf("score: got %v, want > 0", res.Hits[0].Score)
+	if len(res.Hits) == 1 && res.Hits[0].Score != 1 {
+		t.Errorf("score: got %v, want 1 for the best match", res.Hits[0].Score)
 	}
 
+	// The vault's best match, but deprecated.
 	nomad := search(t, src, "nomad", index.Options{})
-	if nomad.Hits[0].Score >= res.Hits[0].Score*2 {
-		t.Errorf("deprecated score: got %v, want below %v", nomad.Hits[0].Score, res.Hits[0].Score*2)
+	if nomad.Hits[0].Score != 0.5 {
+		t.Errorf("deprecated score: got %v, want 0.5", nomad.Hits[0].Score)
 	}
 
 	_, err := index.Search(t.Context(), src, "-only -exclusions", index.Options{})
@@ -160,6 +161,15 @@ func TestSearchAcrossSources(t *testing.T) {
 	b := newIndex(t, withFiller(map[string]string{"y.md": "# Other\n\nmentions kubernetes once in a longer text about other things\n"}))
 	c := newIndex(t, withFiller(map[string]string{"z.md": "# Typo\n\nreplcation is how this vault spells it\n"}))
 	d := newIndex(t, withFiller(map[string]string{"w.md": "# Spelled right\n\nreplication done properly\n"}))
+	largeFiles := withFiller(map[string]string{})
+	for i := range 3 {
+		largeFiles[fmt.Sprintf("zep-%d.md", i)] = fmt.Sprintf("# Zeppelin %d\n\nzeppelin%s\n", i, strings.Repeat(" filler", 10*i))
+	}
+	large := newIndex(t, largeFiles)
+	small := newIndex(t, map[string]string{
+		"zep.md":   "# Zeppelin\n\nzeppelin zeppelin\n",
+		"other.md": "# Other\n\nmentions a zeppelin in a longer text about other things\n",
+	})
 
 	testCases := []struct {
 		name      string
@@ -173,6 +183,13 @@ func TestSearchAcrossSources(t *testing.T) {
 			sources: []index.Source{{Name: "a", Index: a}, {Name: "b", Index: b}},
 			query:   "kubernetes",
 			want:    []string{"a:x.md", "b:y.md"},
+		},
+		{
+			// "zeppelin" is in every document of the small vault, so bm25 scores it near zero there.
+			name:    "the best of each source first, whatever its size",
+			sources: []index.Source{{Name: "large", Index: large}, {Name: "small", Index: small}},
+			query:   "zeppelin",
+			want:    []string{"large:zep-0.md", "small:zep.md", "large:zep-1.md", "large:zep-2.md", "small:other.md"},
 		},
 		{
 			name:    "a word known in any source isn't corrected",
