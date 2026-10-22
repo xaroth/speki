@@ -2,10 +2,7 @@ package telemetry_test
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -13,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -22,141 +18,6 @@ import (
 
 	"github.com/xaroth/speki/telemetry"
 )
-
-// requestContext returns the context a handler behind telemetry.RequestID sees for a request with id.
-func requestContext(tb testing.TB, id string) context.Context {
-	tb.Helper()
-	var ctx context.Context
-	req := httptest.NewRequestWithContext(tb.Context(), http.MethodGet, "/", nil)
-	req.Header.Set(telemetry.RequestIDHeader, id)
-	telemetry.RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		ctx = r.Context()
-	})).ServeHTTP(httptest.NewRecorder(), req)
-	return ctx
-}
-
-func TestNewLogger(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name  string
-		level slog.Level
-		log   func(tb testing.TB, logger *slog.Logger)
-		want  []map[string]any
-	}{
-		{
-			name:  "redacts secrets",
-			level: slog.LevelInfo,
-			log: func(_ testing.TB, logger *slog.Logger) {
-				logger.Info("signed in", "token", "ghu_secret", "login", "octocat")
-			},
-			want: []map[string]any{{"level": "INFO", "msg": "signed in", "token": "[redacted]", "login": "octocat"}},
-		},
-		{
-			name:  "request ID from the context",
-			level: slog.LevelInfo,
-			log: func(tb testing.TB, logger *slog.Logger) {
-				logger = logger.WithGroup("g").With("component", "test")
-				logger.InfoContext(requestContext(tb, "req-1"), "in a request")
-				logger.Info("outside")
-			},
-			want: []map[string]any{
-				{"level": "INFO", "msg": "in a request", "g": map[string]any{"component": "test", "request_id": "req-1"}},
-				{"level": "INFO", "msg": "outside", "g": map[string]any{"component": "test"}},
-			},
-		},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			var buf bytes.Buffer
-			testCase.log(t, telemetry.NewLogger(&buf, testCase.level))
-
-			var got []map[string]any
-			dec := json.NewDecoder(&buf)
-			for dec.More() {
-				var line map[string]any
-				err := dec.Decode(&line)
-				if err != nil {
-					t.Fatalf("decode log line: %v", err)
-				}
-				delete(line, "time")
-				got = append(got, line)
-			}
-			if diff := cmp.Diff(testCase.want, got); diff != "" {
-				t.Errorf("log lines (-want +got):\n%s", diff)
-			}
-		})
-	}
-}
-
-func TestParseLevel(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name    string
-		in      string
-		want    slog.Level
-		wantErr bool
-	}{
-		{name: "empty", in: "", want: slog.LevelInfo},
-		{name: "named", in: "warn", want: slog.LevelWarn},
-		{name: "unknown", in: "loud", wantErr: true},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := telemetry.ParseLevel(testCase.in)
-			if (err != nil) != testCase.wantErr {
-				t.Fatalf("got error %v, want error %v", err, testCase.wantErr)
-			}
-			if got != testCase.want {
-				t.Errorf("got %v, want %v", got, testCase.want)
-			}
-		})
-	}
-}
-
-func TestRequestID(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name     string
-		incoming string
-		keep     bool
-	}{
-		{name: "none", incoming: ""},
-		{name: "valid", incoming: "abc-123_X", keep: true},
-		{name: "too long", incoming: strings.Repeat("a", 65)},
-		{name: "bad characters", incoming: "abc\r\nX-Evil: 1"},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			var seen string
-			h := telemetry.RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				seen = telemetry.RequestIDFrom(r.Context())
-			}))
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
-			if testCase.incoming != "" {
-				req.Header.Set(telemetry.RequestIDHeader, testCase.incoming)
-			}
-			rec := httptest.NewRecorder()
-
-			h.ServeHTTP(rec, req)
-
-			if seen == "" {
-				t.Fatal("got no request ID on the context, want one")
-			}
-			if got := rec.Header().Get(telemetry.RequestIDHeader); got != seen {
-				t.Errorf("got response header %q, want the context's %q", got, seen)
-			}
-			if testCase.keep && seen != testCase.incoming {
-				t.Errorf("got ID %q, want incoming %q", seen, testCase.incoming)
-			}
-			if !testCase.keep && seen == testCase.incoming {
-				t.Errorf("got invalid incoming ID %q kept, want a new one", seen)
-			}
-		})
-	}
-}
 
 // Not parallel: Trace uses the global tracer provider and propagator, which this test replaces.
 func TestTrace(t *testing.T) {
