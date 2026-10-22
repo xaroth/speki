@@ -132,10 +132,10 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := s.refresh(r.Context(), rv, scopes, old)
-	var rerr *refreshError
+	rerr, isRefresh := errors.AsType[*refreshError](err)
 	switch {
 	case errors.Is(err, errStoppedWaiting):
-	case errors.As(err, &rerr):
+	case isRefresh:
 		if rerr.retryAfter != "" {
 			w.Header().Set("Retry-After", rerr.retryAfter)
 		}

@@ -534,13 +534,11 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			}
 		}
 		if err != nil {
-			var se *staleError
-			var kerr *Error
-			if errors.As(err, &kerr) || ctx.Err() != nil {
+			if _, ok := errors.AsType[*Error](err); ok || ctx.Err() != nil {
 				return Result{}, err
 			}
 			if synced {
-				if errors.As(err, &se) {
+				if se, ok := errors.AsType[*staleError](err); ok {
 					return Result{}, se.conflict
 				}
 				return Result{}, err
@@ -554,7 +552,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 			}
 			if serr != nil {
 				b.logger.WarnContext(ctx, "sync before a change failed", "vault", v.Name, "err", serr)
-				if errors.As(err, &se) {
+				if se, ok := errors.AsType[*staleError](err); ok {
 					return Result{}, se.conflict
 				}
 				return Result{}, err
@@ -590,10 +588,8 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 		}
 		if err != nil {
 			cerr := commitError(st.vault.Name, err)
-			var kerr *Error
-			if errors.As(cerr, &kerr) || errors.Is(err, gh.ErrRefused) {
-				var secret *gh.SecretError
-				if errors.As(err, &secret) || errors.Is(err, gh.ErrRefused) || errors.Is(err, gh.ErrBranchRules) || errors.Is(err, gh.ErrForbidden) {
+			if _, ok := errors.AsType[*Error](cerr); ok || errors.Is(err, gh.ErrRefused) {
+				if _, ok := errors.AsType[*gh.SecretError](err); ok || errors.Is(err, gh.ErrRefused) || errors.Is(err, gh.ErrBranchRules) || errors.Is(err, gh.ErrForbidden) {
 					// The agent gets a code; the operator needs GitHub's own words.
 					b.logger.InfoContext(ctx, "GitHub refused a commit", "vault", v.Name, "err", err)
 				}
@@ -732,12 +728,12 @@ func (b *Base) indexed(ctx context.Context, repoID int64, path, version string) 
 
 // commitError turns GitHub's refusal of a commit into an error the agent can act on.
 func commitError(name string, err error) error {
-	var secret *gh.SecretError
-	var limited *gh.RateLimitError
+	secret, isSecret := errors.AsType[*gh.SecretError](err)
+	limited, isLimited := errors.AsType[*gh.RateLimitError](err)
 	switch {
-	case errors.As(err, &secret):
+	case isSecret:
 		return errorf(CodeSecretDetected, "GitHub's push protection found a secret in the content (%s). Remove it, and tell the user", oneLine(secret.Detail))
-	case errors.As(err, &limited):
+	case isLimited:
 		return errorf(CodeRateLimited, "GitHub asked speki to slow down. Wait %d seconds and try again", int(limited.RetryAfter.Seconds()))
 	case errors.Is(err, gh.ErrBranchRules):
 		return errorf(CodeVaultReadOnly, "GitHub refused the commit: %s only accepts changes through pull requests or checks. Tell the user", name)

@@ -58,8 +58,7 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	if errors.Is(err, index.ErrNotFound) {
 		return Page{}, errorf(CodeNotFound, "%s has no document %s. Use search or list to find it", v.Name, path)
 	}
-	var berr *Error
-	if errors.As(err, &berr) {
+	if berr, ok := errors.AsType[*Error](err); ok {
 		return Page{}, berr
 	}
 	if err != nil {

@@ -247,9 +247,9 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.cfg.CheckUser != nil {
 		err = s.cfg.CheckUser(r.Context(), tokens.AccessToken)
-		var refusal *Refusal
+		refusal, refused := errors.AsType[*Refusal](err)
 		switch {
-		case errors.As(err, &refusal):
+		case refused:
 			s.logger.InfoContext(r.Context(), "sign-in refused", "login", user.Login, "reason", refusal.Reason)
 			signIns.WithLabelValues("refused").Inc()
 			s.errorPageAs(w, r, http.StatusForbidden, "You can't use this speki.", refusal.Reason, user.Login)
