@@ -165,25 +165,26 @@ func (s *Server) addTools() {
 	}, handle(s, "delete", s.delete))
 }
 
-// toolFunc returns the structured result and its text rendering.
+// toolFunc returns the result and its text rendering.
 type toolFunc[In, Out any] func(ctx context.Context, g *access.Grant, in In) (Out, string, error)
 
-// handle adapts a toolFunc to the go-sdk. A *knowledge.Error is shown as is; a call that ran out of the
-// request's time is a timeout; anything else is logged and shown as unavailable with the request ID, so an
-// operator can find the log line.
-func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHandlerFor[In, Out] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+// handle adapts a toolFunc to the go-sdk. Only the text goes out: Claude Code shows the model structured
+// content instead of the text when there is any, which would hide document content and bypass the fences
+// and the hints in the text. A *knowledge.Error is shown as is; a call that ran out of the request's time
+// is a timeout; anything else is logged and shown as unavailable with the request ID, so an operator can
+// find the log line.
+func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHandlerFor[In, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		start := time.Now()
 		ctx, cancel := withRequestDeadline(ctx)
 		defer cancel()
 		ctx, span := telemetry.Tracer().Start(ctx, "tool "+name)
 		defer span.End()
-		var zero Out
 		g, ok := GrantFrom(ctx)
 		if !ok { // unreachable: the grant middleware always sets it
-			return nil, zero, errors.New("not signed in")
+			return nil, nil, errors.New("not signed in")
 		}
-		out, text, err := f(ctx, g, in)
+		_, text, err := f(ctx, g, in)
 		outcome := "ok"
 		kerr, isKnowledge := errors.AsType[*knowledge.Error](err)
 		switch {
@@ -221,9 +222,9 @@ func handle[In, Out any](s *Server, name string, f toolFunc[In, Out]) mcp.ToolHa
 			"duration_ms", took.Milliseconds(),
 		)
 		if err != nil {
-			return nil, zero, err
+			return nil, nil, err
 		}
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 	}
 }
 

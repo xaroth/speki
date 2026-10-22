@@ -1,12 +1,8 @@
 package service_test
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/gh/ghtest"
@@ -31,25 +27,13 @@ func TestSignInAndSearch(t *testing.T) {
 		}
 	}
 
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "search", Arguments: map[string]any{"query": "zeppelin"}})
-	if err != nil || res.IsError {
-		t.Fatalf("search: got %v %+v, want results", err, res)
-	}
-	type result struct{ Vault, Path, Version string }
-	var found struct{ Results []result }
-	raw, err := json.Marshal(res.StructuredContent)
-	if err == nil {
-		err = json.Unmarshal(raw, &found)
-	}
-	if err != nil || len(found.Results) != 1 {
-		t.Fatalf("search: got %s, want one result", raw)
-	}
-	if diff := cmp.Diff(result{Vault: kbRepo, Path: "fleet.md", Version: found.Results[0].Version}, found.Results[0]); diff != "" {
-		t.Errorf("search result (-want +got):\n%s", diff)
+	text = callTool(t, cs, "search", map[string]any{"query": "zeppelin"})
+	if !strings.Contains(text, "\n"+kbRepo+" fleet.md  Fleet doctrine") {
+		t.Errorf("search: got\n%s\nwant fleet.md", text)
 	}
 
 	text = callTool(t, cs, "read", map[string]any{"vault": kbRepo, "path": "fleet.md"})
-	if !strings.Contains(text, "version "+found.Results[0].Version) || !strings.Contains(text, "\">\n---\ntitle: Fleet doctrine\n") {
+	if !strings.Contains(text, kbRepo+" fleet.md\nversion ") || !strings.Contains(text, "\">\n---\ntitle: Fleet doctrine\n") {
 		t.Errorf("read: got\n%s\nwant the document with its version", text)
 	}
 

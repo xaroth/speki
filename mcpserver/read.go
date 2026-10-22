@@ -97,8 +97,7 @@ func (s *Server) read(ctx context.Context, g *access.Grant, in ReadInput) (ReadO
 	return out, b.String(), nil
 }
 
-// readBudget is what a page of the document may take in one answer: the vault and path go out beside it,
-// in the structured result and the text.
+// readBudget is what a page of the document may take in one answer: the vault and path go out beside it.
 func readBudget(vault, path string) int {
-	return maxAnswer - answerOverhead - 2*(encodedSize(vault)+encodedSize(path))
+	return maxAnswer - answerOverhead - encodedSize(vault) - encodedSize(path)
 }

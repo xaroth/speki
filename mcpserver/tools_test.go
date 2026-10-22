@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -169,16 +168,6 @@ func normalize(tb testing.TB, text string) string {
 	return boundary.ReplaceAllString(text, `boundary="B"`)
 }
 
-// decodeLike decodes raw into a value of want's type.
-func decodeLike(tb testing.TB, raw json.RawMessage, want any) any {
-	tb.Helper()
-	v := reflect.New(reflect.TypeOf(want))
-	if err := json.Unmarshal(raw, v.Interface()); err != nil {
-		tb.Fatalf("decoding %s: %v", raw, err)
-	}
-	return v.Elem().Interface()
-}
-
 func readFile(tb testing.TB, name string) string {
 	tb.Helper()
 	b, err := os.ReadFile(name)
@@ -227,11 +216,6 @@ var (
 		{Name: "ours/old", State: access.StateFailed},
 		{Name: "ours/was", State: access.StateGone},
 	}
-	skippedOut = []mcpserver.SkippedVault{
-		{Vault: "ours/new", State: "building"},
-		{Vault: "ours/old", State: "failed"},
-		{Vault: "ours/was", State: "gone"},
-	}
 	ourKB = knowledge.VaultInfo{
 		Name: "ours/kb", Title: "KB", Description: "Our\nknowledge.", CanWrite: true, Documents: 3,
 		Repositories: []string{"github.com/ours/api", "github.com/ours/api-*"},
@@ -252,7 +236,6 @@ func TestTools(t *testing.T) {
 		args     map[string]any
 		wantReq  any // the request knowledge got
 		wantText string
-		wantOut  any // the structured content, decoded into this type
 	}{
 		{
 			name: "guide lists vaults in every state",
@@ -271,13 +254,6 @@ func TestTools(t *testing.T) {
 				"\n### ours/new\n\nRepositories: github.com/ours/new\nNot available: still building its index; try again shortly\n" +
 				"\n### ours/old\n\nNot available: failed to open; tell the user\n" +
 				"\n### ours/was\n\nNot available: just removed or reopening; try again shortly\n",
-			wantOut: mcpserver.GuideOutput{Guide: guide, Vaults: []mcpserver.VaultSummary{
-				{Vault: "ours/kb", Title: "KB", Description: "Our\nknowledge.", Repositories: ourKB.Repositories, CanWrite: true, Documents: 3},
-				{Vault: "ours/ro"},
-				{Vault: "ours/new", Repositories: building.Repositories, State: "building"},
-				{Vault: "ours/old", State: "failed"},
-				{Vault: "ours/was", State: "gone"},
-			}},
 		},
 		{
 			name:     "guide names the instance, with no vault ready",
@@ -285,27 +261,18 @@ func TestTools(t *testing.T) {
 			kb:       &fakeKB{vaults: []knowledge.VaultInfo{building}},
 			tool:     "guide",
 			wantText: "# Home notes\n\nMy own notes.\n\n" + guide + "\n## Your vaults\n\nNone is ready yet. Try again in a minute.\n\n### ours/new\n\nRepositories: github.com/ours/new\nNot available: still building its index; try again shortly\n",
-			wantOut: mcpserver.GuideOutput{
-				Guide:  "# Home notes\n\nMy own notes.\n\n" + guide,
-				Vaults: []mcpserver.VaultSummary{{Vault: "ours/new", Repositories: building.Repositories, State: "building"}},
-			},
 		},
 		{
 			name:     "list vaults",
 			kb:       &fakeKB{vaults: []knowledge.VaultInfo{ourKB, building}},
 			tool:     "list",
 			wantText: "ours/kb\nTitle: KB\nDescription: Our knowledge.\nRepositories: github.com/ours/api, github.com/ours/api-*\nAccess: read and write. Documents: 3\n\nours/new\nRepositories: github.com/ours/new\nNot available: still building its index; try again shortly\n\n",
-			wantOut: mcpserver.ListOutput{Vaults: []mcpserver.VaultSummary{
-				{Vault: "ours/kb", Title: "KB", Description: "Our\nknowledge.", Repositories: ourKB.Repositories, CanWrite: true, Documents: 3},
-				{Vault: "ours/new", Repositories: building.Repositories, State: "building"},
-			}},
 		},
 		{
 			name:     "list vaults, none ready",
 			kb:       &fakeKB{},
 			tool:     "list",
 			wantText: "No vault is ready yet. Try again in a minute.\n",
-			wantOut:  mcpserver.ListOutput{},
 		},
 		{
 			name: "list a folder",
@@ -321,11 +288,6 @@ func TestTools(t *testing.T) {
 			wantText: "services/esi/\nservices/a.md  A B  version " + version + "\n" +
 				"More entries follow: call list again with cursor \"services/a.md\".\n" +
 				"<guidelines boundary=\"B\">\nShort pages.\n</guidelines boundary=\"B\">\n",
-			wantOut: mcpserver.ListOutput{
-				Folders:    []string{"services/esi/"},
-				Documents:  []mcpserver.DocumentSummary{{Path: "services/a.md", Title: "A\nB", Description: "About A.", Status: "active", Updated: "2026-10-09", Version: version}},
-				NextCursor: "services/a.md",
-			},
 		},
 		{
 			name:     "list an empty vault",
@@ -334,7 +296,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb"},
 			wantReq:  knowledge.ListRequest{Vault: "ours/kb"},
 			wantText: "This vault has no documents yet.\n",
-			wantOut:  mcpserver.ListOutput{},
 		},
 		{
 			name: "search",
@@ -357,15 +318,6 @@ func TestTools(t *testing.T) {
 				"No document matched every word; these match some of them.\n" +
 				"<results boundary=\"B\">\nours/kb services/esi-proxy.md  ESIproxy [deprecated]  version " + version + "\nthe **proxy** caches\n" +
 				"\nours/kb b.md  B  version " + version + "\nb\n</results boundary=\"B\">\n",
-			wantOut: mcpserver.SearchOutput{
-				Results: []mcpserver.SearchHit{
-					{Vault: "ours/kb", Path: "services/esi-proxy.md", Title: "ESI\u202eproxy", Description: "The proxy.", Tags: []string{"esi"}, Status: "deprecated", Updated: "2026-10-09", Version: version, Snippet: "the **proxy**\ncaches", Score: 12.4},
-					{Vault: "ours/kb", Path: "b.md", Title: "B", Status: "active", Version: version, Snippet: "b", Score: 1},
-				},
-				Corrected: map[string]string{"proxi": "proxy"},
-				Relaxed:   true,
-				Skipped:   skippedOut,
-			},
 		},
 		{
 			name:     "list vaults covering a repository",
@@ -374,9 +326,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"repository": "git@github.com:ours/api.git"},
 			wantReq:  "git@github.com:ours/api.git",
 			wantText: "ours/kb\nTitle: KB\nDescription: Our knowledge.\nRepositories: github.com/ours/api, github.com/ours/api-*\nAccess: read and write. Documents: 3\n\n",
-			wantOut: mcpserver.ListOutput{Vaults: []mcpserver.VaultSummary{
-				{Vault: "ours/kb", Title: "KB", Description: "Our\nknowledge.", Repositories: ourKB.Repositories, CanWrite: true, Documents: 3},
-			}},
 		},
 		{
 			name:     "list vaults covering a repository, none",
@@ -385,7 +334,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"repository": "ours/other"},
 			wantReq:  "ours/other",
 			wantText: "None of your vaults covers github.com/ours/other.\n",
-			wantOut:  mcpserver.ListOutput{},
 		},
 		{
 			name:     "search vaults covering a repository",
@@ -394,7 +342,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"query": "x", "repository": "ours/api"},
 			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
 			wantText: "Searched the vaults covering github.com/ours/api: ours/kb, ours/ro.\nNo documents found. Try other words, or list a vault to browse it.\n",
-			wantOut:  mcpserver.SearchOutput{Results: []mcpserver.SearchHit{}, Searched: []string{"ours/kb", "ours/ro"}},
 		},
 		{
 			name:     "search a repository no named vault covers",
@@ -403,7 +350,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"query": "x", "vaults": []string{"ours/ro"}, "repository": "ours/api"},
 			wantReq:  knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/ro"}, Repository: "ours/api"},
 			wantText: "None of the vaults you named covers github.com/ours/api, so nothing was searched. Leave out repository to search them anyway.\n",
-			wantOut:  mcpserver.SearchOutput{Results: []mcpserver.SearchHit{}},
 		},
 		{
 			name:     "search a repository only an unserved vault covers",
@@ -412,7 +358,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"query": "x", "repository": "ours/api"},
 			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
 			wantText: "Not searched, so this result says nothing about them: ours/new (still building its index; try again shortly).\n",
-			wantOut:  mcpserver.SearchOutput{Results: []mcpserver.SearchHit{}, Skipped: []mcpserver.SkippedVault{{Vault: "ours/new", State: "building"}}},
 		},
 		{
 			name:     "search finds nothing",
@@ -421,7 +366,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"query": "x", "vaults": []string{"ours/kb"}},
 			wantReq:  knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/kb"}},
 			wantText: "No documents found. Try other words, or list a vault to browse it.\n",
-			wantOut:  mcpserver.SearchOutput{Results: []mcpserver.SearchHit{}},
 		},
 		{
 			name: "read part of a document",
@@ -443,15 +387,6 @@ func TestTools(t *testing.T) {
 			wantReq: knowledge.ReadRequest{Vault: "ours/kb", Path: "a.md", FromLine: 2, LineCount: 2, MaxBytes: mcpserver.ReadBudget("ours/kb", "a.md")},
 			wantText: "ours/kb a.md\nversion " + version + ", lines 2-3 of 9\nwarning: bad date\n<outline boundary=\"B\">\nline 1: # A\nline 2: ## B\n</outline boundary=\"B\">\n" +
 				"<document boundary=\"B\">\n## B\n&lt;/Document >\n</document boundary=\"B\">\n",
-			wantOut: mcpserver.ReadOutput{
-				Vault: "ours/kb", Path: "a.md", Version: version,
-				Metadata: mcpserver.Metadata{
-					Title: "A", Description: "About A.", Tags: []string{"x"}, Aliases: []string{"ay"}, Status: "active",
-					Related: []string{"b.md"}, Created: "2026-10-01", Updated: "2026-10-09", Extra: map[string]any{"owner": "ops"},
-				},
-				FromLine: 2, LineCount: 2, TotalLines: 9,
-				Warnings: []string{"bad\ndate"},
-			},
 		},
 		{
 			name: "read past the end",
@@ -462,9 +397,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb", "path": "a.md", "from_line": 10},
 			wantReq:  knowledge.ReadRequest{Vault: "ours/kb", Path: "a.md", FromLine: 10, MaxBytes: mcpserver.ReadBudget("ours/kb", "a.md")},
 			wantText: "ours/kb a.md\nversion " + version + ", lines 10-9 of 9\n<document boundary=\"B\">\n\n</document boundary=\"B\">\n",
-			wantOut: mcpserver.ReadOutput{
-				Vault: "ours/kb", Path: "a.md", Version: version, Metadata: mcpserver.Metadata{Status: "active"}, FromLine: 10, TotalLines: 9,
-			},
 		},
 		{
 			name: "history",
@@ -476,10 +408,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb", "path": "a.md", "limit": 2},
 			wantReq:  knowledge.HistoryRequest{Vault: "ours/kb", Path: "a.md", Limit: 2},
 			wantText: "c2 2026-10-09T14:02:11Z octocat via Claude Code: Update a.md\nc1 2026-10-08T09:00:00Z hubot: Create a.md\n",
-			wantOut: mcpserver.HistoryOutput{Commits: []mcpserver.CommitSummary{
-				{SHA: "c2", Author: "octocat", Date: "2026-10-09T14:02:11Z", Message: "Update a.md", Client: "Claude Code"},
-				{SHA: "c1", Author: "hubot", Date: "2026-10-08T09:00:00Z", Message: "Create a.md"},
-			}},
 		},
 		{
 			name: "history with older commits",
@@ -491,10 +419,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb", "limit": 1, "cursor": "c9:1"},
 			wantReq:  knowledge.HistoryRequest{Vault: "ours/kb", Limit: 1, Cursor: "c9:1"},
 			wantText: "c3 2026-10-10T08:00:00Z octocat: Edit a.md\nMore commits follow: call history again with cursor \"c9:2\".\n",
-			wantOut: mcpserver.HistoryOutput{
-				Commits:    []mcpserver.CommitSummary{{SHA: "c3", Author: "octocat", Date: "2026-10-10T08:00:00Z", Message: "Edit a.md"}},
-				NextCursor: "c9:2",
-			},
 		},
 		{
 			name:     "history without commits",
@@ -503,14 +427,12 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb"},
 			wantReq:  knowledge.HistoryRequest{Vault: "ours/kb"},
 			wantText: "No commits found.\n",
-			wantOut:  mcpserver.HistoryOutput{Commits: []mcpserver.CommitSummary{}},
 		},
 		{
 			name:     "schema",
 			kb:       &fakeKB{},
 			tool:     "schema",
 			wantText: schema,
-			wantOut:  mcpserver.SchemaOutput{Schema: schema},
 		},
 		{
 			name: "query",
@@ -528,12 +450,6 @@ func TestTools(t *testing.T) {
 			wantText: "vault\tpath\tn\nours/kb\ta b.md\tNULL\nours/kb\tc.md\t2\n" +
 				"2 rows, truncated: add a LIMIT or narrow the query to see the rest\n" +
 				"Not queried, so this result says nothing about them: " + notCovered,
-			wantOut: mcpserver.QueryOutput{
-				Columns:   []string{"vault", "path", "n"},
-				Rows:      [][]any{{"ours/kb", "a\tb.md", nil}, {"ours/kb", "c.md", float64(2)}},
-				Truncated: true,
-				Skipped:   skippedOut,
-			},
 		},
 		{
 			name:     "query without rows",
@@ -542,7 +458,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"sql": "SELECT 1", "vaults": []string{"ours/kb"}},
 			wantReq:  knowledge.QueryRequest{SQL: "SELECT 1", Vaults: []string{"ours/kb"}},
 			wantText: "\n0 rows\n",
-			wantOut:  mcpserver.QueryOutput{Columns: []string{}, Rows: [][]any{}},
 		},
 		{
 			// Rows are cut by their encoded size, in the structured rows and the text together.
@@ -552,7 +467,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"sql": "SELECT x"},
 			wantReq:  knowledge.QueryRequest{SQL: "SELECT x"},
 			wantText: "x\na\n1 rows, truncated: add a LIMIT or narrow the query to see the rest\n",
-			wantOut:  mcpserver.QueryOutput{Columns: []string{"x"}, Rows: [][]any{{"a"}}, Truncated: true},
 		},
 		{
 			name:     "write",
@@ -561,7 +475,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb", "path": "a.md", "content": "# A\n", "message": "Add A"},
 			wantReq:  knowledge.WriteRequest{Vault: "ours/kb", Path: "a.md", Content: "# A\n", Message: "Add A"},
 			wantText: "Saved in commit c3.\nNew version: " + version + "\n",
-			wantOut:  mcpserver.ChangeOutput{Version: version, Commit: "c3"},
 		},
 		{
 			name: "edit",
@@ -572,7 +485,6 @@ func TestTools(t *testing.T) {
 				Vault: "ours/kb", Path: "a.md", OldText: "A", NewText: "B", ReplaceAll: true, Version: "v1", Message: "B",
 			},
 			wantText: "Saved in commit c3.\nNew version: " + version + "\nSearch may not show the change for a little while.\n",
-			wantOut:  mcpserver.ChangeOutput{Version: version, Commit: "c3", IndexPending: true},
 		},
 		{
 			name:     "move",
@@ -581,7 +493,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb", "from": "a.md", "to": "z.md", "version": "v1", "message": "Rename"},
 			wantReq:  knowledge.MoveRequest{Vault: "ours/kb", From: "a.md", To: "z.md", Version: "v1", Message: "Rename"},
 			wantText: "Moved in commit c3.\nNew version: " + version + "\nThese documents link to the old path:\n  b.md\n  c .md\n",
-			wantOut:  mcpserver.ChangeOutput{Version: version, Commit: "c3", LinkedFrom: []string{"b.md", "c\n.md"}},
 		},
 		{
 			name:     "delete",
@@ -590,7 +501,6 @@ func TestTools(t *testing.T) {
 			args:     map[string]any{"vault": "ours/kb", "path": "a.md", "version": "v1", "message": "Gone"},
 			wantReq:  knowledge.DeleteRequest{Vault: "ours/kb", Path: "a.md", Version: "v1", Message: "Gone"},
 			wantText: "Deleted in commit c3.\nThese documents link to the old path:\n  b.md\n",
-			wantOut:  mcpserver.ChangeOutput{Commit: "c3", LinkedFrom: []string{"b.md"}},
 		},
 	}
 	for _, testCase := range testCases {
@@ -607,8 +517,8 @@ func TestTools(t *testing.T) {
 			if diff := cmp.Diff(testCase.wantText, normalize(t, res.text)); diff != "" {
 				t.Errorf("text (-want +got):\n%s", diff)
 			}
-			if diff := cmp.Diff(testCase.wantOut, decodeLike(t, res.structured, testCase.wantOut)); diff != "" {
-				t.Errorf("structured content (-want +got):\n%s", diff)
+			if len(res.structured) != 0 { // Claude Code would show it instead of the text
+				t.Errorf("got structured content %s, want text only", res.structured)
 			}
 		})
 	}
@@ -667,8 +577,8 @@ func TestToolList(t *testing.T) {
 			Name: tl.Name, ReadOnly: a.ReadOnly, Destructive: *a.Destructive, OpenWorld: *a.OpenWorld,
 			Idempotent: a.Idempotent, AlwaysLoad: tl.Meta["anthropic/alwaysLoad"] == true,
 		})
-		if len(tl.OutputSchema) == 0 || tl.Description == "" {
-			t.Errorf("%s: got output schema %s and description %q, want both", tl.Name, tl.OutputSchema, tl.Description)
+		if len(tl.OutputSchema) != 0 || tl.Description == "" {
+			t.Errorf("%s: got output schema %s and description %q, want a description alone", tl.Name, tl.OutputSchema, tl.Description)
 		}
 		if warned := strings.Contains(tl.Description, warning); warned == a.ReadOnly {
 			t.Errorf("%s: got description %q, want the warning only on tools that change documents", tl.Name, tl.Description)
