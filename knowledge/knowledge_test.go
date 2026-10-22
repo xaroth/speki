@@ -623,6 +623,38 @@ func TestRead(t *testing.T) {
 	}
 }
 
+// Metadata that fills a read's cap on its own leaves out the outline, and every page still shows
+// content, so paging reaches the end.
+func TestReadLargeMetadata(t *testing.T) {
+	t.Parallel()
+	var doc strings.Builder
+	doc.WriteString("---\ntitle: Fat\nnote: " + strings.Repeat("z", 30_000) + "\n---\n")
+	for i := range 300 {
+		fmt.Fprintf(&doc, "# Heading %d\nbody\n", i)
+	}
+	f := newFixture(t, withKB(map[string]string{"fat.md": doc.String()}))
+	const maxBytes = 20_000
+	for from, pages := 1, 0; ; pages++ {
+		if pages == 100 {
+			t.Fatalf("still at line %d after %d pages", from, pages)
+		}
+		p, err := f.base.Read(t.Context(), f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: "fat.md", FromLine: from, MaxBytes: maxBytes})
+		if err != nil {
+			t.Fatalf("Read from %d: %v", from, err)
+		}
+		if knowledge.MetadataSize(p.Document) <= maxBytes {
+			t.Fatalf("metadata takes %d bytes, want more than %d", knowledge.MetadataSize(p.Document), maxBytes)
+		}
+		if p.LineCount < 1 || p.Content == "" || len(p.Outline) != 0 {
+			t.Fatalf("from %d: got %d lines, %d bytes, an outline of %d, want content and no outline", from, p.LineCount, len(p.Content), len(p.Outline))
+		}
+		from += p.LineCount
+		if from > p.TotalLines {
+			break
+		}
+	}
+}
+
 // A blob the copy lacks is read again once, as a sync may have replaced it between the lookups; when
 // it's still missing, that's speki's problem, not the agent's.
 func TestReadMissingBlob(t *testing.T) {

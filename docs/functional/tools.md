@@ -230,6 +230,8 @@ agent can read the part it needs. A single line longer than what fits is cut, wi
 
 A part holds as many lines as fit in one answer of 80 KiB, JSON-encoded, beside the metadata, warnings and
 outline. Each `<` counts as the `&lt;` a fence may escape it to, so markup-heavy text gets fewer lines.
+A part always has room for 4 KiB of content: when the metadata leaves less, the outline is left out with a
+warning, and the answer may go over 80 KiB.
 
 Titles in every answer are cut to 200 bytes, and descriptions and snippets to 500, ending in "…". These
 limits count the text's own bytes; JSON escaping can make an answer somewhat larger. In

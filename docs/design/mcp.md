@@ -161,7 +161,8 @@ together, fit, then sets `truncated`, and the text ends with "truncated: add a L
 see the rest". `read` passes what's left after the vault, path and a little for the envelope to
 `knowledge.Read` as `MaxBytes`. `knowledge` counts the metadata as JSON, warnings twice (they're in both
 parts), and the outline and content as encoded text, with each `<` or look-alike as the `&lt;` a fence may
-turn it into. A test checks the encoded size of the largest results against the budget.
+turn it into. Content always gets at least 4 KiB, so a document whose metadata fills the budget still
+pages to the end; its outline is then left out. A test checks the encoded size of the largest results against the budget.
 
 ## Errors
 

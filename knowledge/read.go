@@ -21,6 +21,8 @@ const (
 	maxOutline    = 200      // headings
 	maxOutlineLen = 16 << 10 // bytes of the outline, counting each heading's text and a little for the rest
 	maxHeading    = 200      // bytes of one heading's text
+	// Room content always gets, so large metadata can't stop a read from making progress.
+	minReadContent = 4 << 10
 )
 
 // ReadRequest asks for a document, or part of it.
@@ -95,11 +97,18 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	if partial {
 		parsed, err := document.Parse(path, raw)
 		if err == nil {
-			p.Outline = outline(parsed.Headings, &p.Warnings)
-			budget -= outlineSize(p.Outline)
+			var warnings []string
+			o := outline(parsed.Headings, &warnings)
+			if budget-outlineSize(o)-warningsSize(append(p.Warnings, warnings...)) >= minReadContent {
+				p.Outline = o
+				p.Warnings = append(p.Warnings, warnings...)
+				budget -= outlineSize(o)
+			} else {
+				p.Warnings = append(p.Warnings, "the outline is left out: the metadata leaves too little room")
+			}
 		}
 	}
-	budget -= warningsSize(p.Warnings)
+	budget = max(budget-warningsSize(p.Warnings), minReadContent)
 	var sb strings.Builder
 	size := 0
 	for _, line := range lines[from-1:] {
