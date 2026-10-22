@@ -56,6 +56,8 @@ func TestParseConfig(t *testing.T) {
 				{Host: "github.com", Owner: "xaroth", Name: "mantine-*"},
 			}},
 		},
+		{name: "repositories null", raw: "title: T\ndescription: D\nrepositories:\n", want: vault.Config{Title: "T", Description: "D"}},
+		{name: "repositories empty", raw: "title: T\ndescription: D\nrepositories: []\n", want: vault.Config{Title: "T", Description: "D", Repositories: vault.Repositories{}}},
 		{name: "bad repository", raw: "title: T\ndescription: D\nrepositories:\n  - xaroth/speki\n  - https://user:ghp_secret@github.com/xaroth\n", wantErr: []string{"repositories, line 5: not a repository"}},
 		{name: "repository pattern in owner", raw: "title: T\ndescription: D\nrepositories: [\"*/speki\"]\n", wantErr: []string{"repositories, line 3: * can only"}},
 		{name: "repositories not a list", raw: "title: T\ndescription: D\nrepositories: xaroth/speki\n", wantErr: []string{"repositories, line 3: not a list"}},
