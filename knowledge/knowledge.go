@@ -40,7 +40,8 @@ type Vaults interface {
 
 // githubAPI is what knowledge asks GitHub, as the user.
 type githubAPI interface {
-	Commits(ctx context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error)
+	Commits(ctx context.Context, token, repo, from, path string, skip, limit int) ([]gh.Commit, error)
+	BranchTip(ctx context.Context, token, repo, branch string) (string, error)
 	Commit(ctx context.Context, token string, req gh.CommitRequest) (string, error)
 }
 

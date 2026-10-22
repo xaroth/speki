@@ -267,8 +267,23 @@ With the in-memory store there is only one instance, and nothing to tell.
 
 ## History
 
-`knowledge.History` calls `GET /repos/{owner}/{repo}/commits` with `path`, `sha=<branch>` and
-`per_page=limit`, using the user's token from the `Grant`.
+`knowledge.History` calls `GET /repos/{owner}/{repo}/commits` with `path`, `sha`, `page` and `per_page`,
+using the user's token from the `Grant`. It asks for one commit more than the limit to know whether more
+follow.
+
+A page that has more after it ends with a cursor, `<head>:<skip>`: the full SHA of the branch head when
+the first page was read, and how many commits came before the next page. Later pages list from that head
+with `sha=<head>`, so commits made in between don't shift them. Listing from the last commit shown
+instead would skip commits from merged branches that are older than it but not its ancestors. For the
+whole vault, the head is the first commit listed. For one document, it's looked up first with
+`GET /repos/{owner}/{repo}/git/ref/heads/{branch}`.
+
+GitHub pages by number. When the skip is a multiple of the limit, as it is when the limit stays the same,
+`per_page` is the limit and one request does. Otherwise `gh` asks for pages of 100, and reads a second
+when the commits run past the first.
+
+A cursor that isn't `<40 or 64 hex digits>:<positive count>`, or whose commit GitHub doesn't know, is
+`invalid`.
 
 ## Rate limit budget
 

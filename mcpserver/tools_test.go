@@ -35,7 +35,7 @@ type fakeKB struct {
 	listing  knowledge.Listing
 	search   knowledge.SearchResult
 	page     knowledge.Page
-	commits  []knowledge.Commit
+	history  knowledge.HistoryPage
 	result   knowledge.Result
 	rows     knowledge.QueryResult
 	err      error
@@ -82,8 +82,8 @@ func (f *fakeKB) Read(ctx context.Context, _ *access.Grant, req knowledge.ReadRe
 	return f.page, f.answer(ctx, req)
 }
 
-func (f *fakeKB) History(ctx context.Context, _ *access.Grant, req knowledge.HistoryRequest) ([]knowledge.Commit, error) {
-	return f.commits, f.answer(ctx, req)
+func (f *fakeKB) History(ctx context.Context, _ *access.Grant, req knowledge.HistoryRequest) (knowledge.HistoryPage, error) {
+	return f.history, f.answer(ctx, req)
 }
 
 func (f *fakeKB) Write(ctx context.Context, _ *access.Grant, req knowledge.WriteRequest) (knowledge.Result, error) {
@@ -470,10 +470,10 @@ func TestTools(t *testing.T) {
 		},
 		{
 			name: "history",
-			kb: &fakeKB{commits: []knowledge.Commit{
+			kb: &fakeKB{history: knowledge.HistoryPage{Commits: []knowledge.Commit{
 				{SHA: "c2", Author: "octocat", Date: time.Date(2026, 10, 9, 14, 2, 11, 0, time.UTC), Message: "Update a.md", Client: "Claude Code"},
 				{SHA: "c1", Author: "hubot", Date: time.Date(2026, 10, 8, 11, 0, 0, 0, time.FixedZone("CEST", 2*60*60)), Message: "Create a.md"},
-			}},
+			}}},
 			tool:     "history",
 			args:     map[string]any{"vault": "ours/kb", "path": "a.md", "limit": 2},
 			wantReq:  knowledge.HistoryRequest{Vault: "ours/kb", Path: "a.md", Limit: 2},

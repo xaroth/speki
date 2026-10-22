@@ -190,23 +190,55 @@ type fakeGitHub struct {
 	err      error                // returned by Commit when set
 	lostErr  error                // when set, Commit makes the commit and then fails with it, as when the answer is lost
 	log      []gh.Commit          // the commits made, newest first
-	// Commits (history)
-	lookups                   int
-	token, repo, branch, path string
-	limit                     int
-	history                   []gh.Commit
-	historyErr                error
+	// Commits and BranchTip (history)
+	lookups    int
+	listings   []listing
+	history    []gh.Commit // one line of commits, newest first; the first is the branch's head
+	historyErr error
+	tips       int
+	tipErr     error
 }
 
-func (f *fakeGitHub) Commits(_ context.Context, token, repo, branch, path string, limit int) ([]gh.Commit, error) {
+// listing is one call to Commits.
+type listing struct {
+	Token, Repo, From, Path string
+	Skip, Limit             int
+}
+
+// Commits lists history like GitHub: from a SHA in it, or from the head for anything else.
+func (f *fakeGitHub) Commits(_ context.Context, token, repo, from, path string, skip, limit int) ([]gh.Commit, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lookups++
 	if f.history == nil && f.historyErr == nil { // nothing set up: what was committed
 		return f.log, nil
 	}
-	f.token, f.repo, f.branch, f.path, f.limit = token, repo, branch, path, limit
-	return f.history, f.historyErr
+	f.listings = append(f.listings, listing{Token: token, Repo: repo, From: from, Path: path, Skip: skip, Limit: limit})
+	if f.historyErr != nil {
+		return nil, f.historyErr
+	}
+	history := f.history
+	for i, c := range history {
+		if c.SHA == from {
+			history = history[i:]
+			break
+		}
+	}
+	history = history[min(skip, len(history)):]
+	return history[:min(limit, len(history))], nil
+}
+
+func (f *fakeGitHub) BranchTip(_ context.Context, _, _, _ string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tips++
+	if f.tipErr != nil {
+		return "", f.tipErr
+	}
+	if len(f.history) == 0 {
+		return "", nil
+	}
+	return f.history[0].SHA, nil
 }
 
 // repoOf returns the repository behind a vault, starting it from the vault's copy. f.mu must be held.
