@@ -317,13 +317,20 @@ The document stays in git history.
 | `vault` | string | required |
 | `path` | string | whole vault |
 | `limit` | 1 to 50 | 10 |
+| `cursor` | from a previous call | |
 
 ```json
 { "commits": [
   { "sha": "9c1e...", "author": "noorbergen", "date": "2026-10-09T14:02:11Z",
     "message": "Update services/esi-proxy.md", "client": "claude.ai" }
-] }
+],
+  "next_cursor": "4b17...:10" }
 ```
+
+Commits come newest first. When older ones follow, `next_cursor` is set: pass it as `cursor`, with the
+same `vault` and `path`, to get the next page. It's left out on the last page. Commits made in between
+don't shift the pages: they continue from where the first page started. A cursor speki didn't return is
+`invalid`.
 
 `client` names the MCP client that made the change through speki, from the `Speki-Client` line speki adds
 to its commits. It's empty for commits made outside speki.

@@ -484,6 +484,21 @@ func TestTools(t *testing.T) {
 			}},
 		},
 		{
+			name: "history with older commits",
+			kb: &fakeKB{history: knowledge.HistoryPage{
+				Commits:    []knowledge.Commit{{SHA: "c3", Author: "octocat", Date: time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC), Message: "Edit a.md"}},
+				NextCursor: "c9:2",
+			}},
+			tool:     "history",
+			args:     map[string]any{"vault": "ours/kb", "limit": 1, "cursor": "c9:1"},
+			wantReq:  knowledge.HistoryRequest{Vault: "ours/kb", Limit: 1, Cursor: "c9:1"},
+			wantText: "c3 2026-10-10T08:00:00Z octocat: Edit a.md\nMore commits follow: call history again with cursor \"c9:2\".\n",
+			wantOut: mcpserver.HistoryOutput{
+				Commits:    []mcpserver.CommitSummary{{SHA: "c3", Author: "octocat", Date: "2026-10-10T08:00:00Z", Message: "Edit a.md"}},
+				NextCursor: "c9:2",
+			},
+		},
+		{
 			name:     "history without commits",
 			kb:       &fakeKB{},
 			tool:     "history",

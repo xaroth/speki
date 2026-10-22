@@ -46,6 +46,7 @@ file. A long document comes back in parts of at most 1,000 lines or 64 KiB. The 
 outline of its headings with line numbers: pass `from_line` and `line_count` to read the part you need.
 
 `history` lists the latest commits of a vault or one document, with who made them and from which client.
+For older commits, pass its `next_cursor` back as `cursor`.
 
 ## Changing documents
 
