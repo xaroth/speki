@@ -447,6 +447,44 @@ func TestOpenFails(t *testing.T) {
 	}
 }
 
+// OpenLocal never clones and never removes what it can't use: callers decide.
+func TestOpenLocal(t *testing.T) {
+	t.Parallel()
+	src := newSource(t)
+	src.commit(map[string]*string{"a.md": new("a")})
+	dir := filepath.Join(t.TempDir(), "copy")
+	open(t, src, dir)
+	testCases := []struct {
+		name    string
+		dir     string
+		branch  string
+		wantErr error
+	}{
+		{name: "healthy copy", dir: dir, branch: "master"},
+		{name: "other branch", dir: dir, branch: "main", wantErr: gitsync.ErrBroken},
+		{name: "empty folder", dir: t.TempDir(), branch: "master", wantErr: gitsync.ErrBroken},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			m, err := gitsync.OpenLocal(testCase.dir, gitsync.Source{URL: src.dir, Branch: testCase.branch})
+			if !errors.Is(err, testCase.wantErr) {
+				t.Fatalf("got error %v, want %v", err, testCase.wantErr)
+			}
+			if err == nil {
+				head, err := m.Head()
+				if err != nil || head != mustSourceHead(t, src) {
+					t.Errorf("got head %s, %v, want %s", head, err, mustSourceHead(t, src))
+				}
+			}
+			_, err = os.Stat(testCase.dir)
+			if err != nil {
+				t.Errorf("got %v for %s, want it left in place", err, testCase.dir)
+			}
+		})
+	}
+}
+
 func TestUsable(t *testing.T) {
 	t.Parallel()
 	src := newSource(t)

@@ -53,6 +53,8 @@ type Library struct {
 	now    func() time.Time
 	// maxPacks is a field, not the constant, so tests can compact after a few fetches.
 	maxPacks int
+	// rename is os.Rename; tests replace it to fail a fresh clone's swap.
+	rename func(oldpath, newpath string) error
 
 	mu     sync.RWMutex
 	vaults map[int64]*Vault
@@ -82,6 +84,7 @@ func New(github githubAPI, opts Options, logger *slog.Logger) *Library {
 		logger:   logger,
 		now:      time.Now,
 		maxPacks: maxPacks,
+		rename:   os.Rename,
 		vaults:   make(map[int64]*Vault),
 		opening:  semaphore.NewWeighted(int64(opts.Opening)),
 		changed:  make(chan struct{}),
