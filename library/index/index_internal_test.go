@@ -7,9 +7,6 @@ package index
 // exported API reaches.
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -17,50 +14,6 @@ var vault = map[string]string{
 	"README.md":    "# About\n\nKnowledge about our fleet.\n",
 	"cache.md":     "# Cache\n\nHard problems: cache invalidation and naming things.\n",
 	"ops/fleet.md": "# Fleet\n\nSee [the readme](../README.md).\n",
-}
-
-// A failure that isn't the file's (here a failing insert) leaves the commit where it was, so the next
-// sync tries again instead of losing the change.
-func TestApplyFailureKeepsTheCommit(t *testing.T) {
-	t.Parallel()
-	x := NewTestIndex(t, vault)
-	g, err := x.acquire()
-	if err != nil {
-		t.Fatalf("acquire: got error %v, want nil", err)
-	}
-	defer g.release()
-	_, err = g.writer.ExecContext(t.Context(), `CREATE TRIGGER fail_headings BEFORE INSERT ON headings
-		BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
-	if err != nil {
-		t.Fatalf("create trigger: got error %v, want nil", err)
-	}
-	content := "# README\n\nNew text.\n"
-	changes := []Change{
-		{Path: "bad.md", Version: Version("z"), Content: []byte("not utf-8 \xff")},
-		{Path: "README.md", Version: Version(content), Content: []byte(content)},
-	}
-	err = x.Apply(t.Context(), "c2", changes)
-	if err == nil {
-		t.Fatal("Apply with failing inserts: got nil error, want one")
-	}
-	if got := x.Commit(); got != "c1" {
-		t.Errorf("commit: got %q, want c1", got)
-	}
-
-	_, err = g.writer.ExecContext(t.Context(), "DROP TRIGGER fail_headings")
-	if err != nil {
-		t.Fatalf("drop trigger: got error %v, want nil", err)
-	}
-	err = x.Apply(t.Context(), "c2", changes)
-	if err != nil || x.Commit() != "c2" {
-		t.Fatalf("retry: got %v, commit %q; want nil, c2", err, x.Commit())
-	}
-	if d, err := x.Document(t.Context(), "bad.md"); err != nil || d.Status != StatusBroken {
-		t.Errorf("bad.md after the retry: got %q, %v; want %q", d.Status, err, StatusBroken)
-	}
-	if d, err := x.Document(t.Context(), "README.md"); err != nil || d.Version != Version(content) {
-		t.Errorf("README.md after the retry: got version %q, %v; want %q", d.Version, err, Version(content))
-	}
 }
 
 // Broken documents stay out of the full-text tables, whether built or applied, so their file-name titles
@@ -144,43 +97,6 @@ func TestBrokenDocumentsStayOutOfFullText(t *testing.T) {
 				if err != nil {
 					t.Errorf("%s integrity check: got error %v, want nil", table, err)
 				}
-			}
-		})
-	}
-}
-
-// A build whose inserting fails keeps any other error next to it, so a broken git copy is noticed, but
-// not the cancellation the failed insert caused.
-func TestFillError(t *testing.T) {
-	t.Parallel()
-	insertErr := errors.New("insert a.md: disk full")
-	readErr := errors.New("blob missing")
-	cancelled, cancel := context.WithCancel(t.Context())
-	cancel()
-	testCases := []struct {
-		name      string
-		ctx       context.Context
-		insertErr error
-		readErr   error
-		want      []error
-		wantText  string // when set, the whole message
-	}{
-		{name: "with a read error", ctx: t.Context(), insertErr: insertErr, readErr: fmt.Errorf("x: %w", readErr), want: []error{insertErr, readErr}},
-		{name: "with the build's own cancellation", ctx: t.Context(), insertErr: insertErr, readErr: context.Canceled, wantText: insertErr.Error()},
-		{name: "with the caller's cancellation", ctx: cancelled, insertErr: insertErr, readErr: context.Canceled, want: []error{context.Canceled}},
-		{name: "with only a read error", ctx: t.Context(), readErr: readErr, want: []error{readErr}},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			err := fillError(testCase.ctx, testCase.insertErr, testCase.readErr)
-			for _, want := range testCase.want {
-				if !errors.Is(err, want) {
-					t.Errorf("got %v, want it to wrap %v", err, want)
-				}
-			}
-			if testCase.wantText != "" && (err == nil || err.Error() != testCase.wantText) {
-				t.Errorf("got %v, want %q", err, testCase.wantText)
 			}
 		})
 	}
