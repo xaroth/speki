@@ -788,6 +788,15 @@ func TestFreshCloneSwapFails(t *testing.T) {
 			},
 		},
 		{
+			name: "old copy can't be moved aside",
+			rename: func(from, to string) error {
+				if isMove(from, to, "git", "git.old") {
+					return errRename
+				}
+				return os.Rename(from, to)
+			},
+		},
+		{
 			name: "old copy can't go back",
 			rename: func(from, to string) error {
 				if isMove(from, to, "git.next", "git") || isMove(from, to, "git.old", "git") {

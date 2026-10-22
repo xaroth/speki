@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"go.opentelemetry.io/otel"
@@ -248,4 +251,93 @@ func TestTraceKeepsFlushing(t *testing.T) {
 	if !rec.Flushed {
 		t.Error("got no flush on the writer, want one")
 	}
+}
+
+// Behind Trace, http.ResponseController still reaches the connection: a stream needs its deadlines.
+func TestTraceKeepsResponseController(t *testing.T) {
+	t.Parallel()
+	errs := make(chan error, 1)
+	srv := httptest.NewServer(telemetry.Trace(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		errs <- http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute))
+	})))
+	t.Cleanup(srv.Close)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	err = <-errs
+	if err != nil {
+		t.Errorf("got %v setting the write deadline, want nil", err)
+	}
+}
+
+// Not parallel: StartTracing sets the global tracer provider and propagator, and reads the environment.
+func TestStartTracing(t *testing.T) {
+	oldTP, oldProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	t.Cleanup(func() {
+		otel.SetTracerProvider(oldTP)
+		otel.SetTextMapPropagator(oldProp)
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		stop, err := telemetry.StartTracing(t.Context(), false, "1.2.3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := otel.GetTracerProvider(); got != oldTP {
+			t.Errorf("got tracer provider %T, want the global one left alone", got)
+		}
+		err = stop(t.Context())
+		if err != nil {
+			t.Errorf("got %v stopping, want nil", err)
+		}
+	})
+
+	t.Run("exports to the configured endpoint", func(t *testing.T) {
+		type export struct {
+			path string
+			body []byte
+		}
+		exports := make(chan export, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			exports <- export{path: r.URL.Path, body: body}
+		}))
+		t.Cleanup(srv.Close)
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", srv.URL)
+
+		stop, err := telemetry.StartTracing(t.Context(), true, "1.2.3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, span := telemetry.Tracer().Start(t.Context(), "test span")
+		span.End()
+		err = stop(t.Context()) // flushes the span
+		if err != nil {
+			t.Fatalf("got %v stopping, want nil", err)
+		}
+
+		got := <-exports
+		if got.path != "/v1/traces" {
+			t.Errorf("got export to %q, want /v1/traces", got.path)
+		}
+		for _, want := range []string{"test span", "speki", "1.2.3"} {
+			if !bytes.Contains(got.body, []byte(want)) {
+				t.Errorf("got export without %q, want the span with speki's name and version", want)
+			}
+		}
+		if got := otel.GetTextMapPropagator().Fields(); !slices.Contains(got, "traceparent") {
+			t.Errorf("got propagator fields %v, want traceparent", got)
+		}
+	})
 }
