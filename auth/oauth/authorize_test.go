@@ -270,3 +270,34 @@ func TestConsent(t *testing.T) {
 		})
 	}
 }
+
+// The access the user picks, and the access the client asked for, decide the scopes of the tokens.
+func TestSignIn(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name      string
+		scope     string // the client's scope parameter
+		access    string // the user's choice on the consent page
+		wantScope string
+	}{
+		{name: "write", access: "write", wantScope: "speki:read speki:write"},
+		{name: "read", access: "read", wantScope: "speki:read"},
+		{name: "write claimed on a read-only request", scope: "speki:read", access: "write", wantScope: "speki:read"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			clientID := e.register(t, loopback)
+			code := e.signIn(t, authorizeURL(clientID, loopback, url.Values{"scope": {testCase.scope}}), testCase.access)
+			resp, rec := e.token(t, codeForm(clientID, code, loopback))
+			if rec.Code != http.StatusOK || resp.Scope != testCase.wantScope {
+				t.Fatalf("got %d with scope %q, want 200 with %q", rec.Code, resp.Scope, testCase.wantScope)
+			}
+			id, _ := e.identity(t, resp.AccessToken)
+			if wantWrite := strings.Contains(testCase.wantScope, "speki:write"); id.Write != wantWrite {
+				t.Errorf("got Write %v, want %v", id.Write, wantWrite)
+			}
+		})
+	}
+}
