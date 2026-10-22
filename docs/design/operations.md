@@ -140,7 +140,7 @@ The SQLite driver needs cgo, so builds need a C compiler.
 - CI (`.github/workflows/ci.yml`, on pull requests and pushes to `main`, skipping docs-only changes):
   the latest Go 1.27 with cgo, `golangci-lint` (govet and staticcheck included) and `go test -race`, the
   same as a local `task ci`. `go test` runs the `FuzzParseTouch` seed corpus. `docker build` runs on
-  pushes to `main` only.
+  pushes to `main` and on Dependabot's base image pull requests.
 - `govulncheck` (`vuln.yml`) runs on pull requests that change `go.mod` or `go.sum`, and weekly on Mondays.
 - Fuzzing (`fuzz.yml`) runs `FuzzParseTouch` on manual dispatch only, for 5 minutes by default.
 - Publishing a GitHub release (`release.yml`) builds the image and pushes it to `ghcr.io/xaroth/speki`,
@@ -153,6 +153,8 @@ The SQLite driver needs cgo, so builds need a C compiler.
   but not published by default.
 - The image is built in two stages: `golang:1.27-bookworm` to build, `gcr.io/distroless/base-debian12` to
   run, as a non-root user, with the data directory as a volume.
+- Both base images are pinned by digest, so a build is reproducible and a base image change is a pull
+  request. Dependabot checks the digests weekly. A merged bump reaches users with the next release.
 
 `go.mod` pins versions. Dependencies, and why:
 
