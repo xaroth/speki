@@ -6,8 +6,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"path"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -83,8 +81,8 @@ type Document struct {
 
 	raw   []byte
 	front *frontmatter // nil when the file has no frontmatter block
-	// titleFromName is set when no title was found and the file name stands in for it.
-	titleFromName bool
+	// titleFromPath is set when no title was found and the path stands in for it.
+	titleFromPath bool
 }
 
 // errUnusable is returned by Parse for files speki can't index at all.
@@ -131,8 +129,8 @@ func Parse(docPath string, raw []byte) (*Document, error) {
 		d.Meta.Title = firstH1(d.Headings)
 	}
 	if d.Meta.Title == "" {
-		d.Meta.Title = strings.TrimSuffix(path.Base(docPath), ".md")
-		d.titleFromName = true
+		d.Meta.Title = docPath
+		d.titleFromPath = true
 	}
 	return d, nil
 }

@@ -62,7 +62,7 @@ Every change is a commit to the vault's GitHub repository, made as the user.
 A document is a markdown file whose path in the vault identifies it, such as `services/esi-proxy.md`.
 It starts with a YAML frontmatter block:
 
-- `title`: display title. Without it, the first `#` heading counts, then the file name.
+- `title`: display title. Without it, the first `#` heading counts, then the path in the vault.
 - `description`: one or two sentences about what the document covers.
 - `tags`: a list of topics. `aliases`: other names for the subject.
 - `status`: `draft`, `active` (the default) or `deprecated`.

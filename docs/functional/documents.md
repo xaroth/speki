@@ -48,12 +48,12 @@ Lowercase names with `-` between words are the convention, but speki doesn't enf
 
 | Field | Type | Who sets it | Meaning |
 |---|---|---|---|
-| `title` | text | writer | Display title. If missing, speki uses the first `#` heading, then the file name |
+| `title` | text | writer | Display title. If missing, speki uses the first `#` heading, then the path in the vault |
 | `description` | text | writer | One or two sentences about what the document covers. Shown in search results and listings |
 | `tags` | list of text | writer | Topics. No leading `#`. Matched case-insensitively |
 | `aliases` | list of text | writer | Other names for the subject. Searched like the title |
 | `status` | `draft`, `active`, `deprecated` | writer | Missing means `active`. Search ranks `deprecated` documents lower |
-| `related` | list of paths | writer | Other documents in the same vault worth reading alongside this one |
+| `related` | list of paths | writer | Other documents in the same vault worth reading alongside this one. |
 | `created` | UTC datetime | speki | Set when speki creates the document. A change that leaves it out keeps it |
 | `updated` | UTC datetime | speki | Set every time speki changes the document |
 

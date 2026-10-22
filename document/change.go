@@ -29,7 +29,7 @@ func Check(current, next *Document) error {
 			}
 		}
 	}
-	if current == nil && next.titleFromName {
+	if current == nil && next.titleFromPath {
 		problems = append(problems, errors.New("title: missing; add a title to the frontmatter or start with a # heading"))
 	}
 	return errors.Join(problems...)
