@@ -151,9 +151,14 @@ The SQLite driver needs cgo, so builds need a C compiler.
   have a fix, because binary mode also reports linked code the program never calls. A failure means a
   release is due, after bumping Go or the module if the fix isn't on `main` yet.
 - Fuzzing (`fuzz.yml`) runs `FuzzParseTouch` on manual dispatch only, for 5 minutes by default.
-- Publishing a GitHub release (`release.yml`) builds the image and pushes it to `ghcr.io/xaroth/speki`,
-  tagged with the release version (`v1.2.3` gives `1.2.3`). Non-prerelease versions also get `1.2` and
-  move `latest`.
+- Publishing a GitHub release (`release.yml`) first runs `ci.yml` (lint and tests) on the tagged commit,
+  then builds the image and pushes it to `ghcr.io/xaroth/speki`, tagged with the release version
+  (`v1.2.3` gives `1.2.3`). Non-prerelease versions also get `1.2` and move `latest`.
+- The image is built for `linux/amd64` and `linux/arm64`, each on a native runner (`ubuntu-24.04-arm` for
+  arm64) because the cgo build needs a C toolchain for its target. Each platform is pushed by digest, and
+  a last job joins them into one multi-platform index under the release tags.
+- Each platform image carries an SBOM and a `mode=max` provenance attestation from BuildKit. The index is
+  signed with cosign keyless signing, so the signature ties it to `release.yml` in this repository.
 - Workflows pin every action to a full commit SHA, with the version in a trailing comment, so a moved
   or compromised tag can't change what runs. Dependabot (`.github/dependabot.yml`) checks the pins weekly
   and opens one grouped pull request for updates.
