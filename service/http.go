@@ -87,7 +87,7 @@ func (s *Service) status(w http.ResponseWriter, _ *http.Request) {
 		Ready:    s.ready.Load(),
 		Store:    "redis",
 		Vaults:   s.library.Status(),
-		Problems: []vault.Problem{},
+		Problems: s.vaults.Problems(),
 		Warnings: []string{},
 	}
 	if s.cfg.Redis.URL == "" {
@@ -97,11 +97,9 @@ func (s *Service) status(w http.ResponseWriter, _ *http.Request) {
 	if page.Vaults == nil {
 		page.Vaults = []library.Status{}
 	}
-	s.vaultsMu.Lock()
-	if s.vaults != nil {
-		page.Problems = append(page.Problems, s.vaults.Problems()...)
+	if page.Problems == nil {
+		page.Problems = []vault.Problem{}
 	}
-	s.vaultsMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(page)
 }

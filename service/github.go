@@ -14,6 +14,7 @@ type polledAPI interface {
 	File(ctx context.Context, installationID int64, repo, ref, path string) ([]byte, error)
 	BranchHead(ctx context.Context, installationID int64, repo, branch, etag string) (gh.Head, error)
 	RepositoryID(ctx context.Context, installationID int64, repo string) (int64, error)
+	AppOwner(ctx context.Context) (int64, error)
 }
 
 // newPolledGitHub shares the reads every round of discovery and polling makes between instances, when
