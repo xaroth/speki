@@ -42,8 +42,9 @@ vault's guidelines below.
 ## Reading
 
 `read` returns a document's raw text, frontmatter included, with line numbers counted from the top of the
-file. A long document comes back in parts of at most 1,000 lines or 64 KiB. The result then includes an
-outline of its headings with line numbers: pass `from_line` and `line_count` to read the part you need.
+file. A long document comes back in parts of at most 1,000 lines, sized to fit one answer of 80 KiB. The
+result then includes an outline of its headings with line numbers: pass `from_line` and `line_count` to
+read the part you need.
 
 `history` lists the latest commits of a vault or one document, with who made them and from which client.
 For older commits, pass its `next_cursor` back as `cursor`.

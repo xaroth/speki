@@ -1,7 +1,10 @@
 # Tools
 
 Every tool returns structured content (JSON matching an output schema) and a short text rendering of the
-same result, for clients that only show text.
+same result, for clients that only show text. Document content, outlines and vault guidelines are in the
+text only, fenced (see [mcp.md](../design/mcp.md#results)), so they go out once: the structured content
+keeps the metadata. A result is at most 80 KiB, JSON-encoded, which keeps it under the roughly 25k tokens
+Claude Code accepts from an MCP tool by default.
 
 Vaults are named `owner/repo`, matched without regard to letter case as on GitHub. Results use the name
 as GitHub spells it. Naming a vault twice is the same as naming it once. Paths are relative to the vault
@@ -78,7 +81,8 @@ Input: none.
 
 Output: a longer explanation than the handshake instructions (what to search for, when to write, the
 document format, link style, how versions work), then the user's vaults. Each vault comes with its title,
-description, guidelines, the repositories it covers and whether the user can write to it.
+description, the repositories it covers and whether the user can write to it, and its guidelines in the
+text.
 
 ## list
 
@@ -116,8 +120,7 @@ With `vault`: the folders and documents under `path`.
     { "path": "README.md", "title": "About this vault", "description": "...",
       "status": "active", "updated": "2026-10-09T14:02:11Z",
       "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1" }
-  ],
-  "guidelines": "Put one document per service under services/ ..." }
+  ] }
 ```
 
 A document whose file can't be parsed is listed with `"status": "broken"` and its path as title.
@@ -125,7 +128,7 @@ A document whose file can't be parsed is listed with `"status": "broken"` and it
 
 At most 200 entries per call, sorted by path. When there are more, `next_cursor` is set: pass it as
 `cursor` to get the next page. It's left out on the last page. The cursor stays valid when documents are
-added or removed in between. The vault's guidelines come along when listing its root.
+added or removed in between. The vault's guidelines come along in the text when listing its root.
 
 ## search
 
@@ -209,23 +212,26 @@ Only served vaults count toward the 10.
 | `vault` | string | required |
 | `path` | string | required |
 | `from_line` | 1-based line number | 1 |
-| `line_count` | number of lines | as many as fit in 1,000 lines and 64 KiB |
+| `line_count` | number of lines | as many as fit in 1,000 lines and one answer |
 
 ```json
 { "vault": "acme/kb", "path": "services/esi-proxy.md",
   "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1",
   "metadata": { "title": "ESI proxy", "tags": ["esi", "proxy"], "status": "active" },
-  "content": "---\ntitle: ESI proxy\n...",
   "from_line": 1, "line_count": 212, "total_lines": 212 }
 ```
 
-`content` is the raw file, frontmatter included, so an agent can change it with `edit`. Line numbers count
-from the top of the file.
+The content is in the text result, in a `document` fence: the raw file, frontmatter included, so an agent
+can change it with `edit`. Line numbers count from the top of the file.
 
-When the document is longer than what was returned, `outline` lists its headings with line numbers (the
-first 200, each cut to 200 bytes, about 16 KiB in all as JSON), so the agent can read the part it needs. The
-outline counts against the 64 KiB. Otherwise the key is left out. A single line longer than what fits is
-cut, with a warning.
+When the document is longer than what was returned, the text has an `outline` fence before the content,
+listing its headings with line numbers (the first 200, each cut to 200 bytes, about 16 KiB in all), so the
+agent can read the part it needs. A single line longer than what fits is cut, with a warning.
+
+A part holds as many lines as fit in one answer of 80 KiB, JSON-encoded, beside the metadata, warnings and
+outline. Each `<` counts as the `&lt;` a fence may escape it to, so markup-heavy text gets fewer lines.
+A part always has room for 4 KiB of content: when the metadata leaves less, the outline is left out with a
+warning, and the answer may go over 80 KiB.
 
 Titles in every answer are cut to 200 bytes, and descriptions and snippets to 500, ending in "…". These
 limits count the text's own bytes; JSON escaping can make an answer somewhat larger. In

@@ -17,10 +17,12 @@ import (
 // What one read returns at most.
 const (
 	maxReadLines  = 1000
-	maxReadBytes  = 64 << 10 // content and outline together
+	maxReadBytes  = 64 << 10 // the default for ReadRequest.MaxBytes
 	maxOutline    = 200      // headings
 	maxOutlineLen = 16 << 10 // bytes of the outline, counting each heading's text and a little for the rest
 	maxHeading    = 200      // bytes of one heading's text
+	// Room content always gets, so large metadata can't stop a read from making progress.
+	minReadContent = 4 << 10
 )
 
 // ReadRequest asks for a document, or part of it.
@@ -29,6 +31,9 @@ type ReadRequest struct {
 	Path      string
 	FromLine  int // 1-based; 0 means 1
 	LineCount int // 0 means as many as fit
+	// MaxBytes caps what the page takes in an answer, JSON-encoded: content, outline, metadata and
+	// warnings. 0 means 64 KiB.
+	MaxBytes int
 }
 
 // Page is a document, or the part of it that was asked for.
@@ -44,7 +49,7 @@ type Page struct {
 	Warnings []string
 }
 
-// Read returns a document's raw text, or the lines asked for, up to 1,000 lines and 64 KiB.
+// Read returns a document's raw text, or the lines asked for, up to 1,000 lines and req.MaxBytes.
 func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page, error) {
 	if req.FromLine < 0 || req.LineCount < 0 {
 		return Page{}, errorf(CodeInvalid, "from_line and line_count can't be negative")
@@ -82,34 +87,132 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 		TotalLines: len(lines),
 		Warnings:   slices.Clone(doc.Warnings),
 	}
-	// The outline comes with a partial read, and counts against its 64 KiB, so it's worked out first.
-	budget := maxReadBytes
-	partial := from > 1 || want < len(lines) || len(raw) > maxReadBytes
+	budget := req.MaxBytes
+	if budget <= 0 {
+		budget = maxReadBytes
+	}
+	budget -= metadataSize(doc)
+	// The outline comes with a partial read, and counts against the budget, so it's worked out first.
+	partial := from > 1 || want < len(lines) || textSize(string(raw)) > budget-warningsSize(p.Warnings)
 	if partial {
 		parsed, err := document.Parse(path, raw)
 		if err == nil {
-			p.Outline = outline(parsed.Headings, &p.Warnings)
-			budget -= outlineSize(p.Outline)
+			var warnings []string
+			o := outline(parsed.Headings, &warnings)
+			if budget-outlineSize(o)-warningsSize(append(p.Warnings, warnings...)) >= minReadContent {
+				p.Outline = o
+				p.Warnings = append(p.Warnings, warnings...)
+				budget -= outlineSize(o)
+			} else {
+				p.Warnings = append(p.Warnings, "the outline is left out: the metadata leaves too little room")
+			}
 		}
 	}
+	budget = max(budget-warningsSize(p.Warnings), minReadContent)
 	var sb strings.Builder
+	size := 0
 	for _, line := range lines[from-1:] {
 		if p.LineCount == want {
 			break
 		}
-		if sb.Len()+len(line) > budget {
+		n := textSize(line)
+		if size+n > budget {
 			if p.LineCount == 0 { // one line over the cap on its own: show its start
-				sb.WriteString(cutUTF8(line, budget))
+				warning := fmt.Sprintf("line %d is longer than fits in one read; only its start is shown", from)
+				sb.WriteString(cutToSize(line, budget-warningsSize([]string{warning})))
 				p.LineCount = 1
-				p.Warnings = append(p.Warnings, fmt.Sprintf("line %d is longer than fits in one read; only its start is shown", from))
+				p.Warnings = append(p.Warnings, warning)
 			}
 			break
 		}
 		sb.WriteString(line)
+		size += n
 		p.LineCount++
 	}
 	p.Content = sb.String()
 	return p, nil
+}
+
+// metadataSize is what a document's metadata takes in an answer, JSON-encoded.
+func metadataSize(d index.Document) int {
+	return encodedSize(struct {
+		Title       string         `json:"title"`
+		Description string         `json:"description,omitempty"`
+		Tags        []string       `json:"tags,omitempty"`
+		Aliases     []string       `json:"aliases,omitempty"`
+		Status      string         `json:"status"`
+		Related     []string       `json:"related,omitempty"`
+		Created     string         `json:"created,omitempty"`
+		Updated     string         `json:"updated,omitempty"`
+		Extra       map[string]any `json:"extra,omitempty"`
+	}{
+		Title:       d.Title,
+		Description: d.Description,
+		Tags:        d.Tags,
+		Aliases:     d.Aliases,
+		Status:      string(d.Status),
+		Related:     d.Related,
+		Created:     d.Created,
+		Updated:     d.Updated,
+		Extra:       d.Extra,
+	})
+}
+
+// warningsSize is what warnings take in an answer: each goes out as JSON and as a line of text.
+func warningsSize(warnings []string) int {
+	n := 0
+	for _, w := range warnings {
+		n += 2 * (textSize(w) + 16)
+	}
+	return n
+}
+
+func encodedSize(v any) int {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
+	return len(raw)
+}
+
+// textSize is the most s takes in a text answer, JSON-encoded without the quotes: json.Marshal's
+// length, except that "<" and its look-alikes count as the "&lt;" a fence may escape them to.
+func textSize(s string) int {
+	n := 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		n += runeSize(r, size)
+		i += size
+	}
+	return n
+}
+
+func runeSize(r rune, size int) int {
+	switch {
+	case strings.ContainsRune("<\uff1c\ufe64\u2039\u3008\u27e8", r):
+		return len(`\u0026lt;`)
+	case r == utf8.RuneError && size == 1: // invalid UTF-8, encoded as \ufffd
+		return 6
+	case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t' || r == '\b' || r == '\f':
+		return 2
+	case r < 0x20 || r == '>' || r == '&' || r == '\u2028' || r == '\u2029':
+		return 6
+	}
+	return size
+}
+
+// cutToSize returns the longest prefix of s whose textSize is at most n.
+func cutToSize(s string, n int) string {
+	total := 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		total += runeSize(r, size)
+		if total > n {
+			return s[:i]
+		}
+		i += size
+	}
+	return s
 }
 
 // outline returns the headings a partial read shows: at most maxOutline, each cut to maxHeading bytes,
@@ -129,11 +232,10 @@ func outline(headings []document.Heading, warnings *[]string) []document.Heading
 	return out
 }
 
-// headingSize is roughly what a heading takes in an answer: its text as JSON, its level and line, and
-// the JSON around them.
+// headingSize is roughly what a heading takes in an answer: its text, its line number and the text
+// around them.
 func headingSize(h document.Heading) int {
-	raw, _ := json.Marshal(h.Text) // a string always marshals
-	return len(raw) + 32
+	return textSize(h.Text) + 32
 }
 
 func outlineSize(headings []document.Heading) int {

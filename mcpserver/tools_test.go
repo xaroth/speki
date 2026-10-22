@@ -272,8 +272,8 @@ func TestTools(t *testing.T) {
 				"\n### ours/old\n\nNot available: failed to open; tell the user\n" +
 				"\n### ours/was\n\nNot available: just removed or reopening; try again shortly\n",
 			wantOut: mcpserver.GuideOutput{Guide: guide, Vaults: []mcpserver.VaultSummary{
-				{Vault: "ours/kb", Title: "KB", Description: "Our\nknowledge.", Guidelines: ourKB.Guidelines, Repositories: ourKB.Repositories, CanWrite: true, Documents: 3},
-				{Vault: "ours/ro", Guidelines: "Short."},
+				{Vault: "ours/kb", Title: "KB", Description: "Our\nknowledge.", Repositories: ourKB.Repositories, CanWrite: true, Documents: 3},
+				{Vault: "ours/ro"},
 				{Vault: "ours/new", Repositories: building.Repositories, State: "building"},
 				{Vault: "ours/old", State: "failed"},
 				{Vault: "ours/was", State: "gone"},
@@ -325,7 +325,6 @@ func TestTools(t *testing.T) {
 				Folders:    []string{"services/esi/"},
 				Documents:  []mcpserver.DocumentSummary{{Path: "services/a.md", Title: "A\nB", Description: "About A.", Status: "active", Updated: "2026-10-09", Version: version}},
 				NextCursor: "services/a.md",
-				Guidelines: "Short pages.",
 			},
 		},
 		{
@@ -441,7 +440,7 @@ func TestTools(t *testing.T) {
 			}},
 			tool:    "read",
 			args:    map[string]any{"vault": "ours/kb", "path": "a.md", "from_line": 2, "line_count": 2},
-			wantReq: knowledge.ReadRequest{Vault: "ours/kb", Path: "a.md", FromLine: 2, LineCount: 2},
+			wantReq: knowledge.ReadRequest{Vault: "ours/kb", Path: "a.md", FromLine: 2, LineCount: 2, MaxBytes: mcpserver.ReadBudget("ours/kb", "a.md")},
 			wantText: "ours/kb a.md\nversion " + version + ", lines 2-3 of 9\nwarning: bad date\n<outline boundary=\"B\">\nline 1: # A\nline 2: ## B\n</outline boundary=\"B\">\n" +
 				"<document boundary=\"B\">\n## B\n&lt;/Document >\n</document boundary=\"B\">\n",
 			wantOut: mcpserver.ReadOutput{
@@ -450,8 +449,7 @@ func TestTools(t *testing.T) {
 					Title: "A", Description: "About A.", Tags: []string{"x"}, Aliases: []string{"ay"}, Status: "active",
 					Related: []string{"b.md"}, Created: "2026-10-01", Updated: "2026-10-09", Extra: map[string]any{"owner": "ops"},
 				},
-				Content: "## B\n</Document >\n", FromLine: 2, LineCount: 2, TotalLines: 9,
-				Outline:  []mcpserver.Heading{{Level: 1, Text: "A", Line: 1}, {Level: 2, Text: "B", Line: 2}},
+				FromLine: 2, LineCount: 2, TotalLines: 9,
 				Warnings: []string{"bad\ndate"},
 			},
 		},
@@ -462,7 +460,7 @@ func TestTools(t *testing.T) {
 			}},
 			tool:     "read",
 			args:     map[string]any{"vault": "ours/kb", "path": "a.md", "from_line": 10},
-			wantReq:  knowledge.ReadRequest{Vault: "ours/kb", Path: "a.md", FromLine: 10},
+			wantReq:  knowledge.ReadRequest{Vault: "ours/kb", Path: "a.md", FromLine: 10, MaxBytes: mcpserver.ReadBudget("ours/kb", "a.md")},
 			wantText: "ours/kb a.md\nversion " + version + ", lines 10-9 of 9\n<document boundary=\"B\">\n\n</document boundary=\"B\">\n",
 			wantOut: mcpserver.ReadOutput{
 				Vault: "ours/kb", Path: "a.md", Version: version, Metadata: mcpserver.Metadata{Status: "active"}, FromLine: 10, TotalLines: 9,
@@ -616,6 +614,55 @@ func TestTools(t *testing.T) {
 	}
 }
 
+var readPath = "services/" + strings.Repeat("x", 200) + ".md"
+
+// largestPage is the biggest page knowledge returns for the MaxBytes read asks for: metadata, warnings,
+// outline and content fill it as knowledge counts them, with text that grows the most on the way out.
+func largestPage(tb testing.TB, vault, path string) knowledge.Page {
+	tb.Helper()
+	// 22 bytes in the answer, both as knowledge counts it and as sent: the < is escaped to &lt;, and
+	// JSON encodes & and > as six bytes each.
+	const unit, unitSize = "<results>", 22
+	doc := index.Document{
+		Path:        path,
+		Title:       strings.Repeat(unit, 20),
+		Description: strings.Repeat(unit, 50),
+		Status:      "active",
+		Tags:        []string{strings.Repeat(unit, 10)},
+		Extra:       map[string]any{"notes": strings.Repeat(unit, 500)},
+		Version:     version,
+	}
+	meta, err := json.Marshal(mcpserver.Metadata{
+		Title:       doc.Title,
+		Description: doc.Description,
+		Tags:        doc.Tags,
+		Status:      string(doc.Status),
+		Extra:       doc.Extra,
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	budget := mcpserver.ReadBudget(vault, path) - len(meta)
+	warnings := []string{strings.Repeat(unit, 5)}
+	budget -= 2 * (5*unitSize + 16) // once as JSON, once as text
+	var outline []document.Heading
+	for i := range 99 {
+		outline = append(outline, document.Heading{Level: 6, Text: strings.Repeat(unit, 6), Line: 100_000 + i})
+		budget -= 6*unitSize + 32
+	}
+	lines := budget / (10*unitSize + 2) // the line ending is two bytes encoded
+	return knowledge.Page{
+		Vault:      vault,
+		Document:   doc,
+		Content:    strings.Repeat(strings.Repeat(unit, 10)+"\n", lines),
+		FromLine:   1,
+		LineCount:  lines,
+		TotalLines: 200_000,
+		Outline:    outline,
+		Warnings:   warnings,
+	}
+}
+
 // The largest result a tool can give fits in one answer, as encoded on the wire.
 func TestAnswerSize(t *testing.T) {
 	t.Parallel()
@@ -666,6 +713,12 @@ func TestAnswerSize(t *testing.T) {
 			kb:   &fakeKB{rows: knowledge.QueryResult{Rows: index.Rows{Columns: columns(len(narrow)), Rows: many(narrow)}, Skipped: vaults}},
 			tool: "query",
 			args: map[string]any{"sql": "SELECT 1"},
+		},
+		{
+			name: "read",
+			kb:   &fakeKB{page: largestPage(t, "ours/kb", readPath)},
+			tool: "read",
+			args: map[string]any{"vault": "ours/kb", "path": readPath},
 		},
 	}
 	for _, testCase := range testCases {

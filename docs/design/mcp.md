@@ -121,6 +121,8 @@ that `edit` is the tool for changing part of one.
 
 Every result has structured content matching the output schema, and a text rendering for clients that only
 show text. Versions are always shown in full in both, because agents copy them into the next call.
+Document content, outlines and vault guidelines are in the text only, in fences, and the structured
+content keeps the metadata. Text from a vault then goes out once, and never unfenced.
 
 `search` renders one line per hit (vault, path, title, version) plus its snippet, all inside one fence
 named `results`. `search` and `query`
@@ -150,16 +152,17 @@ characters (controls, format characters, combining marks, any kind of space) are
 allowed, and look-alike letters (fullwidth, mathematical and Cyrillic or Greek forms) are folded to ASCII
 before comparing. Vault-supplied text that isn't a whole document (titles, descriptions, snippets,
 headings) has control and format characters and line breaks stripped where it's meant to be one line, and
-is escaped the same way. Structured content carries the raw text unchanged.
-
-`read` returns at most 64 KiB of content per call, so a result stays well below client limits even with the
-content in both the structured part and the text.
+is escaped the same way. Structured content carries titles, descriptions and snippets raw.
 
 A result is at most 80 KiB as it goes out, JSON-encoded (`maxAnswer` in `handlers.go`). Claude Code cuts
 MCP tool output at about 25k tokens by default, and cuts off or rejects a bigger result before the agent
 sees it, hints included. `query` adds rows while the structured rows and their lines of text, counted
 together, fit, then sets `truncated`, and the text ends with "truncated: add a LIMIT or narrow the query to
-see the rest". A test checks the encoded size of the largest results against the budget.
+see the rest". `read` passes what's left after the vault, path and a little for the envelope to
+`knowledge.Read` as `MaxBytes`. `knowledge` counts the metadata as JSON, warnings twice (they're in both
+parts), and the outline and content as encoded text, with each `<` or look-alike as the `&lt;` a fence may
+turn it into. Content always gets at least 4 KiB, so a document whose metadata fills the budget still
+pages to the end; its outline is then left out. A test checks the encoded size of the largest results against the budget.
 
 ## Errors
 
