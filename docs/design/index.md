@@ -236,6 +236,9 @@ vault's vocabulary.
 6. If there are no results and the query had more than one word, it runs again with `OR` and marks the
    result as relaxed.
 
+A search has 5 seconds (`SearchTimeout`), well inside the request's 50, so a slow one can't hold a vault's
+4 reader connections for long. `knowledge` turns running out of it into a `timeout` error.
+
 ## Listing and reading
 
 `List(prefix, after, limit)` returns folders and documents under a folder in one sorted stream, starting

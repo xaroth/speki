@@ -30,7 +30,8 @@ type SearchResult struct {
 	Searched   []string
 }
 
-// Search runs a full-text search across vaults, best match first. Hits carry the vault name as Source.
+// Search runs a full-text search across vaults, best match first, within index.SearchTimeout. Hits carry
+// the vault name as Source.
 func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (SearchResult, error) {
 	if req.Limit < 0 || req.Limit > 50 {
 		return SearchResult{}, errorf(CodeInvalid, "limit must be between 1 and 50")
@@ -72,6 +73,8 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	if prefix != "" {
 		prefix += "/"
 	}
+	ctx, cancel := context.WithTimeout(ctx, index.SearchTimeout)
+	defer cancel()
 	res, err := index.Search(ctx, sources, req.Query, index.Options{
 		Limit:             req.Limit,
 		Tags:              req.Tags,
@@ -85,6 +88,8 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 		return SearchResult{}, errorf(CodeInvalid, "%s. Search for the few words that matter most", err)
 	case errors.Is(err, index.ErrClosed):
 		return SearchResult{}, errorf(CodeUnavailable, "a vault was just removed or is reopening. Search again")
+	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded): // SQLite reports it as an interrupt
+		return SearchResult{}, errorf(CodeTimeout, "the search ran longer than %s. Name fewer vaults, or narrow it with path or tags", index.SearchTimeout)
 	case err != nil:
 		return SearchResult{}, err
 	}

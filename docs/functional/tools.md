@@ -52,7 +52,7 @@ A failed tool call returns an error text that starts with a code, then says what
 | `vault_read_only` | GitHub refused the commit because the branch requires pull requests or checks |
 | `secret_detected` | GitHub's push protection found a secret in the content. Remove it and tell the user |
 | `too_large` | Over a limit. Says which one and how to stay under it |
-| `timeout` | A query ran longer than 3 seconds, or a call ran out of its 50 seconds. After a change, read the document before retrying: it may have landed |
+| `timeout` | A query ran longer than 3 seconds, a search longer than 5, or a call ran out of its 50 seconds. After a change, read the document before retrying: it may have landed |
 | `rate_limited` | GitHub asked speki to slow down during a write. Says how long to wait. Speki's own per-user limit answers with HTTP 429 instead, before any tool runs |
 | `unavailable` | Something went wrong on speki's side or GitHub's, GitHub no longer accepts the user's sign-in, the vault is rebuilding its index, the named vault is still building its first index or failed to open, too many queries are running, or another change to the vault was still being committed after 15 seconds. Says which, with a request ID for the operator |
 
@@ -165,6 +165,9 @@ With `repository`, only the vaults covering it are searched, narrowed further by
 `repository_vaults` lists the vaults that were searched, and `skipped_vaults` only covering ones. When no
 vault covers the repository, nothing is searched and the results are empty: speki doesn't fall back to
 every vault, since those results would look as if they were about the repository.
+
+A search may take 5 seconds. Past that it fails with `timeout`; name fewer vaults, or narrow it with
+`path` or `tags`.
 
 ## schema
 
