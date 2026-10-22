@@ -18,9 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/mattn/go-sqlite3"
-
-	_ "github.com/mattn/go-sqlite3" // registers the sqlite3 driver
+	"github.com/mattn/go-sqlite3" // also registers the sqlite3 driver
 )
 
 const filePrefix, fileSuffix = "index-", ".db"
