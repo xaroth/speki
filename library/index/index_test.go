@@ -496,7 +496,7 @@ func TestBrokenDocuments(t *testing.T) {
 	}
 	want := index.Document{
 		Path:     "README.md",
-		Title:    "README",
+		Title:    "README.md",
 		Status:   index.StatusBroken,
 		Tags:     []string{},
 		Aliases:  []string{},

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"path"
 	"runtime"
 	"strings"
 	"time"
@@ -284,14 +283,14 @@ func rowOf(c Change) (row, error) {
 	return brokenRow(c, err), err
 }
 
-// brokenRow is a file that can't be parsed: its new version and size, its file name for a title, and no
+// brokenRow is a file that can't be parsed: its new version and size, its path for a title, and no
 // content, so search doesn't find what it said before.
 func brokenRow(c Change, err error) row {
 	return row{
 		path:     c.Path,
 		key:      norm.NFC.String(c.Path),
 		name:     document.LinkName(c.Path),
-		title:    strings.TrimSuffix(path.Base(c.Path), ".md"),
+		title:    c.Path,
 		status:   string(StatusBroken),
 		tags:     "[]",
 		aliases:  "[]",

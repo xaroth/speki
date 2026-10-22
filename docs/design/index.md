@@ -166,7 +166,7 @@ from updating. Any other failure aborts the whole transaction and the next sync 
 `meta.commit` is updated in the same transaction. Readers see the old state or the new one, never a mix.
 
 `Build` indexes unusable files the same way. A broken row has the file's new version, size and line
-count, its file name as title, `status = 'broken'`, the parse error in `broken`, and no other content: no
+count, its path as title, `status = 'broken'`, the parse error in `broken`, and no other content: no
 body, headings, tags or links. Broken rows stay out of `fts`, `names` and `words`: the triggers skip
 them, and `Build` deletes them from the three tables after its rebuilds, which read every row. So their
 file-name titles don't match in search or the sandbox, and don't feed typo correction. The sandbox `fts`
@@ -184,7 +184,7 @@ After either one, the in-memory vocabulary is reloaded from `words_vocab` in the
 at a time per vault.
 
 A document whose frontmatter doesn't parse is still indexed: its body is searchable, its title comes from
-the first heading or the file name, and the problem is stored in `warnings`. Only a file that isn't UTF-8
+the first heading or its path, and the problem is stored in `warnings`. Only a file that isn't UTF-8
 or whose frontmatter block is over 64 KiB is broken.
 
 ## Search

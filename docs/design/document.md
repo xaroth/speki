@@ -39,7 +39,7 @@ func Parse(path string, raw []byte) (*Document, error)
 64 KiB. The index keeps such a file as broken (see [index.md](index.md)). Everything else becomes a
 warning. Frontmatter that doesn't parse as YAML, uses anchors or
 aliases, or isn't a mapping is ignored as a whole: the document gets its title from the first heading or
-the file name, and `Warnings` says what's wrong. A core field with the wrong type is ignored on its own.
+its path, and `Warnings` says what's wrong. A core field with the wrong type is ignored on its own.
 
 ## Frontmatter
 

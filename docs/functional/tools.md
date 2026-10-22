@@ -113,7 +113,7 @@ With `vault`: the folders and documents under `path`.
   "guidelines": "Put one document per service under services/ ..." }
 ```
 
-A document whose file can't be parsed is listed with `"status": "broken"` and its file name as title.
+A document whose file can't be parsed is listed with `"status": "broken"` and its path as title.
 `search` doesn't find it.
 
 At most 200 entries per call, sorted by path. When there are more, `next_cursor` is set: pass it as

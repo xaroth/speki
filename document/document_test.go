@@ -143,26 +143,26 @@ func TestParseFrontmatterEdges(t *testing.T) {
 		body     string
 		warnings int
 	}{
-		{"empty block", "---\n---\nText\n", "x", "Text\n", 0},
+		{"empty block", "---\n---\nText\n", "x.md", "Text\n", 0},
 		{"closed with dots", "---\ntitle: Dots\n...\nText\n", "Dots", "Text\n", 0},
-		{"never closed", "---\ntitle: Open\nText\n", "x", "---\ntitle: Open\nText\n", 0},
-		{"not on first line", "\n---\ntitle: Late\n---\n", "x", "\n---\ntitle: Late\n---\n", 0},
+		{"never closed", "---\ntitle: Open\nText\n", "x.md", "---\ntitle: Open\nText\n", 0},
+		{"not on first line", "\n---\ntitle: Late\n---\n", "x.md", "\n---\ntitle: Late\n---\n", 0},
 		{"closed on last line", "---\ntitle: End\n---", "End", "", 0},
-		{"scalar top level", "---\njust text\n---\n", "x", "", 1},
-		{"duplicate keys", "---\ntitle: a\ntitle: b\n---\n", "x", "", 1},
+		{"scalar top level", "---\njust text\n---\n", "x.md", "", 1},
+		{"duplicate keys", "---\ntitle: a\ntitle: b\n---\n", "x.md", "", 1},
 		{"null values", "---\ntitle:\ntags:\n---\n# Heading\n", "Heading", "# Heading\n", 0},
 		{"title as number", "---\ntitle: 2026\n---\n", "2026", "", 0},
-		{"title as list", "---\ntitle: [a]\n---\n", "x", "", 1},
-		{"nested tag", "---\ntags: [a, [b], [c]]\n---\n", "x", "", 1},
+		{"title as list", "---\ntitle: [a]\n---\n", "x.md", "", 1},
+		{"nested tag", "---\ntags: [a, [b], [c]]\n---\n", "x.md", "", 1},
 		{"byte order mark without frontmatter", "\ufeff# Title\n", "Title", "# Title\n", 0},
-		{"non-text property name", "---\n? [a]\n: 1\n---\n", "x", "", 1},
+		{"non-text property name", "---\n? [a]\n: 1\n---\n", "x.md", "", 1},
 		{"long title", "---\ntitle: " + strings.Repeat("t", document.MaxTitle+1) + "\n---\n", strings.Repeat("t", document.MaxTitle+1), "", 1},
-		{"long description", "---\ndescription: " + strings.Repeat("d", document.MaxDescription+1) + "\n---\n", "x", "", 1},
-		{"nested non-text key", "---\nx: {1: a}\n---\n", "x", "", 1},
-		{"opening line with a trailing space", "--- \ntitle: A\n---\nText\n", "x", "--- \ntitle: A\n---\nText\n", 0},
-		{"closing line with a trailing space", "---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n", "x", "\nMore.\n", 1},
-		{"second document of keys", "---\ntitle: A\n--- \nowner: ops\n---\n", "x", "", 1},
-		{"only comments", "---\n# just a comment\n---\nText\n", "x", "Text\n", 0},
+		{"long description", "---\ndescription: " + strings.Repeat("d", document.MaxDescription+1) + "\n---\n", "x.md", "", 1},
+		{"nested non-text key", "---\nx: {1: a}\n---\n", "x.md", "", 1},
+		{"opening line with a trailing space", "--- \ntitle: A\n---\nText\n", "x.md", "--- \ntitle: A\n---\nText\n", 0},
+		{"closing line with a trailing space", "---\ntitle: A\n--- \n# Heading\n\nImportant text.\n\n---\n\nMore.\n", "x.md", "\nMore.\n", 1},
+		{"second document of keys", "---\ntitle: A\n--- \nowner: ops\n---\n", "x.md", "", 1},
+		{"only comments", "---\n# just a comment\n---\nText\n", "x.md", "Text\n", 0},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -395,8 +395,8 @@ func TestWikiLinkParsing(t *testing.T) {
 func TestNFDFileNames(t *testing.T) {
 	t.Parallel()
 	d := mustParse(t, nfd("menü/brötchen.md"), readFixture(t, "nfd.md"))
-	if want := nfd("brötchen"); d.Meta.Title != want {
-		t.Errorf("got title %q, want %q from the file name", d.Meta.Title, want)
+	if want := nfd("menü/brötchen.md"); d.Meta.Title != want {
+		t.Errorf("got title %q, want %q from the path", d.Meta.Title, want)
 	}
 	if len(d.Links) != 1 || d.Links[0].Candidate != "menü/käse.md" { // candidates are in NFC
 		t.Errorf("got links %+v, want one to %q", d.Links, "menü/käse.md")

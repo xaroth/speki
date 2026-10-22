@@ -48,7 +48,7 @@ Lowercase names with `-` between words are the convention, but speki doesn't enf
 
 | Field | Type | Who sets it | Meaning |
 |---|---|---|---|
-| `title` | text | writer | Display title. If missing, speki uses the first `#` heading, then the file name |
+| `title` | text | writer | Display title. If missing, speki uses the first `#` heading, then the path in the vault |
 | `description` | text | writer | One or two sentences about what the document covers. Shown in search results and listings |
 | `tags` | list of text | writer | Topics. No leading `#`. Matched case-insensitively |
 | `aliases` | list of text | writer | Other names for the subject. Searched like the title |
