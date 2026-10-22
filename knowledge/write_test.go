@@ -103,6 +103,13 @@ func TestChanges(t *testing.T) {
 			wantResult:  knowledge.Result{Version: blobID(strings.Replace(strings.ReplaceAll(esiProxy, "ESI proxy", "ESI gateway"), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))},
 		},
 		{
+			name:        "create with a key the vault allows",
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "new.md", Content: "---\ntitle: New\nowner: me\n---\n"},
+			wantChanges: []gh.FileChange{{Path: "new.md", Content: []byte("---\ntitle: New\nowner: me\n" + dated + "---\n")}},
+			wantMessage: "Create new.md",
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: New\nowner: me\n" + dated + "---\n")},
+		},
+		{
 			name:        "edit removing created keeps it",
 			files:       created,
 			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "a.md", OldText: "created: 2020-01-02T03:04:05Z\n", NewText: ""},
@@ -312,6 +319,8 @@ func TestChangeRejects(t *testing.T) {
 		{name: "edit of text that isn't there", req: edit("not there", "x"), code: knowledge.CodeInvalid},
 		{name: "edit of text that's there twice", req: edit("ESI proxy", "Proxy"), code: knowledge.CodeInvalid, wantMessage: "2 times"},
 		{name: "edit of overlapping matches", req: knowledge.EditRequest{Vault: "ours/kb", Path: "body.md", OldText: "ab ab", NewText: "x"}, code: knowledge.CodeInvalid, wantMessage: "2 times"},
+		{name: "create with a key the vault doesn't allow", req: write("new.md", "---\ntitle: A\npublish: true\n---\n"), code: knowledge.CodeInvalid, wantMessage: `"publish" can't be added`},
+		{name: "edit adding a key the vault doesn't allow", req: edit("tags: [esi]", "tags: [esi]\npublish: true"), code: knowledge.CodeInvalid, wantMessage: `"publish" can't be added`},
 		{name: "edit to content that fails the checks", req: edit("tags: [esi]", "status: wip"), code: knowledge.CodeInvalid},
 		{name: "edit keeping frontmatter that doesn't parse", req: knowledge.EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "Body text.", NewText: "Better text."}, code: knowledge.CodeInvalid},
 		{name: "edit of a stale version", req: knowledge.EditRequest{Vault: "ours/kb", Path: "services/db/pg.md", OldText: "Postgres", NewText: "PG", Version: "0000"}, code: knowledge.CodeConflict, wantVersion: blobID(postgres)},

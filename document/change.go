@@ -13,8 +13,9 @@ import (
 
 // Check compares a document an agent wants to write with the current one (nil for a new document) and
 // returns the problems the change brings in. Problems the current document already had are left alone,
-// so an agent fixing a typo isn't blocked by a person's messy frontmatter.
-func Check(current, next *Document) error {
+// so an agent fixing a typo isn't blocked by a person's messy frontmatter. Frontmatter keys other than
+// the writer fields and allowed must keep the value they have in current.
+func Check(current, next *Document, allowed []string) error {
 	var problems []error
 	if len(next.raw) > MaxSize {
 		problems = append(problems, fmt.Errorf("%w: the document is larger than %d bytes", ErrTooLarge, MaxSize))
@@ -35,6 +36,7 @@ func Check(current, next *Document) error {
 				grown(keyAliases, len(current.Meta.Aliases), len(next.Meta.Aliases), MaxAliases))
 		}
 	}
+	problems = append(problems, lockedChanges(current, next, allowed)...)
 	if current == nil && next.titleFromPath {
 		problems = append(problems, errors.New("title: missing; add a title to the frontmatter or start with a # heading"))
 	}
@@ -47,6 +49,95 @@ func grown(key string, current, next, limit int) error {
 		return fmt.Errorf("%s: more than %d; a change can't add more", key, limit)
 	}
 	return nil
+}
+
+// writerKeys are the frontmatter keys agents may always set.
+var writerKeys = []string{keyTitle, keyDescription, keyTags, keyAliases, keyStatus, keyRelated}
+
+// WriterKeys returns the frontmatter keys agents may always set.
+func WriterKeys() []string { return slices.Clone(writerKeys) }
+
+// SetBySpeki reports whether speki sets key itself.
+func SetBySpeki(key string) bool { return key == keyCreated || key == keyUpdated }
+
+// lockedChanges returns an error for each frontmatter key outside the writer fields and allowed that next
+// adds, removes or changes. The text doesn't vary with the value, like the warnings'.
+func lockedChanges(current, next *Document, allowed []string) []error {
+	cur, nxt := properties(current), properties(next)
+	var problems []error
+	check := func(key string) {
+		switch {
+		case slices.Contains(writerKeys, key), slices.Contains(allowed, key), key == keyUpdated:
+			return // updated is always overwritten
+		case key == keyCreated && (current == nil || !current.Meta.Created.IsZero()):
+			return // Touch sets it to now, or to the current value
+		}
+		a, inCur := cur[key]
+		b, inNext := nxt[key]
+		var what string
+		switch {
+		case !inCur && inNext:
+			what = "added"
+		case inCur && !inNext:
+			what = "removed"
+		case inCur && !sameValue(a, b):
+			what = "changed"
+		default:
+			return
+		}
+		problems = append(problems, fmt.Errorf("frontmatter: %q can't be %s; agents may only set %s in this vault, other keys must stay as they are",
+			key, what, strings.Join(append(slices.Clone(writerKeys), allowed...), ", ")))
+	}
+	for _, key := range keysOf(next) {
+		check(key)
+	}
+	for _, key := range keysOf(current) {
+		if _, ok := nxt[key]; !ok {
+			check(key)
+		}
+	}
+	return problems
+}
+
+func keysOf(d *Document) []string {
+	if d == nil || d.front == nil || d.front.node == nil {
+		return nil
+	}
+	var keys []string
+	pairs := d.front.node.Content
+	for i := 0; i+1 < len(pairs); i += 2 {
+		keys = append(keys, pairs[i].Value)
+	}
+	return keys
+}
+
+// properties maps the frontmatter's keys to their values. It's empty without usable frontmatter.
+func properties(d *Document) map[string]*yaml.Node {
+	out := make(map[string]*yaml.Node)
+	if d == nil || d.front == nil || d.front.node == nil {
+		return out
+	}
+	pairs := d.front.node.Content
+	for i := 0; i+1 < len(pairs); i += 2 {
+		out[pairs[i].Value] = pairs[i+1]
+	}
+	return out
+}
+
+// sameValue compares two YAML values, ignoring style, comments and position.
+func sameValue(a, b *yaml.Node) bool {
+	if a.Kind != b.Kind || a.ShortTag() != b.ShortTag() || len(a.Content) != len(b.Content) {
+		return false
+	}
+	if a.Kind == yaml.ScalarNode && a.ShortTag() != "!!null" && a.Value != b.Value { // null, ~ and empty are one value
+		return false
+	}
+	for i := range a.Content {
+		if !sameValue(a.Content[i], b.Content[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // Touch sets updated to now in the frontmatter, and created to created unless that's zero. It returns the

@@ -23,6 +23,7 @@ func TestCheck(t *testing.T) {
 		name    string
 		current string // empty: a new document
 		next    string
+		allowed []string
 		wantErr string // empty: no error
 	}{
 		{name: "valid new document", next: "---\ntitle: A\n---\nText\n"},
@@ -57,6 +58,66 @@ func TestCheck(t *testing.T) {
 			current: "---\ntitle: [a\n---\nText\n",
 			next:    "---\ntitle: a\n---\nText\n",
 		},
+		{name: "new document with unknown key", next: "---\ntitle: A\npublish: true\n---\n", wantErr: `"publish" can't be added`},
+		{name: "new document with allowed key", next: "---\ntitle: A\nowner: me\n---\n", allowed: []string{"owner"}},
+		{name: "new document with created", next: "---\ntitle: A\ncreated: 2020-01-01\n---\n"},
+		{
+			name:    "unknown key kept",
+			current: "---\ntitle: A\nowner: \"me\" # who\nlist: [a, {b: c}]\nempty: ~\n---\n",
+			next:    "---\ntitle: B\nowner: me\nlist:\n  - a\n  - b: c\nempty:\n---\n",
+		},
+		{
+			name:    "unknown key changed",
+			current: "---\ntitle: A\nowner: me\n---\n",
+			next:    "---\ntitle: A\nowner: you\n---\n",
+			wantErr: `"owner" can't be changed`,
+		},
+		{
+			name:    "unknown key changed type",
+			current: "---\ntitle: A\nversion: 1\n---\n",
+			next:    "---\ntitle: A\nversion: \"1\"\n---\n",
+			wantErr: `"version" can't be changed`,
+		},
+		{
+			name:    "unknown key removed",
+			current: "---\ntitle: A\nowner: me\n---\n",
+			next:    "---\ntitle: A\n---\n",
+			wantErr: `"owner" can't be removed`,
+		},
+		{
+			name:    "allowed key changed",
+			current: "---\ntitle: A\nowner: me\n---\n",
+			next:    "---\ntitle: A\nowner: you\n---\n",
+			allowed: []string{"owner"},
+		},
+		{
+			name:    "writer keys changed",
+			current: "---\ntitle: A\n---\n",
+			next:    "---\ntitle: B\ndescription: D\ntags: [x]\naliases: [y]\nstatus: draft\nrelated: [b.md]\n---\n",
+		},
+		{
+			name:    "key names are case sensitive",
+			current: "---\ntitle: A\n---\n",
+			next:    "---\ntitle: A\nTitle: B\n---\n",
+			wantErr: `"Title" can't be added`,
+		},
+		{
+			name:    "created added where speki didn't set it",
+			current: "---\ntitle: A\n---\n",
+			next:    "---\ntitle: A\ncreated: 2020-01-01\n---\n",
+			wantErr: `"created" can't be added`,
+		},
+		{
+			name:    "created changed or dropped is restored",
+			current: "---\ntitle: A\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n",
+			next:    "---\ntitle: A\ncreated: 2020-01-01\n---\n",
+		},
+		{
+			name:    "fixing broken frontmatter can't add keys",
+			current: "---\ntitle: [a\nowner: me\n---\nText\n",
+			next:    "---\ntitle: a\nowner: me\n---\nText\n",
+			wantErr: `"owner" can't be added`,
+		},
 		{name: "too many tags", next: "---\ntitle: A\ntags: [" + list("t", document.MaxTags+1) + "]\n---\n", wantErr: "tags: more than 20"},
 		{name: "too many aliases", next: "---\ntitle: A\naliases: [" + list("a", document.MaxAliases+1) + "]\n---\n", wantErr: "aliases: more than 10"},
 		{
@@ -87,7 +148,7 @@ func TestCheck(t *testing.T) {
 			}
 			next := mustParse(t, "a.md", []byte(testCase.next))
 
-			err := document.Check(current, next)
+			err := document.Check(current, next, testCase.allowed)
 
 			if testCase.wantErr == "" {
 				if err != nil {

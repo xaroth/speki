@@ -69,7 +69,8 @@ It starts with a YAML frontmatter block:
 - `related`: paths of other documents in the same vault worth reading alongside it.
 - `created` and `updated`: set by speki.
 
-Other keys are kept as they are. Links between documents are relative markdown links, like
+Other keys are kept as they are: you can't add, change or remove them, unless the vault lists them
+under its frontmatter keys. Links between documents are relative markdown links, like
 `[fleet roles](../ops/fleet-roles.md)`.
 
 ## Versions

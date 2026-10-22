@@ -42,6 +42,12 @@ func TestParseConfig(t *testing.T) {
 				Writers:     []vault.Principal{{Org: "ours", Team: "leads"}},
 			},
 		},
+		{
+			name: "frontmatter",
+			raw:  "title: T\ndescription: D\nfrontmatter:\n  allow: [owner, review_by]\n",
+			want: vault.Config{Title: "T", Description: "D", Frontmatter: vault.Frontmatter{Allow: []string{"owner", "review_by"}}},
+		},
+		{name: "frontmatter set by speki", raw: "title: T\ndescription: D\nfrontmatter:\n  allow: [updated, \"\"]\n", wantErr: []string{"updated is set by speki", "empty key"}},
 		{name: "unknown read role", raw: "title: T\ndescription: D\nread_role: owner\n", wantErr: []string{`unknown role "owner"`}},
 		{name: "empty readers", raw: "title: T\ndescription: D\nreaders: []\n", wantErr: []string{"readers is empty"}},
 		{name: "team elsewhere", raw: "title: T\ndescription: D\nwriters: [theirs/leads]\n", wantErr: []string{"team theirs/leads isn't in Ours"}},

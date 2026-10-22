@@ -16,13 +16,14 @@ import (
 
 // VaultSummary describes a vault the user can read.
 type VaultSummary struct {
-	Vault       string `json:"vault" jsonschema:"the vault's name, owner/repo"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	Guidelines  string `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
-	CanWrite    bool   `json:"can_write"`
-	Documents   int    `json:"documents"`
-	State       string `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly), failed (it couldn't be opened; tell the user) or gone (just removed or reopening; try again shortly)"`
+	Vault       string   `json:"vault" jsonschema:"the vault's name, owner/repo"`
+	Title       string   `json:"title,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Guidelines  string   `json:"guidelines,omitempty" jsonschema:"how the vault's owners want documents written and organised"`
+	Frontmatter []string `json:"frontmatter,omitempty" jsonschema:"frontmatter keys you may set on top of title, description, tags, aliases, status and related"`
+	CanWrite    bool     `json:"can_write"`
+	Documents   int      `json:"documents"`
+	State       string   `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly), failed (it couldn't be opened; tell the user) or gone (just removed or reopening; try again shortly)"`
 }
 
 func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummary {
@@ -38,6 +39,7 @@ func vaultSummaries(vaults []knowledge.VaultInfo, guidelines bool) []VaultSummar
 		}
 		if guidelines && v.State == "" { // an unserved vault's config may be stale, and it can't be written yet
 			s.Guidelines = v.Guidelines
+			s.Frontmatter = v.Frontmatter
 		}
 		out = append(out, s)
 	}
@@ -131,6 +133,9 @@ func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (Guid
 	for _, v := range out.Vaults {
 		fmt.Fprintf(&b, "\n### %s\n\n", oneLine(v.Vault))
 		writeVaultDetails(&b, v)
+		if len(v.Frontmatter) > 0 {
+			fmt.Fprintf(&b, "Frontmatter keys you may also set: %s\n", oneLine(strings.Join(v.Frontmatter, ", ")))
+		}
 		if v.Guidelines != "" {
 			b.WriteString(fence("guidelines", v.Guidelines))
 		}

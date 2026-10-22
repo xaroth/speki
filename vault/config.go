@@ -11,6 +11,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/xaroth/speki/document"
 	"github.com/xaroth/speki/gh"
 )
 
@@ -22,6 +23,8 @@ const (
 	maxTitle       = 100
 	maxDescription = 300
 	maxGuidelines  = 2000
+	maxAllow       = 50
+	maxAllowKey    = 100
 )
 
 // Config is a vault's speki.yaml.
@@ -32,8 +35,15 @@ type Config struct {
 	ReadRole    gh.Role `yaml:"read_role"` // the lowest repository role that sees the vault; unset means read
 	// Readers and Writers narrow who may read and write the vault, on top of GitHub's permissions. Nil
 	// means no narrowing.
-	Readers []Principal `yaml:"readers"`
-	Writers []Principal `yaml:"writers"`
+	Readers     []Principal `yaml:"readers"`
+	Writers     []Principal `yaml:"writers"`
+	Frontmatter Frontmatter `yaml:"frontmatter"`
+}
+
+// Frontmatter says which frontmatter keys agents may set, on top of speki's writer fields. Other keys
+// keep the value they have.
+type Frontmatter struct {
+	Allow []string `yaml:"allow"`
 }
 
 // Principal is a GitHub user or team in readers or writers. Written as "login" or "org/team-slug", with
@@ -98,12 +108,31 @@ func ParseConfig(raw []byte, owner string) (Config, error) {
 		checkLength("guidelines", c.Guidelines, maxGuidelines),
 		checkPrincipals("readers", c.Readers, owner),
 		checkPrincipals("writers", c.Writers, owner),
+		checkAllow(c.Frontmatter.Allow),
 	)
 	err = errors.Join(errs...)
 	if err != nil {
 		return Config{}, fmt.Errorf("%s: %w", ConfigFile, err)
 	}
 	return c, nil
+}
+
+func checkAllow(keys []string) error {
+	if len(keys) > maxAllow {
+		return fmt.Errorf("frontmatter.allow has %d keys, at most %d allowed", len(keys), maxAllow)
+	}
+	var errs []error
+	for _, k := range keys {
+		switch {
+		case strings.TrimSpace(k) == "":
+			errs = append(errs, errors.New("frontmatter.allow holds an empty key"))
+		case document.SetBySpeki(k):
+			errs = append(errs, fmt.Errorf("frontmatter.allow: %s is set by speki", k))
+		case utf8.RuneCountInString(k) > maxAllowKey:
+			errs = append(errs, fmt.Errorf("frontmatter.allow: a key is longer than %d characters", maxAllowKey))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func checkLength(field, s string, limit int) error {
