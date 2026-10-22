@@ -135,7 +135,8 @@ callback carries `code` and `state` there, and names spans from a fixed set of r
 The SQLite driver needs cgo, so builds need a C compiler.
 
 - `Taskfile.yml` with `build`, `test`, `lint`, `vet`, `vuln`, `fuzz`, `run` and `ci` tasks. Build tags
-  `sqlite_fts5,sqlite_omit_load_extension`.
+  `sqlite_fts5,sqlite_omit_load_extension`. `cmd/speki` doesn't compile without
+  `sqlite_omit_load_extension`, so the binary never links SQLite's extension loading.
 - CI (`.github/workflows/ci.yml`, on pull requests and pushes to `main`, skipping docs-only changes):
   the latest Go 1.27 with cgo, `golangci-lint` (govet and staticcheck included) and `go test -race`, the
   same as a local `task ci`. `go test` runs the `FuzzParseTouch` seed corpus. `docker build` runs on
