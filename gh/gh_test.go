@@ -8,22 +8,23 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 )
 
 var kb = gh.Repository{ID: 100, FullName: "ours/kb", DefaultBranch: "main", PushedAt: time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)}
 
 // withKB is installation 1 with the repository ours/kb on branch main.
-func withKB() gh.FakeOption {
-	return func(tb testing.TB, f *gh.Fake) {
+func withKB() ghtest.Option {
+	return func(tb testing.TB, f *ghtest.Fake) {
 		tb.Helper()
-		gh.ExpectInstallation(gh.Installation{ID: 1, AccountID: 42}, kb)(tb, f)
-		gh.ExpectBranch(kb.FullName, "main", "abc123")(tb, f)
+		ghtest.ExpectInstallation(gh.Installation{ID: 1, AccountID: 42}, kb)(tb, f)
+		ghtest.ExpectBranch(kb.FullName, "main", "abc123")(tb, f)
 	}
 }
 
 func TestCheckPrivateKey(t *testing.T) {
 	t.Parallel()
-	fake := gh.NewFake(t)
+	fake := ghtest.New(t)
 	testCases := []struct {
 		name    string
 		key     []byte
@@ -47,7 +48,7 @@ func TestCheckPrivateKey(t *testing.T) {
 
 func TestAppOwner(t *testing.T) {
 	t.Parallel()
-	fake := gh.NewFake(t, gh.ExpectAppOwner(42))
+	fake := ghtest.New(t, ghtest.ExpectAppOwner(42))
 	got, err := fake.AppOwner(t.Context())
 	if err != nil {
 		t.Fatalf("AppOwner: %v", err)
@@ -63,7 +64,7 @@ func TestInstallations(t *testing.T) {
 		{ID: 1, AccountID: 42},
 		{ID: 2, AccountID: 7, Suspended: true},
 	}
-	fake := gh.NewFake(t, gh.ExpectPageSize(1), gh.ExpectInstallation(want[0]), gh.ExpectInstallation(want[1]))
+	fake := ghtest.New(t, ghtest.ExpectPageSize(1), ghtest.ExpectInstallation(want[0]), ghtest.ExpectInstallation(want[1]))
 	got, err := fake.Installations(t.Context())
 	if err != nil {
 		t.Fatalf("Installations: %v", err)
@@ -90,9 +91,9 @@ func TestRepositories(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, gh.ExpectPageSize(1),
-				gh.ExpectInstallation(gh.Installation{ID: 1}, kb, other),
-				gh.ExpectInstallation(gh.Installation{ID: 8}), gh.ExpectInstallation_Refused(8))
+			fake := ghtest.New(t, ghtest.ExpectPageSize(1),
+				ghtest.ExpectInstallation(gh.Installation{ID: 1}, kb, other),
+				ghtest.ExpectInstallation(gh.Installation{ID: 8}), ghtest.ExpectInstallation_Refused(8))
 			got, err := fake.Repositories(t.Context(), testCase.installation)
 			if (err != nil) != testCase.wantErr || errors.Is(err, gh.ErrNotFound) != testCase.wantNotFound {
 				t.Fatalf("got %v, want error %t, ErrNotFound %t", err, testCase.wantErr, testCase.wantNotFound)
@@ -123,11 +124,11 @@ func TestFile(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB(),
-				gh.ExpectFile(kb.FullName, "speki.yaml", []byte("title: KB\n")),
-				gh.ExpectFile(kb.FullName, "docs/a.md", []byte("a")),
-				gh.ExpectFile(kb.FullName, "big.md", make([]byte, 64<<10+1)),
-				gh.ExpectFile(kb.FullName, "huge.md", make([]byte, 1<<20+1)))
+			fake := ghtest.New(t, withKB(),
+				ghtest.ExpectFile(kb.FullName, "speki.yaml", []byte("title: KB\n")),
+				ghtest.ExpectFile(kb.FullName, "docs/a.md", []byte("a")),
+				ghtest.ExpectFile(kb.FullName, "big.md", make([]byte, 64<<10+1)),
+				ghtest.ExpectFile(kb.FullName, "huge.md", make([]byte, 1<<20+1)))
 			got, err := fake.File(t.Context(), 1, testCase.repo, "main", testCase.path)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)
@@ -140,7 +141,7 @@ func TestFile(t *testing.T) {
 
 	t.Run("rejects a repository name without an owner", func(t *testing.T) {
 		t.Parallel()
-		fake := gh.NewFake(t, withKB())
+		fake := ghtest.New(t, withKB())
 		if _, err := fake.File(t.Context(), 1, "kb", "main", "speki.yaml"); err == nil {
 			t.Error("got no error, want one")
 		}
@@ -153,7 +154,7 @@ func TestFile(t *testing.T) {
 // An installation's token is fetched once and used for its calls until it expires.
 func TestInstallationTokenIsReused(t *testing.T) {
 	t.Parallel()
-	fake := gh.NewFake(t, withKB(), gh.ExpectFile(kb.FullName, "speki.yaml", []byte("x")))
+	fake := ghtest.New(t, withKB(), ghtest.ExpectFile(kb.FullName, "speki.yaml", []byte("x")))
 	if _, err := fake.Repositories(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +188,7 @@ func TestInstallationTokens(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB())
+			fake := ghtest.New(t, withKB())
 			got, err := fake.InstallationTokens(testCase.installation).Token(t.Context())
 			if errors.Is(err, gh.ErrNotFound) != testCase.wantNotFound || err != nil && !testCase.wantNotFound {
 				t.Fatalf("got %v, want ErrNotFound %t", err, testCase.wantNotFound)
@@ -218,7 +219,7 @@ func TestBranchHead(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB(), gh.ExpectBranch(kb.FullName, "feature/x y", "def456"))
+			fake := ghtest.New(t, withKB(), ghtest.ExpectBranch(kb.FullName, "feature/x y", "def456"))
 			got, err := fake.BranchHead(t.Context(), 1, testCase.repo, testCase.branch, testCase.etag)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)
@@ -244,7 +245,7 @@ func TestRepositoryID(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB())
+			fake := ghtest.New(t, withKB())
 			got, err := fake.RepositoryID(t.Context(), 1, testCase.repo)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)

@@ -19,7 +19,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 	"github.com/xaroth/speki/library"
 	"github.com/xaroth/speki/service"
 	"github.com/xaroth/speki/vault"
@@ -199,8 +199,8 @@ func TestRoutes(t *testing.T) {
 }
 
 // holdRoute makes GitHub hold requests to route until release is closed or the request ends.
-func holdRoute(route string, release <-chan struct{}) gh.FakeOption {
-	return gh.ExpectRoute(route, func(next http.Handler) http.Handler {
+func holdRoute(route string, release <-chan struct{}) ghtest.Option {
+	return ghtest.ExpectRoute(route, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-release:
@@ -344,7 +344,7 @@ func TestRestartWithoutGitHub(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	g.Apply(gh.ExpectInstallation_Refused(1))
+	g.Apply(ghtest.ExpectInstallation_Refused(1))
 	s := startService(t, cfg)
 	page := getStatus(t, s)
 	if len(page.Vaults) != 1 || page.Vaults[0].State != library.StateServing {
@@ -425,7 +425,7 @@ func TestStopDuringASlowCommit(t *testing.T) {
 			t.Parallel()
 			committing, hold := make(chan struct{}), make(chan struct{})
 			var once sync.Once
-			wait := gh.ExpectRoute("POST /graphql", func(next http.Handler) http.Handler {
+			wait := ghtest.ExpectRoute("POST /graphql", func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					once.Do(func() { close(committing) })
 					<-hold

@@ -1,4 +1,6 @@
-package gh
+// Package ghtest is a fake GitHub for tests of code that uses gh. It lives apart from gh so the
+// production binary doesn't link testing and httptest.
+package ghtest
 
 import (
 	"crypto/rand"
@@ -16,17 +18,19 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xaroth/speki/gh"
 )
 
-// Fake is a Client talking to a fake GitHub on httptest: the REST endpoints, GraphQL commits and the
+// Fake is a gh.Client talking to a fake GitHub on httptest: the REST endpoints, GraphQL commits and the
 // OAuth token endpoint speki uses. Its state is set up with Expect options and can be read back.
 type Fake struct {
-	*Client
+	*gh.Client
 
-	URL        string      // API and OAuth base URL
-	AppID      int64       // the app's ID; any JWT is accepted as the app's
-	PrivateKey []byte      // PEM, for clients built from configuration
-	OAuth      OAuthConfig // the client ID and secret the fake accepts
+	URL        string         // API and OAuth base URL
+	AppID      int64          // the app's ID; any JWT is accepted as the app's
+	PrivateKey []byte         // PEM, for clients built from configuration
+	OAuth      gh.OAuthConfig // the client ID and secret the fake accepts
 
 	tb           testing.TB
 	mu           sync.Mutex
@@ -42,34 +46,34 @@ type Fake struct {
 	issued       int // tokens and SHAs handed out, to keep them unique
 	routes       map[string]func(http.Handler) http.Handler
 	commitErrors []map[string]string
-	commitHooks  map[string]func(FakeCommit) string // by repository full name
+	commitHooks  map[string]func(Commit) string // by repository full name
 	requests     []string
 }
 
 type fakeInstallation struct {
-	Installation
+	gh.Installation
 	repos   []string
 	refused bool
 }
 
 type fakeRepo struct {
-	Repository
+	gh.Repository
 	installation int64
 	files        map[string][]byte
 	heads        map[string]string
-	history      []Commit // newest first
+	history      []gh.Commit // newest first
 }
 
 type fakeUser struct {
-	User
-	orgs  map[string]string // org: state
-	roles map[string]Role   // repository full name: role
+	gh.User
+	orgs  map[string]string  // org: state
+	roles map[string]gh.Role // repository full name: role
 }
 
 type fakeCode struct{ verifier, token string }
 
-// FakeOption sets up a Fake.
-type FakeOption func(testing.TB, *Fake)
+// Option sets up a Fake.
+type Option func(testing.TB, *Fake)
 
 const fakeLimit = 5000
 
@@ -82,9 +86,9 @@ var fakeKey = sync.OnceValues(func() ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), nil
 })
 
-// NewFake starts a fake GitHub with opts applied and returns a Client pointed at it. The server stops
+// New starts a fake GitHub with opts applied and returns a gh.Client pointed at it. The server stops
 // when the test ends. A request the fake doesn't know fails the test.
-func NewFake(tb testing.TB, opts ...FakeOption) *Fake {
+func New(tb testing.TB, opts ...Option) *Fake {
 	tb.Helper()
 	key, err := fakeKey()
 	if err != nil {
@@ -102,7 +106,7 @@ func NewFake(tb testing.TB, opts ...FakeOption) *Fake {
 		budgets:     map[string]int{},
 		pageSize:    100,
 		routes:      map[string]func(http.Handler) http.Handler{},
-		commitHooks: map[string]func(FakeCommit) string{},
+		commitHooks: map[string]func(Commit) string{},
 	}
 	for _, opt := range opts {
 		opt(tb, f)
@@ -110,8 +114,8 @@ func NewFake(tb testing.TB, opts ...FakeOption) *Fake {
 	srv := httptest.NewServer(f.handler())
 	tb.Cleanup(srv.Close)
 	f.URL = srv.URL
-	f.OAuth = OAuthConfig{ClientID: "Iv1.fake", ClientSecret: "fake-secret", URL: srv.URL}
-	f.Client, err = New(Config{AppID: f.AppID, PrivateKey: key, APIURL: srv.URL})
+	f.OAuth = gh.OAuthConfig{ClientID: "Iv1.fake", ClientSecret: "fake-secret", URL: srv.URL}
+	f.Client, err = gh.New(gh.Config{AppID: f.AppID, PrivateKey: key, APIURL: srv.URL})
 	if err != nil {
 		tb.Fatalf("fake GitHub client: %v", err)
 	}
@@ -120,7 +124,7 @@ func NewFake(tb testing.TB, opts ...FakeOption) *Fake {
 
 // Apply applies opts to a running fake, for changes in the middle of a test, such as a push someone
 // made on GitHub. The options apply together: no request sees some of them without the others.
-func (f *Fake) Apply(opts ...FakeOption) {
+func (f *Fake) Apply(opts ...Option) {
 	f.tb.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -130,13 +134,13 @@ func (f *Fake) Apply(opts ...FakeOption) {
 }
 
 // ExpectAppOwner sets the ID of the account that owns the app.
-func ExpectAppOwner(id int64) FakeOption {
+func ExpectAppOwner(id int64) Option {
 	return func(_ testing.TB, f *Fake) { f.owner = id }
 }
 
 // ExpectInstallation adds an installation that can see repos. A repository's files and branches are
 // set with ExpectFile and ExpectBranch.
-func ExpectInstallation(in Installation, repos ...Repository) FakeOption {
+func ExpectInstallation(in gh.Installation, repos ...gh.Repository) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		fi := &fakeInstallation{Installation: in}
@@ -156,7 +160,7 @@ func ExpectInstallation(in Installation, repos ...Repository) FakeOption {
 // added is gone: its tokens are a 404.
 //
 //nolint:revive // Expect<Thing>_<Case> is the naming for shared expectations
-func ExpectInstallation_Refused(id int64) FakeOption {
+func ExpectInstallation_Refused(id int64) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		in := f.install(id)
@@ -168,7 +172,7 @@ func ExpectInstallation_Refused(id int64) FakeOption {
 }
 
 // ExpectFile puts a file in a repository added with ExpectInstallation.
-func ExpectFile(repo, path string, content []byte) FakeOption {
+func ExpectFile(repo, path string, content []byte) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		f.repo(tb, repo).files[path] = content
@@ -176,7 +180,7 @@ func ExpectFile(repo, path string, content []byte) FakeOption {
 }
 
 // ExpectBranch points a branch of a repository at sha. Its ETag is the quoted SHA.
-func ExpectBranch(repo, branch, sha string) FakeOption {
+func ExpectBranch(repo, branch, sha string) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		f.repo(tb, repo).heads[branch] = sha
@@ -185,7 +189,7 @@ func ExpectBranch(repo, branch, sha string) FakeOption {
 
 // ExpectCommits sets a repository's history, newest first. An author that's the login of a user added
 // with ExpectUser is linked to the account; others are git author names only.
-func ExpectCommits(repo string, commits ...Commit) FakeOption {
+func ExpectCommits(repo string, commits ...gh.Commit) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		f.repo(tb, repo).history = commits
@@ -193,14 +197,14 @@ func ExpectCommits(repo string, commits ...Commit) FakeOption {
 }
 
 // ExpectUser adds a user with a token. Tokens the fake doesn't know are rejected with a 401.
-func ExpectUser(token string, u User) FakeOption {
+func ExpectUser(token string, u gh.User) Option {
 	return func(_ testing.TB, f *Fake) {
-		f.users[token] = &fakeUser{User: u, orgs: map[string]string{}, roles: map[string]Role{}}
+		f.users[token] = &fakeUser{User: u, orgs: map[string]string{}, roles: map[string]gh.Role{}}
 	}
 }
 
 // ExpectOrgMembership sets the token's user's membership state in org: "active" or "pending".
-func ExpectOrgMembership(token, org, state string) FakeOption {
+func ExpectOrgMembership(token, org, state string) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		f.user(tb, token).orgs[org] = state
@@ -208,13 +212,13 @@ func ExpectOrgMembership(token, org, state string) FakeOption {
 }
 
 // ExpectTeamMembership sets login's membership state in the team org/slug, visible to every user.
-func ExpectTeamMembership(org, slug, login, state string) FakeOption {
+func ExpectTeamMembership(org, slug, login, state string) Option {
 	return func(_ testing.TB, f *Fake) { f.teams[org+"/"+slug+"/"+login] = state }
 }
 
 // ExpectRole gives the token's user a role in a repository. Users see the installations and
-// repositories they have a role in, and commit to those where it's RoleWrite or more.
-func ExpectRole(token, repo string, role Role) FakeOption {
+// repositories they have a role in, and commit to those where it's gh.RoleWrite or more.
+func ExpectRole(token, repo string, role gh.Role) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		f.user(tb, token).roles[repo] = role
@@ -224,33 +228,33 @@ func ExpectRole(token, repo string, role Role) FakeOption {
 // ExpectOAuthCode makes an authorization code, with its PKCE verifier, good for accessToken. The code
 // works any number of times. An empty verifier accepts any, for callers that make their own. Each answer carries a new refresh token, which works once and is good for
 // the same access token.
-func ExpectOAuthCode(code, verifier, accessToken string) FakeOption {
+func ExpectOAuthCode(code, verifier, accessToken string) Option {
 	return func(_ testing.TB, f *Fake) { f.codes[code] = fakeCode{verifier: verifier, token: accessToken} }
 }
 
 // ExpectCommit_Error makes every commit fail with a GraphQL error of type typ, such as "FORBIDDEN".
 //
 //nolint:revive // Expect<Thing>_<Case> is the naming for shared expectations
-func ExpectCommit_Error(typ, message string) FakeOption {
+func ExpectCommit_Error(typ, message string) Option {
 	return func(_ testing.TB, f *Fake) {
 		f.commitErrors = append(f.commitErrors, map[string]string{"type": typ, "message": message})
 	}
 }
 
-// FakeCommit is a commit made through the fake's GraphQL API, as an ExpectCommitHook hook sees it.
-type FakeCommit struct {
+// Commit is a commit made through the fake's GraphQL API, as an ExpectCommitHook hook sees it.
+type Commit struct {
 	Repo    string
 	Branch  string
 	Author  string // the committing user's login
 	Message string
-	Changes []FileChange // deletions first; nil Content deletes the path
+	Changes []gh.FileChange // deletions first; nil Content deletes the path
 }
 
 // ExpectCommitHook calls hook for every commit made to repo, before it lands, and moves the branch to
 // the SHA hook returns rather than a made-up one. It lets the branch follow a real repository that
 // clients fetch from: hook commits the changes there and returns that commit's SHA. It runs with the
 // fake locked, so hooks never run at once.
-func ExpectCommitHook(repo string, hook func(FakeCommit) string) FakeOption {
+func ExpectCommitHook(repo string, hook func(Commit) string) Option {
 	return func(tb testing.TB, f *Fake) {
 		tb.Helper()
 		f.repo(tb, repo)
@@ -259,19 +263,19 @@ func ExpectCommitHook(repo string, hook func(FakeCommit) string) FakeOption {
 }
 
 // ExpectPageSize caps how many items a list returns per page, so tests can page with few items.
-func ExpectPageSize(n int) FakeOption {
+func ExpectPageSize(n int) Option {
 	return func(_ testing.TB, f *Fake) { f.pageSize = n }
 }
 
 // ExpectRateLimit sets the rate limit budget left for an installation, or for the app when
 // installationID is 0. Budgets start at 5000 and each request uses one.
-func ExpectRateLimit(installationID int64, remaining int) FakeOption {
+func ExpectRateLimit(installationID int64, remaining int) Option {
 	return func(_ testing.TB, f *Fake) { f.budgets[budgetKey(installationID)] = remaining }
 }
 
 // ExpectRoute wraps the fake's handler for one route, "METHOD /path" with the path as sent, for
 // answers the fake doesn't model or to hold a request: call next to get the fake's own answer.
-func ExpectRoute(route string, wrap func(next http.Handler) http.Handler) FakeOption {
+func ExpectRoute(route string, wrap func(next http.Handler) http.Handler) Option {
 	return func(_ testing.TB, f *Fake) { f.routes[route] = wrap }
 }
 
@@ -372,7 +376,7 @@ func (c credential) visible(f *Fake, name string) *fakeRepo {
 	switch {
 	case !ok:
 		return nil
-	case c.installation != 0 && r.installation == c.installation, c.user != nil && c.user.roles[name] > RoleNone:
+	case c.installation != 0 && r.installation == c.installation, c.user != nil && c.user.roles[name] > gh.RoleNone:
 		return r
 	}
 	return nil
@@ -652,7 +656,7 @@ func (f *Fake) serveTeamMembership(w *fakeWriter, r *http.Request, _ credential)
 func (f *Fake) userRepos(in *fakeInstallation, u *fakeUser) []string {
 	var out []string
 	for _, name := range in.repos {
-		if u.roles[name] > RoleNone {
+		if u.roles[name] > gh.RoleNone {
 			out = append(out, name)
 		}
 	}
@@ -684,8 +688,8 @@ func (f *Fake) serveUserRepos(w *fakeWriter, r *http.Request, c credential) {
 		item := repoJSON(f.repos[name])
 		// GitHub sets every permission the role includes.
 		item["permissions"] = map[string]any{
-			"pull": role >= RoleRead, "triage": role >= RoleTriage, "push": role >= RoleWrite,
-			"maintain": role >= RoleMaintain, "admin": role >= RoleAdmin,
+			"pull": role >= gh.RoleRead, "triage": role >= gh.RoleTriage, "push": role >= gh.RoleWrite,
+			"maintain": role >= gh.RoleMaintain, "admin": role >= gh.RoleAdmin,
 		}
 		items = append(items, item)
 	}
@@ -733,10 +737,10 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 	in := req.Variables.Input
 	repo := c.visible(f, in.Branch.Repo)
 	if repo == nil {
-		fail("NOT_FOUND", fmt.Sprintf("Could not resolve to a Repository with the name '%s'.", in.Branch.Repo))
+		fail("NOT_FOUND", fmt.Sprintf("Could not resolve to a gh.Repository with the name '%s'.", in.Branch.Repo))
 		return
 	}
-	if c.user.roles[in.Branch.Repo] < RoleWrite {
+	if c.user.roles[in.Branch.Repo] < gh.RoleWrite {
 		fail("FORBIDDEN", "Resource not accessible by integration")
 		return
 	}
@@ -750,9 +754,9 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 		return
 	}
 	changes := map[string][]byte{}
-	var ordered []FileChange
+	var ordered []gh.FileChange
 	for _, d := range in.FileChanges.Deletions {
-		ordered = append(ordered, FileChange{Path: d.Path})
+		ordered = append(ordered, gh.FileChange{Path: d.Path})
 	}
 	for _, a := range in.FileChanges.Additions {
 		if a.Contents == nil {
@@ -765,7 +769,7 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 			return
 		}
 		changes[a.Path] = content
-		ordered = append(ordered, FileChange{Path: a.Path, Content: content})
+		ordered = append(ordered, gh.FileChange{Path: a.Path, Content: content})
 	}
 	msg := in.Message.Headline
 	if in.Message.Body != "" {
@@ -773,7 +777,7 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 	}
 	var sha string
 	if hook := f.commitHooks[in.Branch.Repo]; hook != nil {
-		sha = hook(FakeCommit{Repo: in.Branch.Repo, Branch: in.Branch.Branch, Author: c.user.Login, Message: msg, Changes: ordered})
+		sha = hook(Commit{Repo: in.Branch.Repo, Branch: in.Branch.Branch, Author: c.user.Login, Message: msg, Changes: ordered})
 	} else {
 		f.issued++
 		sha = fmt.Sprintf("%040x", f.issued)
@@ -785,7 +789,7 @@ func (f *Fake) serveGraphQL(w *fakeWriter, r *http.Request, c credential) {
 		repo.files[path] = content
 	}
 	repo.heads[in.Branch.Branch] = sha
-	repo.history = append([]Commit{{SHA: sha, Author: c.user.Login, Date: time.Now().UTC().Truncate(time.Second), Message: msg}}, repo.history...)
+	repo.history = append([]gh.Commit{{SHA: sha, Author: c.user.Login, Date: time.Now().UTC().Truncate(time.Second), Message: msg}}, repo.history...)
 	w.json(http.StatusOK, map[string]any{"data": map[string]any{"createCommitOnBranch": map[string]any{"commit": map[string]any{"oid": sha}}}})
 }
 

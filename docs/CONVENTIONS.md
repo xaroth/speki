@@ -82,9 +82,12 @@ Tests need `-tags 'sqlite_fts5,sqlite_omit_load_extension'`, the same tags as th
 
 ### Fakes, mocks, helpers
 
-- Fakes go in `<name>_fake.go` next to the real code. An exported `NewFake(tb testing.TB, opts...)`
-  returns a started, ready instance, registers teardown with `tb.Cleanup`, and fails setup with
-  `tb.Fatal`.
+- Fakes go in a sibling `<pkg>test` package (`gh/ghtest`), never in a non-test file of the real
+  package: anything that imports `testing` or `net/http/httptest` there is linked into the binary.
+  An exported `New(tb testing.TB, opts...)` returns a started, ready instance, registers teardown
+  with `tb.Cleanup`, and fails setup with `tb.Fatal`.
+- Tests of the real package that use its fake go in the `_test` package; an internal test can't
+  import the fake, since the fake imports the package.
 - A fake embeds the real type and swaps only the edges (I/O, remote calls). It doesn't reimplement the
   logic.
 - Mocks are generated with `mockgen` into a `mock/` subpackage. The `//go:generate` line goes in the

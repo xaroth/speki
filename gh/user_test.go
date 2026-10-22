@@ -7,6 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 )
 
 func TestMe(t *testing.T) {
@@ -23,7 +24,7 @@ func TestMe(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB(), withUsers())
+			fake := ghtest.New(t, withKB(), withUsers())
 			got, err := fake.Me(t.Context(), testCase.token)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)
@@ -52,9 +53,9 @@ func TestActiveMember(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB(), withUsers(),
-				gh.ExpectOrgMembership(writer, "ours", "active"),
-				gh.ExpectOrgMembership(writer, "invited", "pending"))
+			fake := ghtest.New(t, withKB(), withUsers(),
+				ghtest.ExpectOrgMembership(writer, "ours", "active"),
+				ghtest.ExpectOrgMembership(writer, "invited", "pending"))
 			got, err := fake.ActiveMember(t.Context(), testCase.token, testCase.org)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)
@@ -83,9 +84,9 @@ func TestTeamMember(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, withKB(), withUsers(),
-				gh.ExpectTeamMembership("ours", "editors", "octocat", "active"),
-				gh.ExpectTeamMembership("ours", "invited", "octocat", "pending"))
+			fake := ghtest.New(t, withKB(), withUsers(),
+				ghtest.ExpectTeamMembership("ours", "editors", "octocat", "active"),
+				ghtest.ExpectTeamMembership("ours", "invited", "octocat", "pending"))
 			got, err := fake.TeamMember(t.Context(), testCase.token, "ours", testCase.team, "octocat")
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)
@@ -122,16 +123,16 @@ func TestUserRepositories(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			fake := gh.NewFake(t, gh.ExpectPageSize(2),
-				gh.ExpectInstallation(gh.Installation{ID: 1}, append([]gh.Repository{kb}, repos...)...),
-				gh.ExpectInstallation(gh.Installation{ID: 2}, gh.Repository{ID: 200, FullName: "theirs/kb"}),
-				gh.ExpectInstallation(gh.Installation{ID: 3}, gh.Repository{ID: 300, FullName: "theirs/hidden"}),
-				gh.ExpectUser(writer, gh.User{ID: 7, Login: "octocat"}),
-				gh.ExpectRole(writer, kb.FullName, gh.RoleWrite),
-				gh.ExpectRole(writer, "ours/a", gh.RoleRead),
-				gh.ExpectRole(writer, "ours/b", gh.RoleTriage),
-				gh.ExpectRole(writer, "ours/c", gh.RoleMaintain),
-				gh.ExpectRole(writer, "theirs/kb", gh.RoleAdmin))
+			fake := ghtest.New(t, ghtest.ExpectPageSize(2),
+				ghtest.ExpectInstallation(gh.Installation{ID: 1}, append([]gh.Repository{kb}, repos...)...),
+				ghtest.ExpectInstallation(gh.Installation{ID: 2}, gh.Repository{ID: 200, FullName: "theirs/kb"}),
+				ghtest.ExpectInstallation(gh.Installation{ID: 3}, gh.Repository{ID: 300, FullName: "theirs/hidden"}),
+				ghtest.ExpectUser(writer, gh.User{ID: 7, Login: "octocat"}),
+				ghtest.ExpectRole(writer, kb.FullName, gh.RoleWrite),
+				ghtest.ExpectRole(writer, "ours/a", gh.RoleRead),
+				ghtest.ExpectRole(writer, "ours/b", gh.RoleTriage),
+				ghtest.ExpectRole(writer, "ours/c", gh.RoleMaintain),
+				ghtest.ExpectRole(writer, "theirs/kb", gh.RoleAdmin))
 			got, err := fake.UserRepositories(t.Context(), testCase.token)
 			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("got %v, want %v", err, testCase.wantErr)

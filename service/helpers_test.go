@@ -23,6 +23,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 	"github.com/xaroth/speki/service"
 )
 
@@ -36,7 +37,7 @@ const (
 // gitHub is a fake GitHub whose repositories are also real git repositories under gitURL, which speki
 // clones and fetches. Commits through the API land in both.
 type gitHub struct {
-	*gh.Fake
+	*ghtest.Fake
 	gitURL string
 
 	tb    testing.TB
@@ -46,7 +47,7 @@ type gitHub struct {
 
 // newGitHub serves ours/kb with kbFiles to octocat, who may write to it, and ours/secret with
 // hiddenFiles, which octocat can't see, unless hiddenFiles is nil. The app is owned by account 42.
-func newGitHub(tb testing.TB, kbFiles, hiddenFiles map[string]string, opts ...gh.FakeOption) *gitHub {
+func newGitHub(tb testing.TB, kbFiles, hiddenFiles map[string]string, opts ...ghtest.Option) *gitHub {
 	tb.Helper()
 	g := &gitHub{gitURL: tb.TempDir(), tb: tb, repos: map[string]*git.Repository{}}
 	pushed := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
@@ -56,27 +57,27 @@ func newGitHub(tb testing.TB, kbFiles, hiddenFiles map[string]string, opts ...gh
 		repos = append(repos, gh.Repository{ID: 101, FullName: hiddenRepo, DefaultBranch: branch, PushedAt: pushed})
 		contents[hiddenRepo] = hiddenFiles
 	}
-	setup := []gh.FakeOption{
-		gh.ExpectAppOwner(42),
-		gh.ExpectInstallation(gh.Installation{ID: 1, AccountID: 42}, repos...),
-		gh.ExpectUser(userToken, gh.User{ID: 7, Login: "octocat"}),
-		gh.ExpectRole(userToken, kbRepo, gh.RoleWrite),
-		gh.ExpectOAuthCode("github-code", "", userToken), // speki makes its own PKCE verifier
-		gh.ExpectCommits(kbRepo, gh.Commit{SHA: "c1", Author: "octocat", Date: pushed,
+	setup := []ghtest.Option{
+		ghtest.ExpectAppOwner(42),
+		ghtest.ExpectInstallation(gh.Installation{ID: 1, AccountID: 42}, repos...),
+		ghtest.ExpectUser(userToken, gh.User{ID: 7, Login: "octocat"}),
+		ghtest.ExpectRole(userToken, kbRepo, gh.RoleWrite),
+		ghtest.ExpectOAuthCode("github-code", "", userToken), // speki makes its own PKCE verifier
+		ghtest.ExpectCommits(kbRepo, gh.Commit{SHA: "c1", Author: "octocat", Date: pushed,
 			Message: "Add fleet notes\n\nSpeki-Client: Claude Code\n"}),
-		gh.ExpectCommitHook(kbRepo, g.commit),
+		ghtest.ExpectCommitHook(kbRepo, g.commit),
 	}
 	for name, files := range contents {
 		g.repos[name] = g.init(name)
 		changes := make([]gh.FileChange, 0, len(files))
 		for path, content := range files {
 			changes = append(changes, gh.FileChange{Path: path, Content: []byte(content)})
-			setup = append(setup, gh.ExpectFile(name, path, []byte(content)))
+			setup = append(setup, ghtest.ExpectFile(name, path, []byte(content)))
 		}
-		sha := g.commit(gh.FakeCommit{Repo: name, Author: "octocat", Message: "push", Changes: changes})
-		setup = append(setup, gh.ExpectBranch(name, branch, sha))
+		sha := g.commit(ghtest.Commit{Repo: name, Author: "octocat", Message: "push", Changes: changes})
+		setup = append(setup, ghtest.ExpectBranch(name, branch, sha))
 	}
-	g.Fake = gh.NewFake(tb, append(setup, opts...)...)
+	g.Fake = ghtest.New(tb, append(setup, opts...)...)
 	return g
 }
 
@@ -92,7 +93,7 @@ func (g *gitHub) init(repo string) *git.Repository {
 }
 
 // commit makes c in the git repository, and returns its SHA.
-func (g *gitHub) commit(c gh.FakeCommit) string {
+func (g *gitHub) commit(c ghtest.Commit) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	wt, err := g.repos[c.Repo].Worktree()
@@ -152,7 +153,7 @@ func validConfig(tb testing.TB) service.Config {
 		PublicURL: "https://speki.example.com",
 		GitHub: service.GitHub{
 			AppID:        1,
-			PrivateKey:   string(gh.NewFake(tb).PrivateKey), // made once per process: RSA keys are slow
+			PrivateKey:   string(ghtest.New(tb).PrivateKey), // made once per process: RSA keys are slow
 			ClientID:     "Iv1",
 			ClientSecret: "s",
 		},

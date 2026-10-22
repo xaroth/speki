@@ -1,4 +1,4 @@
-package gh_test
+package ghtest_test
 
 import (
 	"testing"
@@ -6,12 +6,28 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 )
+
+const writer = "ghu_writer"
+
+var kb = gh.Repository{ID: 100, FullName: "ours/kb", DefaultBranch: "main"}
+
+// withKB is installation 1 with the repository ours/kb on branch main, and octocat who may write to it.
+func withKB() ghtest.Option {
+	return func(tb testing.TB, f *ghtest.Fake) {
+		tb.Helper()
+		ghtest.ExpectInstallation(gh.Installation{ID: 1, AccountID: 42}, kb)(tb, f)
+		ghtest.ExpectBranch(kb.FullName, "main", "abc123")(tb, f)
+		ghtest.ExpectUser(writer, gh.User{ID: 7, Login: "octocat"})(tb, f)
+		ghtest.ExpectRole(writer, kb.FullName, gh.RoleWrite)(tb, f)
+	}
+}
 
 func TestFakeApply(t *testing.T) {
 	t.Parallel()
-	fake := gh.NewFake(t, withKB())
-	fake.Apply(gh.ExpectBranch(kb.FullName, "main", "def456"))
+	fake := ghtest.New(t, withKB())
+	fake.Apply(ghtest.ExpectBranch(kb.FullName, "main", "def456"))
 	got, err := fake.BranchHead(t.Context(), 1, kb.FullName, "main", `"abc123"`)
 	if err != nil {
 		t.Fatal(err)
@@ -23,8 +39,8 @@ func TestFakeApply(t *testing.T) {
 
 func TestFakeCommitHook(t *testing.T) {
 	t.Parallel()
-	var got []gh.FakeCommit
-	fake := gh.NewFake(t, withKB(), withUsers(), gh.ExpectCommitHook(kb.FullName, func(c gh.FakeCommit) string {
+	var got []ghtest.Commit
+	fake := ghtest.New(t, withKB(), ghtest.ExpectCommitHook(kb.FullName, func(c ghtest.Commit) string {
 		got = append(got, c)
 		return "from-the-hook"
 	}))
@@ -38,7 +54,7 @@ func TestFakeCommitHook(t *testing.T) {
 	if sha != "from-the-hook" || fake.BranchSHA(kb.FullName, "main") != "from-the-hook" {
 		t.Errorf("got SHA %q and head %q, want the hook's", sha, fake.BranchSHA(kb.FullName, "main"))
 	}
-	want := []gh.FakeCommit{{
+	want := []ghtest.Commit{{
 		Repo: kb.FullName, Branch: "main", Author: "octocat", Message: "Update a.md\n\nbody",
 		Changes: []gh.FileChange{{Path: "old.md"}, {Path: "a.md", Content: []byte("new")}},
 	}}
