@@ -9,6 +9,7 @@ import (
 
 	"github.com/xaroth/speki/auth/access"
 	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/vault"
 )
 
 // listLimit is the most entries one List call returns.
@@ -77,6 +78,52 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 	}
 	slices.SortFunc(out, func(a, b VaultInfo) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
+}
+
+// Covering is the vaults that cover a repository.
+type Covering struct {
+	Repository string // normalised, host/owner/repo
+	Vaults     []VaultInfo
+}
+
+// Covering returns the vaults the user may read whose repositories cover repository, a git remote or
+// host/owner/repo, sorted by name. Vaults speki doesn't serve right now are included, with their state.
+func (b *Base) Covering(ctx context.Context, g *access.Grant, repository string) (Covering, error) {
+	repo, names, err := covering(g, repository)
+	if err != nil {
+		return Covering{}, err
+	}
+	all, err := b.Vaults(ctx, g)
+	if err != nil {
+		return Covering{}, err
+	}
+	out := Covering{Repository: repo.String()}
+	for _, v := range all {
+		if names[v.Name] {
+			out.Vaults = append(out.Vaults, v)
+		}
+	}
+	return out, nil
+}
+
+// covering parses repository and returns the names of the user's vaults, served or not, that cover it.
+func covering(g *access.Grant, repository string) (vault.Repository, map[string]bool, error) {
+	repo, err := vault.ParseRemote(repository)
+	if err != nil {
+		return vault.Repository{}, nil, errorf(CodeInvalid, "repository: %s", err)
+	}
+	names := map[string]bool{}
+	for _, v := range g.Readable() {
+		if v.Config.Repositories.Covers(repo) {
+			names[v.Name] = true
+		}
+	}
+	for _, u := range g.Unavailable() {
+		if u.Vault.Config.Repositories.Covers(repo) {
+			names[u.Vault.Name] = true
+		}
+	}
+	return repo, names, nil
 }
 
 // ListRequest asks for the folders and documents under a folder.

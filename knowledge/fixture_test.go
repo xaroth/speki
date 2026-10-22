@@ -389,7 +389,7 @@ func (s *gatedSandbox) Query(ctx context.Context, sources []index.Source, sql st
 
 var (
 	ours   = vault.Vault{RepoID: 1, Name: "ours/kb", DefaultBranch: "main", Config: vault.Config{Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", Frontmatter: vault.Frontmatter{Allow: []string{"owner"}}, Repositories: vault.Repositories{{Host: "github.com", Owner: "ours", Name: "api-*"}}}}
-	shared = vault.Vault{RepoID: 2, Name: "ours/shared", DefaultBranch: "main"}
+	shared = vault.Vault{RepoID: 2, Name: "ours/shared", DefaultBranch: "main", Config: vault.Config{Repositories: vault.Repositories{{Host: "github.com", Owner: "ours", Name: "zeppelin"}}}}
 	secret = vault.Vault{RepoID: 3, Name: "ours/secret", DefaultBranch: "main"}
 	// building and failed are vaults the user may read that speki doesn't serve.
 	building = vault.Vault{RepoID: 4, Name: "ours/new", DefaultBranch: "main", Config: vault.Config{Title: "New", Repositories: vault.Repositories{{Host: "github.com", Owner: "ours", Name: "zeppelin"}}}}

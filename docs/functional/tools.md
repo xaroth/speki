@@ -95,6 +95,12 @@ Without `vault`: the user's vaults, sorted by name. One speki can't serve right 
 ] }
 ```
 
+With `repository` and no `vault`: only the vaults whose `repositories` cover that repository, in the
+same form. `repository` takes a git remote URL (`git@github.com:acme/api.git`), `host/owner/repo` or
+`owner/repo` on github.com; see [vaults.md](vaults.md#repositories). Vaults speki can't serve right now are
+included with their `state`. No match is an empty list, not an error. Passing both `vault` and
+`repository` is `invalid`.
+
 With `vault`: the folders and documents under `path`.
 
 | Input | Type | Default |
@@ -129,6 +135,7 @@ Full-text search across the user's vaults, best match first.
 |---|---|---|
 | `query` | words, `"exact phrases"`, `-excluded` words | required |
 | `vaults` | list of vault names | all readable |
+| `repository` | only vaults covering this repository: a git remote URL or `host/owner/repo` | |
 | `path` | only documents under this folder | |
 | `tags` | documents must have all of them | |
 | `exclude_deprecated` | bool | false. Deprecated documents are included but ranked lower |
@@ -153,6 +160,11 @@ Search is forgiving. "configuring" finds "configured", "kubrenetes" finds "kuber
 `corrected` lists words speki couldn't find and what it searched for instead. `relaxed` is true when no
 document matched all words and the results match only some of them. `skipped_vaults` lists the readable
 vaults that weren't searched because speki can't serve them, when `vaults` was left out.
+
+With `repository`, only the vaults covering it are searched, narrowed further by `vaults` if given.
+`repository_vaults` lists the vaults that were searched, and `skipped_vaults` only covering ones. When no
+vault covers the repository, nothing is searched and the results are empty: speki doesn't fall back to
+every vault, since those results would look as if they were about the repository.
 
 ## schema
 

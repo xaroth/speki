@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -65,6 +66,11 @@ func (rs *Repositories) UnmarshalYAML(node *yaml.Node) error {
 	}
 	*rs = out
 	return nil
+}
+
+// Covers reports whether any entry covers repo.
+func (rs Repositories) Covers(repo Repository) bool {
+	return slices.ContainsFunc(rs, func(r Repository) bool { return r.Match(repo) })
 }
 
 // Strings returns the entries normalised, as speki shows them.

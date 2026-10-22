@@ -30,15 +30,16 @@ const version = "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1"
 
 // fakeKB answers every call with its fields, or with err when it's set, and keeps the last request.
 type fakeKB struct {
-	vaults  []knowledge.VaultInfo
-	listing knowledge.Listing
-	search  knowledge.SearchResult
-	page    knowledge.Page
-	commits []knowledge.Commit
-	result  knowledge.Result
-	rows    knowledge.QueryResult
-	err     error
-	wait    bool // answer only once the call's context ends, with its error
+	vaults   []knowledge.VaultInfo
+	covering knowledge.Covering
+	listing  knowledge.Listing
+	search   knowledge.SearchResult
+	page     knowledge.Page
+	commits  []knowledge.Commit
+	result   knowledge.Result
+	rows     knowledge.QueryResult
+	err      error
+	wait     bool // answer only once the call's context ends, with its error
 
 	mu  sync.Mutex
 	got any
@@ -63,6 +64,10 @@ func (f *fakeKB) request() any {
 
 func (f *fakeKB) Vaults(ctx context.Context, _ *access.Grant) ([]knowledge.VaultInfo, error) {
 	return f.vaults, f.answer(ctx, nil)
+}
+
+func (f *fakeKB) Covering(ctx context.Context, _ *access.Grant, repository string) (knowledge.Covering, error) {
+	return f.covering, f.answer(ctx, repository)
 }
 
 func (f *fakeKB) List(ctx context.Context, _ *access.Grant, req knowledge.ListRequest) (knowledge.Listing, error) {
@@ -364,6 +369,53 @@ func TestTools(t *testing.T) {
 			},
 		},
 		{
+			name:     "list vaults covering a repository",
+			kb:       &fakeKB{covering: knowledge.Covering{Repository: "github.com/ours/api", Vaults: []knowledge.VaultInfo{ourKB}}},
+			tool:     "list",
+			args:     map[string]any{"repository": "git@github.com:ours/api.git"},
+			wantReq:  "git@github.com:ours/api.git",
+			wantText: "ours/kb\nTitle: KB\nDescription: Our knowledge.\nRepositories: github.com/ours/api, github.com/ours/api-*\nAccess: read and write. Documents: 3\n\n",
+			wantOut: mcpserver.ListOutput{Vaults: []mcpserver.VaultSummary{
+				{Vault: "ours/kb", Title: "KB", Description: "Our\nknowledge.", Repositories: ourKB.Repositories, CanWrite: true, Documents: 3},
+			}},
+		},
+		{
+			name:     "list vaults covering a repository, none",
+			kb:       &fakeKB{covering: knowledge.Covering{Repository: "github.com/ours/other"}},
+			tool:     "list",
+			args:     map[string]any{"repository": "ours/other"},
+			wantReq:  "ours/other",
+			wantText: "None of your vaults covers github.com/ours/other.\n",
+			wantOut:  mcpserver.ListOutput{},
+		},
+		{
+			name:     "search vaults covering a repository",
+			kb:       &fakeKB{search: knowledge.SearchResult{Repository: "github.com/ours/api", Searched: []string{"ours/kb", "ours/ro"}}},
+			tool:     "search",
+			args:     map[string]any{"query": "x", "repository": "ours/api"},
+			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
+			wantText: "Searched the vaults covering github.com/ours/api: ours/kb, ours/ro.\nNo documents found. Try other words, or list a vault to browse it.\n",
+			wantOut:  mcpserver.SearchOutput{Results: []mcpserver.SearchHit{}, Searched: []string{"ours/kb", "ours/ro"}},
+		},
+		{
+			name:     "search a repository no named vault covers",
+			kb:       &fakeKB{search: knowledge.SearchResult{Repository: "github.com/ours/api"}},
+			tool:     "search",
+			args:     map[string]any{"query": "x", "vaults": []string{"ours/ro"}, "repository": "ours/api"},
+			wantReq:  knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/ro"}, Repository: "ours/api"},
+			wantText: "None of the vaults you named covers github.com/ours/api, so nothing was searched. Leave out repository to search them anyway.\n",
+			wantOut:  mcpserver.SearchOutput{Results: []mcpserver.SearchHit{}},
+		},
+		{
+			name:     "search a repository only an unserved vault covers",
+			kb:       &fakeKB{search: knowledge.SearchResult{Repository: "github.com/ours/api", Skipped: []knowledge.Skipped{{Name: "ours/new", State: access.StateBuilding}}}},
+			tool:     "search",
+			args:     map[string]any{"query": "x", "repository": "ours/api"},
+			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
+			wantText: "Not searched, so this result says nothing about them: ours/new (still building its index; try again shortly).\n",
+			wantOut:  mcpserver.SearchOutput{Results: []mcpserver.SearchHit{}, Skipped: []mcpserver.SkippedVault{{Vault: "ours/new", State: "building"}}},
+		},
+		{
 			name:     "search finds nothing",
 			kb:       &fakeKB{},
 			tool:     "search",
@@ -636,6 +688,22 @@ func TestToolErrors(t *testing.T) {
 			wantText:    "unavailable: something went wrong on speki's side or GitHub's. Try again; if it keeps failing, give the operator request ID " + requestID,
 			wantOutcome: "unavailable",
 			wantLogged:  "tool failed",
+		},
+		{
+			name:        "list a vault and a repository",
+			tool:        "list",
+			args:        map[string]any{"vault": "ours/kb", "repository": "ours/api"},
+			kb:          &fakeKB{},
+			wantText:    "invalid: repository filters the list of vaults. Leave out vault",
+			wantOutcome: "invalid",
+		},
+		{
+			name:        "list by repository passes errors on",
+			tool:        "list",
+			args:        map[string]any{"repository": "./api"},
+			kb:          &fakeKB{err: &knowledge.Error{Code: knowledge.CodeInvalid, Message: "repository: a local path"}},
+			wantText:    "invalid: repository: a local path",
+			wantOutcome: "invalid",
 		},
 		{
 			name:        "out of the request's time",
