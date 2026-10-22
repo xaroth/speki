@@ -1,11 +1,12 @@
 name: CI
 
 on:
+  # Only prose is skipped: other markdown is embedded (mcpserver/*.md) or a test fixture.
   pull_request:
-    paths-ignore: ['docs/**', '**.md']
+    paths-ignore: ['docs/**', 'README.md']
   push:
     branches: [main]
-    paths-ignore: ['docs/**', '**.md']
+    paths-ignore: ['docs/**', 'README.md']
 
 permissions:
   contents: read
