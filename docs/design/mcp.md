@@ -180,5 +180,6 @@ message so an operator can find it.
   [architecture.md](architecture.md#the-mcp-stack)). Over the limit is an HTTP 429 with `Retry-After`, not
   a tool error: the request hasn't been read as MCP yet, and checking it any later would let turned-away
   users drive GitHub lookups unthrottled. `rate_limited` as a tool error is GitHub asking speki to slow
-  down during a write.
+  down during a write. Each instance keeps its own limiters, so N instances let a user make N times as
+  many requests.
 - One `query` per user at a time. A second one waits for the first, within its own time limit.

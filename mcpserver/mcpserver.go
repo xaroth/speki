@@ -36,7 +36,8 @@ const bodyTimeout = 30 * time.Second
 // WriteTimeout leaves room past it for a change looking for a commit whose answer was lost.
 const requestTimeout = 50 * time.Second
 
-// Per-user request rate: enough for an agent working quickly, not enough to hog the instance.
+// Per-user request rate: enough for an agent working quickly, not enough to hog the instance. Each
+// instance limits on its own, so N instances let a user make N times ratePerSecond.
 const (
 	ratePerSecond = 10
 	rateBurst     = 30

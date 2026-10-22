@@ -225,6 +225,9 @@ later, or Valkey, because it uses `GETDEL`. An instance that can't reach Redis a
 start. If Redis goes away later, sign-in and refresh fail until it's back, every request checks access
 with GitHub, and changes reach the other instances at their next poll.
 
+The per-user rate limit (10 requests a second, bursts of 30) is kept by each instance, not shared through
+Redis. With N instances behind a load balancer, a user can make up to N times as many requests.
+
 Speki's keys in Redis are small and short-lived (minutes), all prefixed `speki:`. Configure Redis not to
 evict them (`maxmemory-policy noeviction`): every speki key has a time to live, so policies such as
 `volatile-ttl` would evict exactly the used-code markers, and an evicted one could let an authorization
