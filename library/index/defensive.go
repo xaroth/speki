@@ -1,3 +1,6 @@
+// mattn/go-sqlite3 only compiles in FTS5, which the index needs, with this tag.
+//go:build sqlite_fts5
+
 package index
 
 /*
