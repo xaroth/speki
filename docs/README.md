@@ -28,4 +28,4 @@ Research notes record what we looked at and why we chose what we did:
 [search engine](research/search-engine.md), [git access](research/git-access.md),
 [storage format](research/storage-format.md), [security](research/security.md).
 
-[PLAN.md](PLAN.md) is the build plan. [CONVENTIONS.md](CONVENTIONS.md) has the code rules.
+[CONVENTIONS.md](CONVENTIONS.md) has the code rules.
