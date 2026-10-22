@@ -521,92 +521,149 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 
 	synced, moved := false, 0
 	for {
+		st, p, err := b.prepareWithSync(ctx, v, prepare, &synced)
+		if err != nil {
+			return Result{}, err
+		}
+		sha, err := b.commitOnce(ctx, g, v, st, p, message)
+		if errors.Is(err, gh.ErrHeadMoved) {
+			moved++
+			err = b.headMoved(ctx, v, p, moved)
+			if err != nil {
+				return Result{}, err
+			}
+			continue
+		}
+		if err != nil {
+			return Result{}, err
+		}
+		return b.afterCommit(ctx, v, p, sha), nil
+	}
+}
+
+// prepareWithSync prepares the change against the vault's copy and checks the agent's version. When that
+// fails in a way a stale copy explains, it syncs once and prepares again. synced carries across commit
+// attempts, so a change syncs for this at most once.
+func (b *Base) prepareWithSync(
+	ctx context.Context,
+	v vault.Vault,
+	prepare func(context.Context, state) (plan, error),
+	synced *bool,
+) (state, plan, error) {
+	for {
 		c, ok := b.vaults.Copy(v.RepoID)
 		if !ok {
-			return Result{}, goneVault(v.Name)
+			return state{}, plan{}, goneVault(v.Name)
 		}
 		st := state{vault: c.Info(), copy: c, head: c.Index().Commit()} // the live name and branch
 		p, err := prepare(ctx, st)
 		if err == nil {
 			err = st.unchanged(p.base)
 			if se, ok := errors.AsType[*staleError](err); ok {
-				b.guardMismatch(ctx, st, p.base, se, synced)
+				b.guardMismatch(ctx, st, p.base, se, *synced)
 			}
 		}
-		if err != nil {
-			if _, ok := errors.AsType[*Error](err); ok || ctx.Err() != nil {
-				return Result{}, err
-			}
-			if synced {
-				if se, ok := errors.AsType[*staleError](err); ok {
-					return Result{}, se.conflict
-				}
-				return Result{}, err
-			}
-			// A stale version, or a version or tree the copy no longer has: the copy may be behind
-			// GitHub, or was just replaced. Sync once and look again.
-			synced = true
-			serr := b.syncNow(ctx, v.RepoID)
-			if errors.Is(serr, ErrRebuilding) {
-				return Result{}, rebuilding(v.Name)
-			}
-			if serr != nil {
-				b.logger.WarnContext(ctx, "sync before a change failed", "vault", v.Name, "err", serr)
-				if se, ok := errors.AsType[*staleError](err); ok {
-					return Result{}, se.conflict
-				}
-				return Result{}, err
-			}
-			continue
+		if err == nil {
+			return st, p, nil
 		}
-
-		requestID := randomID()
-		sha, err := b.github.Commit(ctx, g.User().Token, gh.CommitRequest{
-			Repo:         st.vault.Name,
-			Branch:       st.vault.DefaultBranch,
-			ExpectedHead: st.head,
-			Message:      commitMessage(message, p.message, g.User().Client) + "\n" + requestTrailer + " " + requestID,
-			Changes:      p.changes,
-		})
-		if errors.Is(err, gh.ErrHeadMoved) {
-			moved++
-			if moved == commitAttempts {
-				about := p.path
-				if p.source != "" {
-					about = p.source
-				}
-				return Result{}, b.keptChanging(ctx, v, about)
-			}
-			err = b.syncNow(ctx, v.RepoID)
-			if errors.Is(err, ErrRebuilding) {
-				return Result{}, rebuilding(v.Name)
-			}
-			if err != nil {
-				b.logger.WarnContext(ctx, "sync after a moved head failed", "vault", v.Name, "err", err)
-			}
-			continue
+		if _, ok := errors.AsType[*Error](err); ok || ctx.Err() != nil {
+			return state{}, plan{}, err
 		}
-		if err != nil {
-			cerr := commitError(st.vault.Name, err)
-			if _, ok := errors.AsType[*Error](cerr); ok || errors.Is(err, gh.ErrRefused) {
-				if _, ok := errors.AsType[*gh.SecretError](err); ok || errors.Is(err, gh.ErrRefused) || errors.Is(err, gh.ErrBranchRules) || errors.Is(err, gh.ErrForbidden) {
-					// The agent gets a code; the operator needs GitHub's own words.
-					b.logger.InfoContext(ctx, "GitHub refused a commit", "vault", v.Name, "err", err)
-				}
-				return Result{}, cerr // GitHub answered: nothing landed
-			}
-			// The answer was lost (a dropped connection, a timeout, a 5xx): GitHub may have made the
-			// commit anyway. Look for it, so an agent doesn't retry an edit that would apply twice.
-			found, ok := b.findCommit(ctx, g, st.vault, p.path, requestID)
-			if !ok {
-				return Result{}, cerr
-			}
-			b.logger.InfoContext(ctx, "a commit whose answer was lost landed", "vault", v.Name, "commit", found)
-			sha = found
+		if *synced {
+			return state{}, plan{}, staleConflict(err)
 		}
-
-		return b.afterCommit(ctx, v, p, sha), nil
+		// A stale version, or a version or tree the copy no longer has: the copy may be behind
+		// GitHub, or was just replaced. Sync once and look again.
+		*synced = true
+		serr := b.syncNow(ctx, v.RepoID)
+		if errors.Is(serr, ErrRebuilding) {
+			return state{}, plan{}, rebuilding(v.Name)
+		}
+		if serr != nil {
+			b.logger.WarnContext(ctx, "sync before a change failed", "vault", v.Name, "err", serr)
+			return state{}, plan{}, staleConflict(err)
+		}
 	}
+}
+
+// staleConflict returns the conflict a staleError carries, or err itself.
+func staleConflict(err error) error {
+	if se, ok := errors.AsType[*staleError](err); ok {
+		return se.conflict
+	}
+	return err
+}
+
+// commitOnce commits p on GitHub and returns the new commit. It returns gh.ErrHeadMoved as is, for the
+// caller to sync and start over.
+func (b *Base) commitOnce(
+	ctx context.Context,
+	g *access.Grant,
+	v vault.Vault,
+	st state,
+	p plan,
+	message string,
+) (string, error) {
+	requestID := randomID()
+	sha, err := b.github.Commit(ctx, g.User().Token, gh.CommitRequest{
+		Repo:         st.vault.Name,
+		Branch:       st.vault.DefaultBranch,
+		ExpectedHead: st.head,
+		Message:      commitMessage(message, p.message, g.User().Client) + "\n" + requestTrailer + " " + requestID,
+		Changes:      p.changes,
+	})
+	if err == nil || errors.Is(err, gh.ErrHeadMoved) {
+		return sha, err
+	}
+	cerr := commitError(st.vault.Name, err)
+	if _, ok := errors.AsType[*Error](cerr); ok || errors.Is(err, gh.ErrRefused) {
+		if _, ok := errors.AsType[*gh.SecretError](err); ok || errors.Is(err, gh.ErrRefused) || errors.Is(err, gh.ErrBranchRules) || errors.Is(err, gh.ErrForbidden) {
+			// The agent gets a code; the operator needs GitHub's own words.
+			b.logger.InfoContext(ctx, "GitHub refused a commit", "vault", v.Name, "err", err)
+		}
+		return "", cerr // GitHub answered: nothing landed
+	}
+	return b.recoverLostCommit(ctx, g, v, st, p, requestID, cerr)
+}
+
+// recoverLostCommit handles a commit whose answer was lost (a dropped connection, a timeout, a 5xx):
+// GitHub may have made the commit anyway. It looks for it, so an agent doesn't retry an edit that would
+// apply twice, and returns cerr when it isn't there.
+func (b *Base) recoverLostCommit(
+	ctx context.Context,
+	g *access.Grant,
+	v vault.Vault,
+	st state,
+	p plan,
+	requestID string,
+	cerr error,
+) (string, error) {
+	found, ok := b.findCommit(ctx, g, st.vault, p.path, requestID)
+	if !ok {
+		return "", cerr
+	}
+	b.logger.InfoContext(ctx, "a commit whose answer was lost landed", "vault", v.Name, "commit", found)
+	return found, nil
+}
+
+// headMoved syncs after the branch moved under a commit for the moved'th time, and gives up at
+// commitAttempts.
+func (b *Base) headMoved(ctx context.Context, v vault.Vault, p plan, moved int) error {
+	if moved == commitAttempts {
+		about := p.path
+		if p.source != "" {
+			about = p.source
+		}
+		return b.keptChanging(ctx, v, about)
+	}
+	err := b.syncNow(ctx, v.RepoID)
+	if errors.Is(err, ErrRebuilding) {
+		return rebuilding(v.Name)
+	}
+	if err != nil {
+		b.logger.WarnContext(ctx, "sync after a moved head failed", "vault", v.Name, "err", err)
+	}
+	return nil
 }
 
 // guardMismatch logs the index and git disagreeing on base at the change's head. Before a sync it can be
