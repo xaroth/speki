@@ -92,6 +92,12 @@ again. Depth-1 fetches leave a new pack file behind each time. When a mirror has
 safer than repacking a shallow repository. The fresh clone runs under the vault's sync lock, either at the
 end of a full sync or as a background job when the poller finds the vault current.
 
+The swap renames the old copy aside, renames the fresh one into place, and opens it with
+`gitsync.OpenLocal`, which never deletes or clones. If a rename or the open fails, the old copy goes back
+in place and keeps serving. go-git resolves paths on every read, so the open mirror reads whatever is in
+place: if the old copy can't go back, the vault is marked broken, and its next full sync clones it again
+without fetching first.
+
 ## Keeping copies current
 
 `library.Library` owns one `library.Vault` per registered vault:

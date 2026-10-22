@@ -756,6 +756,111 @@ func TestManyPacksGetAFreshClone(t *testing.T) {
 	}
 }
 
+// A fresh clone that can't be swapped in or reopened puts the old copy back, which keeps serving. When
+// the old copy can't go back either, the next sync clones it again.
+func TestFreshCloneSwapFails(t *testing.T) {
+	t.Parallel()
+	errRename := errors.New("rename refused")
+	isMove := func(from, to, fromName, toName string) bool {
+		return filepath.Base(from) == fromName && filepath.Base(to) == toName
+	}
+	testCases := []struct {
+		name string
+		// rename stands in for os.Rename during the first fresh clone.
+		rename    func(from, to string) error
+		wantPacks int // after the failed fresh clone; 0 means more than one
+	}{
+		{
+			name: "swap fails",
+			rename: func(from, to string) error {
+				if isMove(from, to, "git.next", "git") {
+					return errRename
+				}
+				return os.Rename(from, to)
+			},
+		},
+		{
+			name: "reopen fails",
+			rename: func(from, to string) error {
+				err := os.Rename(from, to)
+				if err != nil || !isMove(from, to, "git.next", "git") {
+					return err
+				}
+				return os.RemoveAll(filepath.Join(to, "objects"))
+			},
+		},
+		{
+			name: "old copy can't go back",
+			rename: func(from, to string) error {
+				if isMove(from, to, "git.next", "git") || isMove(from, to, "git.old", "git") {
+					return errRename
+				}
+				return os.Rename(from, to)
+			},
+			wantPacks: 1, // cloned again by the next sync
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRemote(t)
+			r.push(t, map[string]string{"a.md": "# A\n"})
+			dataDir := t.TempDir()
+			l := newLibrary(t, r, library.Options{DataDir: dataDir})
+			l.SetMaxPacks(2)
+			var failing atomic.Bool
+			failing.Store(true)
+			l.SetRename(func(from, to string) error {
+				if failing.Load() {
+					return testCase.rename(from, to)
+				}
+				return os.Rename(from, to)
+			})
+			v := serving(t, l)
+
+			for i := range 2 { // the second sync tries a fresh clone
+				r.push(t, map[string]string{"a.md": "# A\n\nversion " + strings.Repeat("x", i) + "\n"})
+				err := l.Sync(t.Context(), v)
+				if err != nil {
+					t.Fatalf("sync %d: %v", i, err)
+				}
+			}
+			failing.Store(false)
+			if testCase.wantPacks != 0 {
+				err := l.Sync(t.Context(), v)
+				if err != nil {
+					t.Fatalf("sync after the failed fresh clone: %v", err)
+				}
+			}
+
+			got := packs(t, dataDir)
+			if testCase.wantPacks == 0 && got <= 1 {
+				t.Errorf("got %d pack files, want the old copy's", got)
+			}
+			if testCase.wantPacks != 0 && got != testCase.wantPacks {
+				t.Errorf("got %d pack files, want %d", got, testCase.wantPacks)
+			}
+			for _, leftover := range []string{".next", ".old"} {
+				_, err := os.Stat(gitDir(dataDir) + leftover)
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("got %v for git%s, want it gone", err, leftover)
+				}
+			}
+			if got, want := v.Index().Commit(), r.head(t); got != want {
+				t.Errorf("got index at %s, want %s", got, want)
+			}
+			doc, err := v.Index().Document(t.Context(), "a.md")
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, err := v.Blob(doc.Version)
+			if err != nil || !strings.Contains(string(content), "version x") {
+				t.Errorf("got %q, %v reading the latest version, want it", content, err)
+			}
+		})
+	}
+}
+
 // On the instance that writes, each write's quick sync adds a pack without compacting: the poller
 // compacts once its head check finds nothing new. A fresh clone that lost the index's commit to a push
 // during the clone is thrown away and tried again later, so the index needn't be rebuilt.

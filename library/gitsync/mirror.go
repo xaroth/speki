@@ -67,33 +67,26 @@ type Source struct {
 
 // Open opens the copy in dir, or clones src into it when dir is empty or the copy there is broken.
 func Open(ctx context.Context, dir string, src Source) (*Mirror, error) {
-	m := &Mirror{
-		dir:    dir,
-		branch: plumbing.NewBranchReferenceName(src.Branch),
-		url:    src.URL,
-		auth:   src.Auth,
-	}
-
-	repo, err := git.PlainOpen(dir)
+	m, err := OpenLocal(dir, src)
 	switch {
-	case err == nil && healthy(repo, m.branch):
-		m.repo = repo
+	case err == nil:
 		return m, nil
-	case err == nil, errors.Is(err, git.ErrRepositoryNotExists):
+	case errors.Is(err, ErrBroken):
 		// Nothing there yet, or something that isn't a usable copy: start over.
 		err = os.RemoveAll(dir)
 		if err != nil {
 			return nil, fmt.Errorf("remove broken copy: %w", err)
 		}
 	default:
-		return nil, fmt.Errorf("open %s: %w", dir, err) // maybe temporary; don't throw the copy away
+		return nil, err // maybe temporary; don't throw the copy away
 	}
 
+	m = newMirror(dir, src)
 	httpAuth, err := m.basicAuth(ctx)
 	if err != nil {
 		return nil, err
 	}
-	repo, err = git.PlainCloneContext(ctx, dir, true, &git.CloneOptions{
+	repo, err := git.PlainCloneContext(ctx, dir, true, &git.CloneOptions{
 		URL:           src.URL,
 		Progress:      src.Progress,
 		Auth:          httpAuth,
@@ -110,10 +103,36 @@ func Open(ctx context.Context, dir string, src Source) (*Mirror, error) {
 	return m, nil
 }
 
+// OpenLocal opens the copy in dir without the network. Unlike Open, it never removes or clones: a missing
+// or unusable copy is an error wrapping ErrBroken.
+func OpenLocal(dir string, src Source) (*Mirror, error) {
+	m := newMirror(dir, src)
+	repo, err := git.PlainOpen(dir)
+	switch {
+	case errors.Is(err, git.ErrRepositoryNotExists):
+		return nil, fmt.Errorf("open %s: %w: %w", dir, ErrBroken, err)
+	case err != nil:
+		return nil, fmt.Errorf("open %s: %w", dir, err)
+	case !healthy(repo, m.branch):
+		return nil, fmt.Errorf("open %s: %w", dir, ErrBroken)
+	}
+	m.repo = repo
+	return m, nil
+}
+
+func newMirror(dir string, src Source) *Mirror {
+	return &Mirror{
+		dir:    dir,
+		branch: plumbing.NewBranchReferenceName(src.Branch),
+		url:    src.URL,
+		auth:   src.Auth,
+	}
+}
+
 // Usable reports whether dir holds a copy of branch that can be used without the network.
 func Usable(dir, branch string) bool {
-	repo, err := git.PlainOpen(dir)
-	return err == nil && healthy(repo, plumbing.NewBranchReferenceName(branch))
+	_, err := OpenLocal(dir, Source{Branch: branch})
+	return err == nil
 }
 
 func healthy(repo *git.Repository, branch plumbing.ReferenceName) bool {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"iter"
 	"os"
 	"path/filepath"
@@ -373,12 +374,18 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		return fmt.Errorf("%s now names repository %d, not this vault's %d: waiting for discovery to find the new name", info.Name, id, info.RepoID)
 	}
 
-	fetchCtx, touch, stop := stallContext(ctx, l.opts.StallTimeout)
-	v.gitMu.Lock()
-	v.mirror.SetSource(l.source(info)) // follows renames and transfers: the vault is its repository ID
-	head, err := v.mirror.Fetch(fetchCtx, progressWriter(touch))
-	v.gitMu.Unlock()
-	stop()
+	var head string
+	if v.broken.Load() {
+		// The copy may not even be there after a failed fresh clone swap: don't fetch into it.
+		err = errMarkedBroken
+	} else {
+		fetchCtx, touch, stop := stallContext(ctx, l.opts.StallTimeout)
+		v.gitMu.Lock()
+		v.mirror.SetSource(l.source(info)) // follows renames and transfers: the vault is its repository ID
+		head, err = v.mirror.Fetch(fetchCtx, progressWriter(touch))
+		v.gitMu.Unlock()
+		stop()
+	}
 	if err == nil {
 		commit := v.index.Commit()
 		switch {
@@ -394,7 +401,7 @@ func (l *Library) syncLocked(ctx context.Context, v *Vault, quick bool) (err err
 		}
 	}
 	if err == nil && v.broken.Load() {
-		err = fmt.Errorf("%w: a read found objects missing", gitsync.ErrBroken)
+		err = errMarkedBroken
 	}
 	if errors.Is(err, gitsync.ErrBroken) {
 		if quick {
@@ -497,6 +504,10 @@ const movedOnRetry = 10 * time.Minute
 // errMovedOn means a fresh clone no longer has the index's commit.
 var errMovedOn = errors.New("the branch moved on during the clone")
 
+// errMarkedBroken means a read found objects missing, or a failed fresh clone swap couldn't put the old
+// copy back.
+var errMarkedBroken = fmt.Errorf("%w: marked broken", gitsync.ErrBroken)
+
 // compactLocked replaces a copy with too many pack files by a fresh clone, at most once an hour, or ten
 // minutes after a commit landing during the clone spoiled the last try. Called with syncMu held.
 func (l *Library) compactLocked(ctx context.Context, v *Vault) {
@@ -515,7 +526,8 @@ func (l *Library) compactLocked(ctx context.Context, v *Vault) {
 }
 
 // freshClone replaces the local repository with a new clone. It clones next to the old copy and swaps the
-// directories, so a failure at any step leaves a working copy in place. With keep set, the new copy
+// directories. A failed swap or reopen puts the old copy back, and v.mirror keeps reading it; if that
+// fails too, the vault is marked broken. With keep set, the new copy
 // must have that commit (the index's), or it's thrown away with errMovedOn: a commit landed during the
 // clone, and the index could only catch up by a full rebuild. Called with syncMu held.
 func (l *Library) freshClone(ctx context.Context, v *Vault, keep string) error {
@@ -535,23 +547,37 @@ func (l *Library) freshClone(ctx context.Context, v *Vault, keep string) error {
 
 	v.gitMu.Lock()
 	defer v.gitMu.Unlock()
-	err = os.Rename(current, old)
-	if err != nil {
+	err = l.rename(current, old)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) { // missing after a failed put-back: nothing to keep
 		_ = os.RemoveAll(next)
 		return fmt.Errorf("swap fresh copy: %w", err)
 	}
-	err = os.Rename(next, current)
+	err = l.rename(next, current)
 	if err != nil {
-		_ = os.Rename(old, current) // put the old copy back
-		_ = os.RemoveAll(next)
+		l.putBack(v, current, next, old)
 		return fmt.Errorf("swap fresh copy: %w", err)
 	}
-	m, err = l.openMirror(ctx, v, current) // a healthy copy opens without network access
+	info := v.Info()
+	url, auth := l.source(info)
+	m, err = gitsync.OpenLocal(current, gitsync.Source{URL: url, Branch: info.DefaultBranch, Auth: auth})
 	if err != nil {
-		return err // v.mirror still reads from the old copy's open files; the next sync reopens
+		l.putBack(v, current, next, old)
+		return fmt.Errorf("reopen fresh copy: %w", err)
 	}
 	v.mirror = m
 	v.broken.Store(false)
 	_ = os.RemoveAll(old)
 	return nil
+}
+
+// putBack moves the old copy back after a failed swap. go-git resolves paths on every read, so v.mirror
+// reads whatever is at current: if the old copy can't go back, the vault is marked broken, and the next
+// sync clones it again. Called with gitMu held.
+func (l *Library) putBack(v *Vault, current, next, old string) {
+	_ = os.RemoveAll(next)
+	_ = os.RemoveAll(current) // the fresh copy, if it got there
+	err := l.rename(old, current)
+	if err != nil {
+		v.broken.Store(true)
+	}
 }
