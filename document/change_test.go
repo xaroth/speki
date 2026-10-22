@@ -159,6 +159,30 @@ func TestCheck(t *testing.T) {
 			wantErr: "can't tell which keys",
 		},
 		{
+			name:    "fixing broken frontmatter with an anchored key",
+			current: "---\n&a secret: x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
+			name:    "fixing broken frontmatter with a tagged key",
+			current: "---\n!!str secret: x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
+			name:    "fixing broken frontmatter with an escaped key",
+			current: "---\n\"sec\\x72et\": x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
+			name:    "fixing broken frontmatter with an explicit key",
+			current: "---\n? secret : x\ntitle: [a\n---\n",
+			next:    "---\ntitle: a\n---\n",
+			wantErr: "a person has to fix it",
+		},
+		{
 			name:    "fixing broken frontmatter whose keys can't be read",
 			current: "---\ntitle: a\n[owner]\n---\nText\n",
 			next:    "---\ntitle: a\n---\nText\n",
