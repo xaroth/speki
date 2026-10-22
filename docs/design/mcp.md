@@ -154,7 +154,7 @@ before comparing. Vault-supplied text that isn't a whole document (titles, descr
 headings) has control and format characters and line breaks stripped where it's meant to be one line, and
 is escaped the same way. Structured content carries titles, descriptions and snippets raw.
 
-A result is at most 80 KiB as it goes out, JSON-encoded (`maxAnswer` in `handlers.go`). Claude Code cuts
+A result is at most 80 KiB as it goes out, JSON-encoded (`maxAnswer` in `answer.go`). Claude Code cuts
 MCP tool output at about 25k tokens by default, and cuts off or rejects a bigger result before the agent
 sees it, hints included. `query` adds rows while the structured rows and their lines of text, counted
 together, fit, then sets `truncated`, and the text ends with "truncated: add a LIMIT or narrow the query to
