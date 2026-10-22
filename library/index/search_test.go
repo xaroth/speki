@@ -172,7 +172,7 @@ func TestSearchAcrossSources(t *testing.T) {
 	}
 }
 
-// The examples in docs/functional/search-and-query.md that TestSearch doesn't cover.
+// The examples in docs/search.md that TestSearch doesn't cover.
 func TestSearchExamples(t *testing.T) {
 	t.Parallel()
 	files := corpus()

@@ -14,7 +14,7 @@ var ErrRebuilding = errors.New("the vault's index is being rebuilt")
 // Code says what kind of failure an Error is. Agents see it first, and act on it.
 type Code string
 
-// The codes tools return. docs/functional/tools.md says what each means.
+// The codes tools return. docs/tools/overview.md says what each means.
 const (
 	CodeNotFound        Code = "not_found"
 	CodeConflict        Code = "conflict"

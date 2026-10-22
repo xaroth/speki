@@ -97,7 +97,7 @@ var ErrUnstable = errors.New("frontmatter comments can't be kept in place")
 
 // Parse reads a document. It fails only when the file can't be used at all: it isn't UTF-8, or its
 // frontmatter block is too large. Every other problem ends up in Warnings. The error text reaches agents
-// as a broken document's reason and is listed in docs/functional/tools.md, so keep it stable.
+// as a broken document's reason and is listed in docs/tools/overview.md, so keep it stable.
 func Parse(docPath string, raw []byte) (*Document, error) {
 	if !utf8.Valid(raw) {
 		return nil, fmt.Errorf("%w: not UTF-8", errUnusable)

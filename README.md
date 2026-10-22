@@ -38,11 +38,11 @@ docker build -t speki .
 ```
 
 To run it you need a GitHub App, a configuration file and a secret key.
-[docs/functional/running.md](docs/functional/running.md) walks through all three.
+[docs/running.md](docs/running.md) walks through all three.
 [config.example.yaml](config.example.yaml) is a starting point for the configuration.
 
 Once speki is running at its public URL, turn a repository into a vault
-([vaults.md](docs/functional/vaults.md)) and connect a client:
+([vaults.md](docs/vaults.md)) and connect a client:
 
 ```sh
 claude mcp add --transport http speki https://speki.example.com/mcp
@@ -52,6 +52,6 @@ claude mcp add --transport http speki https://speki.example.com/mcp
 
 [docs/README.md](docs/README.md) lists everything. Good places to start:
 
-- [What speki is](docs/functional/overview.md)
-- [Running speki](docs/functional/running.md)
-- [The tools agents use](docs/functional/tools.md)
+- [What speki is](docs/overview.md)
+- [Running speki](docs/running.md)
+- [The tools agents use](docs/tools/overview.md)

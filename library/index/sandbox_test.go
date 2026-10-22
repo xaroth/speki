@@ -61,7 +61,7 @@ func query(tb testing.TB, sources []index.Source, q string) index.Rows {
 	return rows
 }
 
-// The examples from docs/functional/search-and-query.md.
+// The examples from docs/query.md.
 func TestQueryExamples(t *testing.T) {
 	t.Parallel()
 	sb, sources, _ := sandboxFixture(t)
