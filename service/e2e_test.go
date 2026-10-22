@@ -7,6 +7,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/xaroth/speki/gh"
+	"github.com/xaroth/speki/gh/ghtest"
 )
 
 // TestSignInAndSearch runs speki against a fake GitHub: a client registers, the user signs in through
@@ -137,4 +140,30 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRenamedUser renames the signed-in user on GitHub. From their next refresh they're matched in
+// writers by their new login, not the old one, which someone else may take.
+func TestRenamedUser(t *testing.T) {
+	t.Parallel()
+	g := newGitHub(t, map[string]string{
+		"speki.yaml": "title: KB\ndescription: Test vault.\nwriters: [octocat]\n",
+		"fleet.md":   "# Fleet\n\nWe fly zeppelins.\n",
+	}, nil)
+	s := startService(t, testConfig(t, g))
+	tokens := signIn(t, s)
+	write := func(path string) map[string]any {
+		return map[string]any{"vault": kbRepo, "path": path, "content": "# Airships\n"}
+	}
+	callTool(t, connectMCP(t, s, tokens.AccessToken), "write", write("before.md"))
+
+	g.Apply(
+		ghtest.ExpectUser(userToken, gh.User{ID: 7, Login: "octokitten"}),
+		ghtest.ExpectRole(userToken, kbRepo, gh.RoleWrite),
+	)
+	cs := connectMCP(t, s, refresh(t, s, tokens).AccessToken)
+	if text, _ := tryTool(t, cs, "write", write("after.md")); !strings.HasPrefix(text, "no_write_access:") {
+		t.Errorf("write after the rename: got %s, want no_write_access", text)
+	}
+	callTool(t, cs, "read", map[string]any{"vault": kbRepo, "path": "fleet.md"})
 }
