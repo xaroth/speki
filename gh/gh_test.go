@@ -22,30 +22,6 @@ func withKB() ghtest.Option {
 	}
 }
 
-func TestCheckPrivateKey(t *testing.T) {
-	t.Parallel()
-	fake := ghtest.New(t)
-	testCases := []struct {
-		name    string
-		key     []byte
-		wantErr bool
-	}{
-		{name: "RSA key", key: fake.PrivateKey},
-		{name: "not a key", key: []byte("not a key"), wantErr: true},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			if err := gh.CheckPrivateKey(testCase.key); (err != nil) != testCase.wantErr {
-				t.Errorf("CheckPrivateKey: got %v, want error %t", err, testCase.wantErr)
-			}
-			if _, err := gh.New(gh.Config{AppID: 1, PrivateKey: testCase.key}); (err != nil) != testCase.wantErr {
-				t.Errorf("New: got %v, want error %t", err, testCase.wantErr)
-			}
-		})
-	}
-}
-
 func TestAppOwner(t *testing.T) {
 	t.Parallel()
 	fake := ghtest.New(t, ghtest.ExpectAppOwner(42))

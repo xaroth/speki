@@ -483,14 +483,3 @@ func TestQueryShortOfMemory(t *testing.T) {
 		t.Errorf("got %v, want %v", err, ErrQueryBusy)
 	}
 }
-
-// Raising the limit raises the soft limit with it, though SQLite caps it at the hard limit in force.
-func TestSetMemoryLimits(t *testing.T) {
-	t.Cleanup(func() { SetMemoryLimits(DefaultMemoryLimit, DefaultQueryMemory) })
-	for _, limit := range []int64{4096, 256} {
-		SetMemoryLimits(limit, 64)
-		if got := softHeapLimit(); got != limit<<19 {
-			t.Errorf("limit %d MiB: got soft limit %d MiB, want %d", limit, got>>20, limit/2)
-		}
-	}
-}

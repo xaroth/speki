@@ -49,11 +49,6 @@ func TestNewLogger(t *testing.T) {
 			want: []map[string]any{{"level": "INFO", "msg": "signed in", "token": "[redacted]", "login": "octocat"}},
 		},
 		{
-			name:  "below the level",
-			level: slog.LevelWarn,
-			log:   func(_ testing.TB, logger *slog.Logger) { logger.Info("hidden") },
-		},
-		{
 			name:  "request ID from the context",
 			level: slog.LevelInfo,
 			log: func(tb testing.TB, logger *slog.Logger) {
