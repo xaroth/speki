@@ -16,7 +16,7 @@ import (
 type SearchInput struct {
 	Query             string   `json:"query" jsonschema:"words; \"quoted phrases\" must appear as written; -word excludes"`
 	Vaults            []string `json:"vaults,omitempty" jsonschema:"only these vaults, owner/repo. Default: all"`
-	Repositories      []string `json:"repositories,omitempty" jsonschema:"only vaults covering any of these code repositories: git remote URLs or host/owner/repo"`
+	Repositories      []string `json:"repositories,omitempty" jsonschema:"only vaults covering any of these code repositories, or all when none does: git remote URLs or host/owner/repo"`
 	Path              string   `json:"path,omitempty" jsonschema:"only documents under this folder"`
 	Tags              []string `json:"tags,omitempty" jsonschema:"only documents with all these tags"`
 	ExcludeDeprecated bool     `json:"exclude_deprecated,omitempty" jsonschema:"leave out deprecated documents, which otherwise rank lower"`

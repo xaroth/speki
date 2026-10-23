@@ -11,7 +11,7 @@ contract.
 |---|---|---|
 | `query` | words, `"quoted phrases"`, `-excluded` words | required |
 | `vaults` | list of vault names | every readable vault |
-| `repositories` | only vaults covering any of these, up to 10: git remote URLs, `host/owner/repo` or `owner/repo` | |
+| `repositories` | only vaults covering any of these, or all when none does, up to 10: git remote URLs, `host/owner/repo` or `owner/repo` | |
 | `path` | only documents under this folder | |
 | `tags` | documents must have all of them. Lowercased, leading `#` dropped | |
 | `exclude_deprecated` | bool | false: deprecated documents are included, ranked lower |
@@ -63,7 +63,7 @@ served or not, speki searches every vault instead, sets `uncovered`, and the tex
 the vaults you can read covers <repo>, so all of them were searched instead." ("you named" when `vaults`
 was given). That saves the agent a second call, and the note keeps it from reading the results as being
 about the repository. When covering vaults exist but none can be served, nothing is searched and the
-skipped-vaults note names them.
+skipped-vaults note names them, as it does when no vault covers them and none can be served.
 
 This is how an agent working in a code checkout finds the knowledge about that code: pass every remote
 URL from `git remote -v` as is. In a fork, `origin` is the fork and the vault names the upstream

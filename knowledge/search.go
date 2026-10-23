@@ -71,9 +71,9 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 				searched = append(searched, s.Name)
 			}
 			slices.Sort(searched)
-			if len(sources) == 0 {
-				return SearchResult{Skipped: notServed, Repositories: repositories}, nil
-			}
+		}
+		if len(sources) == 0 {
+			return SearchResult{Skipped: notServed, Repositories: repositories}, nil
 		}
 	}
 

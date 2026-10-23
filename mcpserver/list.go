@@ -12,7 +12,7 @@ import (
 // ListInput asks for vaults, or a folder.
 type ListInput struct {
 	Vault        string   `json:"vault,omitempty" jsonschema:"the vault to list, owner/repo. Leave out to list your vaults"`
-	Repositories []string `json:"repositories,omitempty" jsonschema:"without a vault: list only the vaults covering any of these code repositories, as git remote URLs or host/owner/repo"`
+	Repositories []string `json:"repositories,omitempty" jsonschema:"without a vault: list only the vaults covering any of these code repositories, or all when none does, as git remote URLs or host/owner/repo"`
 	Path         string   `json:"path,omitempty" jsonschema:"the folder to list, relative to the vault root. Leave out for the root"`
 	Recursive    bool     `json:"recursive,omitempty" jsonschema:"list documents in subfolders too, instead of one entry per subfolder"`
 	Cursor       string   `json:"cursor,omitempty" jsonschema:"the cursor the previous call gave, to get the next page"`
