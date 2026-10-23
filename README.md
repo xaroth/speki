@@ -13,7 +13,8 @@ it over MCP (Model Context Protocol). GitHub decides who can see and change what
 
 ## Getting started
 
-Speki is a single Go binary. Building it needs Go and a C compiler (the search index uses SQLite):
+Speki is a single Go binary. Building it needs Go and a C compiler (the search index uses SQLite). `go.mod`
+pins the Go toolchain; with the default `GOTOOLCHAIN=auto`, an older Go downloads it:
 
 ```sh
 task build
@@ -25,7 +26,8 @@ Without [Task](https://taskfile.dev):
 CGO_ENABLED=1 go build -tags 'sqlite_fts5,sqlite_omit_load_extension' -o bin/speki ./cmd/speki
 ```
 
-Or pull the container image, published for each release:
+Or pull the container image, published for each release for linux/amd64 and linux/arm64 and signed with
+cosign:
 
 ```sh
 docker pull ghcr.io/xaroth/speki:latest

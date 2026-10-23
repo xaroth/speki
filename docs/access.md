@@ -138,7 +138,7 @@ with.
 | Token | Holds | Lives |
 |---|---|---|
 | access | GitHub user ID and login, GitHub access token, scopes, client name, audience | 1 hour, or until the GitHub token expires if sooner |
-| refresh | GitHub user ID and login, GitHub refresh token, scopes, client, audience, sign-in time | until 90 days after sign-in, or until the GitHub refresh token expires if sooner |
+| refresh | GitHub user ID and login (as of the last refresh), GitHub refresh token, scopes, client ID and name, audience, sign-in time | until 90 days after sign-in, or until the GitHub refresh token expires if sooner |
 
 Checking an access token needs no GitHub call: speki opens it and checks its audience and expiry. GitHub is
 asked when the user's access is resolved, at most every 5 minutes. A GitHub token GitHub no longer accepts
@@ -154,11 +154,18 @@ The sign-in time inside a refresh token doesn't change on refresh, so every chai
 days after the user signed in. A stolen refresh token can't be kept alive forever. Scopes on refresh can only
 shrink.
 
+Each refresh also asks GitHub who the user is, with the new token, so the new tokens carry the user's current
+login. A vault's `readers` and `writers` match by login, and a renamed account's old login may be taken by
+someone else. A rename therefore reaches speki within an hour, the life of an access token. If the lookup
+fails, or returns another user ID, the new tokens keep the old login and speki logs a warning: the GitHub
+refresh token is already spent at that point, so failing the refresh would sign the user out.
+
 A client sometimes refreshes the same token twice at once, or retries after a lost answer. GitHub accepts the
 first and refuses the second, which would sign the user out. So speki takes a lock per token, refreshes once,
 and hands the result to the second request. The result is kept for a minute, encrypted with a key derived from
 the old refresh token itself, so the store never holds a usable token. With several instances, the lock and
-results live in Redis; that's the main reason several instances need it.
+results live in Redis. That's the main reason several instances need it; Redis also carries change notices
+and shared polling reads ([operating.md](operating.md#one-instance-or-several)).
 
 When GitHub doesn't answer a refresh in time, it may have spent the token anyway, and has no grace period for
 the old one. Speki can't prevent the sign-out that follows, only make it visible: it's logged and counted as

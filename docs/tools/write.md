@@ -14,7 +14,7 @@ Creates a document, or replaces one entirely, and commits it. What every change 
 | `path` | document path | required |
 | `content` | the full markdown, with YAML frontmatter | required |
 | `version` | the version being replaced | leave out when creating |
-| `message` | one-line commit message | `Create <path>` or `Update <path>` |
+| `message` | one-line commit message. Only its first line is used, cut to 200 bytes | `Create <path>` or `Update <path>` |
 
 ## Create or replace
 
@@ -33,7 +33,9 @@ letter case or another Unicode normalization. The check is against git, not the 
 leaves out files it doesn't serve, and `write` must not overwrite those.
 
 The content is parsed and checked: a new document needs a title (frontmatter or a `#` heading) and may have no
-frontmatter problems at all; a replacement may not add problems the document didn't have. Each `related`
+frontmatter problems at all; a replacement may not add problems the document didn't have. Frontmatter that
+isn't valid YAML is always refused, even when the current document has it, because speki rewrites the block to
+set `updated`. Tags or aliases already over their limit may not grow. Each `related`
 entry the change adds must point to a document in the vault. Agents may only set `title`, `description`,
 `tags`, `aliases`, `status`, `related` and the vault's `frontmatter.allow` keys; other keys must keep their
 value ([documents.md](../documents.md#what-a-change-may-do)).
@@ -46,12 +48,15 @@ Speki then sets `created` (new documents) and `updated`, and commits.
 { "version": "8d1f...", "commit": "4be0...", "index_pending": false }
 ```
 
+The text says "Saved in commit ...", gives the new version, and adds "Search may not show the change for a
+little while." when `index_pending` is true.
+
 ## Errors
 
 | Code | When |
 |---|---|
 | `read_only_session`, `no_write_access` | The user can't write here |
-| `already_exists` | Creating where something already is. Includes the version when it's a document |
+| `already_exists` | Creating where something already is: a document (with its version), a file speki doesn't index, a folder, a file in the way of a folder in the path, or the same path in another Unicode normalization |
 | `invalid` | A path speki won't write; a letter-case collision; bad frontmatter; a `related` entry that points nowhere; a locked key changed; no title |
 | `not_found` | Replacing a document that doesn't exist. Leave out `version` to create it |
 | `conflict` | The document changed since `version`, or kept changing while speki tried to commit |

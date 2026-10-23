@@ -14,7 +14,7 @@ search, and only `history` and git have it. `delete` is marked destructive, so c
 | `vault` | vault name | required |
 | `path` | document path | required |
 | `version` | the version being deleted, from `read` | required |
-| `message` | one-line commit message | `Delete <path>` |
+| `message` | one-line commit message. Only its first line is used, cut to 200 bytes | `Delete <path>` |
 
 ## What happens
 
@@ -32,7 +32,8 @@ cleared out with the version the `broken` error gives.
 { "commit": "4be0...", "index_pending": false, "linked_from": ["services/index.md"] }
 ```
 
-There's no `version`: the document is gone. `linked_from` lists the documents whose links now point nowhere,
+The text says "Deleted in commit ..." and lists the linking documents under "These documents link to the old
+path:". There's no `version`: the document is gone. `linked_from` lists the documents whose links now point nowhere,
 so the agent can fix them with `edit`.
 
 ## Errors

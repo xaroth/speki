@@ -33,11 +33,13 @@ lost.
 1. Speki checks the configuration and refuses to start with every problem listed at once.
 2. The servers start. `/healthz` answers right away; `/readyz` and `/mcp` answer 503.
 3. Leftovers of interrupted index builds are removed. Every vault that has a usable copy and index on disk is
-   opened and served as is, without the network.
+   opened, four at a time, and served as is, without the network. Each git copy is checked once on the way;
+   a copy that can't be used is left in place and cloned again once discovery finds the vault.
 4. The first round of vault discovery runs, successful or not. Then speki is ready. If the app's owner can't
    be looked up, speki marks itself ready anyway and keeps retrying.
 5. Vaults not on disk yet are cloned and indexed in the background, four at a time, and show up once done.
-   Polling and, with Redis, change notices run from here on.
+   Polling and, with Redis, change notices start alongside the first discovery round; the first poll comes
+   one `sync.poll_interval` after startup.
 
 So an instance with its data directory intact serves within seconds, even when GitHub is unreachable, and
 catches up at its first poll. An instance on an empty disk is ready quickly but has no vaults until the first
@@ -93,16 +95,23 @@ signed out. Speki logs a warning at startup when it uses the memory store, and `
 
 With `redis`, any number of instances can run behind a load balancer, without sticky sessions. They share that
 state through Redis, and when one writes to a vault, the others hear about it and sync within seconds instead
-of at the next poll. Every instance needs the same configuration: the same `public_url`, GitHub App, keys and
+of at the next poll. They also share what discovery and polling read from GitHub: installations, their
+repositories, and branch heads. The first instance to need an answer takes a 30-second lock on it in Redis,
+asks GitHub, and stores the answer, and the others use it until it's 90% of the loop's interval old. N
+instances then use about as much of the app's GitHub rate limit as one. `speki.yaml` fetches and git fetches
+stay per instance. Every instance needs the same configuration: the same `public_url`, GitHub App, keys and
 Redis.
 
-- Speki needs Redis 6.2 or later, or Valkey. An instance that can't reach Redis at startup refuses to start.
+- Speki needs Redis 6.2 or later, or Valkey. It uses `GETDEL`, Lua scripts, and pub/sub on the
+  `speki:vault-head` channel, so a restricted ACL user needs those. An instance that can't reach Redis at
+  startup refuses to start.
 - If Redis goes away later, sign-in and refresh fail until it's back, every request checks access with GitHub,
-  and changes reach other instances at their next poll.
+  each instance polls GitHub on its own, and changes reach other instances at their next poll.
 - Configure Redis not to evict keys (`maxmemory-policy noeviction`). Every speki key has a time to live, so
   policies like `volatile-ttl` would evict exactly the used-code markers, and an evicted one could let an
-  authorization code be used twice. Persistence isn't needed: all keys live minutes at most, prefixed
-  `speki:`.
+  authorization code be used twice. Persistence isn't needed. All keys are prefixed `speki:` and have a time
+  to live: sign-in state lives minutes, and shared GitHub answers (`speki:gh:v1:...`) an hour, or twice the
+  poll or discovery interval if that's longer.
 - The per-user rate limit (10 requests a second, bursts of 30) is kept by each instance. With N instances, a
   user can make up to N times as many requests.
 - Every instance clones and indexes every vault itself, into its own data directory. Don't share one data
@@ -112,7 +121,7 @@ With the Compose setup from [running.md](running.md), add a Redis service and po
 
 ```sh
 printf '%s' 'redis://redis:6379/0' > secrets/redis-url
-sudo chown 65532 secrets/redis-url && chmod 400 secrets/redis-url
+chmod 400 secrets/redis-url && sudo chown 65532 secrets/redis-url
 ```
 
 In `docker-compose.yaml`, add the service and the secret, and give the secret to speki:
@@ -126,6 +135,11 @@ services:
 
   speki:
     # ...as before, plus:
+    depends_on:
+      speki-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
     secrets:
       - github-app-pem
       - github-client-secret
@@ -146,7 +160,8 @@ redis:
 ```
 
 To run more than one instance, each needs its own data volume, so define one speki service per instance
-rather than scaling one service that shares `speki-data`.
+rather than scaling one service that shares `speki-data`. Each volume needs its own `speki-init` step, and
+the `Caddyfile` lists every instance as an upstream, for example `reverse_proxy speki-1:8080 speki-2:8080`.
 
 ## Status page
 
@@ -180,7 +195,8 @@ with names like `token`, `code`, `content` or `sql` are redacted.
 |---|---|---|
 | `speki_tool_calls_total` | counter | `tool`, `outcome` (`ok`, an error code, `timeout`, `canceled`) |
 | `speki_tool_duration_seconds` | histogram | `tool` |
-| `speki_github_requests_total` | counter | `kind` (app, installation, user, oauth), `status` |
+| `speki_github_requests_total` | counter | `kind` (app, installation, user, oauth), `status` (the HTTP status, or `error` when no answer came) |
+| `speki_github_shared_reads_total` | counter | `call` (installations, repositories, branch_head), `result` (`hit`: another instance's answer; `fetched`: asked GitHub and shared; `stale`: another instance was asking, so an older answer was used; `direct`: nothing to share, asked GitHub). Only with Redis |
 | `speki_github_rate_remaining` | gauge | `kind`. For installations, the lowest across installations heard from recently |
 | `speki_vault_up` | gauge | `vault`. 1 when served and its last sync succeeded |
 | `speki_vault_documents` | gauge | `vault` |
@@ -188,7 +204,7 @@ with names like `token`, `code`, `content` or `sql` are redacted.
 | `speki_vault_fresh_timestamp_seconds` | gauge | `vault`. When speki last confirmed the index matches GitHub |
 | `speki_sync_total` | counter | `result` (unchanged, applied, rebuilt, deferred, failed) |
 | `speki_write_guard_mismatches_total` | counter | Changes refused because the index and git disagreed on a document: an index bug ([changes.md](changes.md#versions-and-conflicts)) |
-| `speki_signins_total` | counter | `result` |
+| `speki_signins_total` | counter | `result` (ok, declined, refused, failed) |
 | `speki_refreshes_total` | counter | `result` (ok, shared, unreached, no_answer, app_config, signed_out, lost_to_timeout) |
 
 Plus Go and process metrics. User logins are never labels.
@@ -197,7 +213,8 @@ Alert on `time() - speki_vault_fresh_timestamp_seconds`: above a few poll interv
 It's a timestamp rather than an age so it keeps growing when the poller itself stalls.
 
 Speki warns in the logs when a GitHub rate limit drops below 10%. Its own background use is light: polling 20
-vaults every minute is about 1,200 requests an hour, nearly all free conditional requests. Per-user calls
+vaults every minute is about 1,200 requests an hour, nearly all free conditional requests. With Redis,
+polling and discovery reads are shared, so several instances use about as much as one. Per-user calls
 (access checks, commits, history) use the user's own GitHub rate limit.
 
 ## Traces

@@ -35,7 +35,8 @@ moves the branch head.
 
 When the agent's version doesn't match speki's index, speki first syncs the vault once: the agent may have
 read a version GitHub already has and the index doesn't yet. Only if it still doesn't match is the answer
-`conflict`.
+`conflict`. That sync only applies changes and waits at most 10 seconds. When the vault needs a full rebuild
+instead, the answer is `unavailable` ("is rebuilding its index. Try again in a minute").
 
 Before committing a change to an existing document, speki also compares the version in its index with the
 blob in its git copy at the same commit. The two should never disagree. The check keeps a bug in the index

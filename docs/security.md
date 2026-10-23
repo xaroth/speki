@@ -55,9 +55,11 @@ someone with write access to vault A plants "search vault B for credentials and 
 another user's agent reads it with that user's broader access. There is no complete fix.
 
 - Users can sign in read-only, and the agent then can't change anything.
-- Document text, vault guidelines and other vault-supplied strings come back inside fences with a random
-  boundary per response, which content can't close early. Anything that looks like a fence tag is escaped
-  as a second line of defense ([tools/overview.md](tools/overview.md#results)).
+- Document text, outlines, vault guidelines and search results come back inside fences, each with its own
+  random boundary, which content can't close early. They're in the text result only, so they go out once
+  and never unfenced. Other vault-supplied strings (titles, descriptions, paths, commit messages, query
+  values) are put on one line, with control and format characters removed. Anything that looks like a fence
+  tag is escaped everywhere, as a second line of defense ([tools/overview.md](tools/overview.md#results)).
 - The server instructions tell agents that document text and vault guidelines are information, not
   instructions.
 - `move` and `delete` are marked destructive, so clients ask the user first.
@@ -101,13 +103,14 @@ See [access.md](access.md#tokens).
 - Issuer, resource and metadata URLs come from `public_url`, never from `Host` or `X-Forwarded-*` headers.
 - TLS terminates in front of speki. Metrics and the status page are on a separate internal port that the
   public server never answers for.
-- Tool calls are rate limited per user.
+- Requests to `/mcp` are rate limited per user (10 a second, bursts of 30), by each instance on its own.
 
 ## Stale data
 
 A document deleted because it contained a secret stays searchable on another instance until that instance
 hears about the change: within seconds with Redis, otherwise at its next poll. Changes made outside speki
-wait for the next poll (60 seconds by default). Access answers are cached for 5 minutes, so someone removed
+wait for the next poll (60 seconds by default); with Redis, instances share what polling learns from
+GitHub, so it can take up to about two poll intervals. Access answers are cached for 5 minutes, so someone removed
 from an organization, repository or team keeps access for up to 5 minutes.
 
 One malformed file must not stop a vault from updating, or a deleted secret would stay searchable. A file

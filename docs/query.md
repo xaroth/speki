@@ -122,7 +122,8 @@ ORDER BY d.updated DESC LIMIT 20;
   recursive CTEs.
 - No `PRAGMA`, `ATTACH`, writes or temporary tables, and no `randomblob`, `zeroblob`, `load_extension` or
   `sqlite_*` functions.
-- 500 rows and 1 MiB of results, 3 seconds, one query per user at a time, at most 10 vaults.
+- 200 rows, and as many as fit in one answer of 80 KiB, 3 seconds, one query per user at a time, at most
+  10 vaults. `truncated` says when rows were cut.
 
 ## The sandbox
 
@@ -147,7 +148,8 @@ another vault's rows. Physical isolation held up against everything tried. So ev
    denied, including `sqlite_master`.
 7. A 3-second limit that interrupts the query. SQLite has no limit on instructions executed, so time is the
    only bound on a runaway recursive CTE.
-8. Row and size caps enforced while reading results.
+8. Row (200) and size (1 MiB) caps enforced while reading results, so a query can't hold much memory. The
+   MCP server then cuts the rows further to fit one answer ([tools/query.md](tools/query.md#limits)).
 9. Errors with file paths removed and internal database names replaced by vault names.
 
 Extension loading isn't compiled into the binary, so `load_extension` couldn't run even if every layer above

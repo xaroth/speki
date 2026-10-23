@@ -61,8 +61,8 @@ printf 'keys:\n  - id: "%s"\n    secret: "%s"\n    primary: true\n' \
 The container runs as user ID 65532, which must be able to read the secrets:
 
 ```sh
-sudo chown 65532 secrets/*
 chmod 400 secrets/*
+sudo chown 65532 secrets/*
 ```
 
 ## 3. Write the configuration
@@ -190,7 +190,9 @@ Some things to know about the image:
 - A new named volume is owned by root, which is why `speki-init` hands it to user 65532. With a bind mount
   instead, `chown 65532` the host folder.
 - Without `sync.data_dir: /var/lib/speki`, speki starts and reports ready but can't store any vault.
-- The published image is built for linux/amd64.
+- The published image is a multi-platform image for linux/amd64 and linux/arm64, signed with cosign
+  ([Building](#building)). Both base images are pinned by digest; Dependabot proposes updates weekly, and a
+  merged update reaches the image with the next release.
 
 ## 5. Check that it runs
 
@@ -212,7 +214,8 @@ title: Infrastructure knowledge
 description: How our services are deployed and operated, and why.
 ```
 
-Speki finds it within 5 minutes and serves it once it's cloned and indexed, usually within a minute after
+Speki finds it within 5 minutes (`sync.discovery_interval`; with several instances sharing Redis, an instance
+may take up to about twice that) and serves it once it's cloned and indexed, usually within a minute after
 that. [vaults.md](vaults.md) has every option.
 
 ## 7. Connect a client
@@ -247,7 +250,8 @@ For local development, `public_url` may be `http://localhost:<port>` or `http://
 
 Speki reads the YAML file, then environment variables, which win. The file is decoded strictly: an unknown
 key fails with its line number, so a typo doesn't go unnoticed. Speki refuses to start when something
-required is missing or a value is invalid, and lists every problem at once.
+required is missing or a value is invalid, and lists every problem at once. YAML anchors, aliases and merge
+keys (`<<`) aren't supported in the file.
 
 Every key has an environment variable: `SPEKI_` plus the key's path in upper case with `_` between parts, so
 `telemetry.log_level` is `SPEKI_TELEMETRY_LOG_LEVEL`. Lists are comma-separated. Durations use Go syntax
@@ -271,14 +275,14 @@ read, so a config file baked into an image can be overridden at deploy time.
 | `access.required_orgs` | none | Users must be an active member of at least one of these organizations |
 | `auth.key` | | A single key, standard base64 of at least 32 random bytes |
 | `auth.keys` | | The contents of a key file, usually given as `keys_file`. Exactly one of `key` and `keys` |
-| `auth.client_metadata_hosts` | `claude.ai` | Hosts whose client metadata documents are accepted. Empty means the default |
+| `auth.client_metadata_hosts` | `claude.ai` | Hosts whose client metadata documents are accepted, as bare lowercase host names (`claude.ai`, not `https://claude.ai`). Empty means the default |
 | `sync.data_dir` | `data` | Git copies and search indexes. Local disk |
 | `sync.poll_interval` | `1m` | How often to check vaults for new commits |
 | `sync.discovery_interval` | `5m` | How often to look for new and removed vaults |
 | `redis.url` | none | `redis://` or `rediss://`, password included. Needed for more than one instance. Usually `url_file` |
 | `telemetry.log_level` | `info` | `debug`, `info`, `warn` or `error` |
 | `telemetry.tracing` | false | Send OpenTelemetry traces where the `OTEL_EXPORTER_OTLP_*` variables say |
-| `instance.name` | none | Lowercase letters, digits and dashes, at most 32. The server is called `speki-<name>` |
+| `instance.name` | none | Lowercase letters, digits and dashes, starting with a letter or digit, at most 32. The server is called `speki-<name>` |
 | `instance.title` | none | One line, at most 100 characters. Shown on the sign-in page and in `guide` |
 | `instance.description` | none | What belongs in this speki, at most 300 characters. Opens the agents' instructions |
 | `sqlite.memory_limit_mib` | `1024` | SQLite's memory limit for the whole process. 128 to 1048576 |
@@ -287,7 +291,9 @@ read, so a config file baked into an image can be overridden at deploy time.
 Without `instance`, speki calls itself `speki` and describes itself as the team's knowledge base. Set it when
 people may connect to more than one speki, so their agents know which one to search and where to write.
 
-`config.example.yaml` in the repository has every key with comments.
+`config.example.yaml` in the repository has every key an operator normally sets, with comments.
+`github.api_url`, `github.git_url` and `github.oauth_url` point speki at another GitHub (defaults
+`https://api.github.com/`, `https://github.com` and `https://github.com`) and are meant for tests.
 
 ## Keys
 
@@ -338,8 +344,10 @@ under any other ID signs everyone out.
 
 ## Building
 
-The search index uses SQLite through cgo, so a build needs Go and a C compiler. The build tags enable SQLite's
-full-text search and leave out extension loading; without `sqlite_fts5` the build fails.
+The search index uses SQLite through cgo, so a build needs Go and a C compiler. `go.mod` pins the Go
+toolchain; with the default `GOTOOLCHAIN=auto`, an older local Go downloads it. The build tags enable
+SQLite's full-text search (`sqlite_fts5`) and leave out extension loading (`sqlite_omit_load_extension`). The
+build fails without either, so a binary can never link SQLite's extension loading.
 
 ```sh
 task build    # writes bin/speki
@@ -358,8 +366,22 @@ The Dockerfile builds the same binary into a distroless image that runs as a non
 docker build --build-arg VERSION=1.0.0 -t speki .
 ```
 
-Each GitHub release publishes the image to `ghcr.io/xaroth/speki`, tagged with its version (`1.2.3`) and its
-minor version (`1.2`). Releases that aren't prereleases also move `latest`.
+Publishing a GitHub release first runs CI (lint and tests) on the tagged commit. It then builds the image for
+linux/amd64 and linux/arm64 and pushes it to `ghcr.io/xaroth/speki`, tagged with its version (`1.2.3`).
+Releases that aren't prereleases also get the minor version (`1.2`) and move `latest`. Each platform image
+carries an SBOM and build provenance, and the multi-platform image is signed with cosign keyless signing. To
+check that an image came from this repository's release workflow:
 
-Other tasks: `task test` (with the race detector), `task lint`, `task vet`, `task vuln`, `task fuzz`, and
-`task ci`, which runs what CI runs on a pull request.
+```sh
+cosign verify ghcr.io/xaroth/speki:1.2.3 \
+  --certificate-identity-regexp '^https://github.com/xaroth/speki/.github/workflows/release.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+docker buildx imagetools inspect ghcr.io/xaroth/speki:1.2.3 --format '{{json .Provenance}}'
+docker buildx imagetools inspect ghcr.io/xaroth/speki:1.2.3 --format '{{json .SBOM}}'
+```
+
+Other tasks: `task test` (with the race detector), `task lint`, `task vet`, `task vuln`, `task vuln:image`
+(scans the binary in a published image and fails on vulnerabilities that have a fix), `task fuzz`, `task run`
+(builds and runs with `./config.yaml`), and `task ci`, which runs what CI runs on a pull request.
+`govulncheck` runs weekly on the source and on the published image; a failure on the image means a release
+is due.

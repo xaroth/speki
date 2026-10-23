@@ -106,7 +106,9 @@ giving them write access.
 `readers` and `writers` list GitHub logins (`alice`) or teams as `org/team-slug`. A leading `@` is allowed,
 as in CODEOWNERS, but YAML needs quotes around it. Teams must belong to the organization that owns the
 vault, since that's the organization speki can ask GitHub about. Members of a child team count as members
-of its parent. Users are matched by login, so a renamed account needs its new login listed.
+of its parent. Users are matched by login, so a renamed account needs its new login listed. Speki learns
+the new login when the user's client next refreshes its access, within an hour of the rename. Until then the
+old login still matches.
 
 A key that's left out doesn't narrow anything. An empty list is rejected, so a typo can't silently open or
 close a vault.
@@ -122,6 +124,7 @@ Every file on the default branch whose name ends in `.md`, except:
 - symlinks and submodules, which could point outside the vault
 - files tracked by git LFS, since a clone only has the pointer
 - files over 1 MiB
+- paths with a control character, which git allows
 
 Other files (images, PDFs, code) can sit in the repository, but speki doesn't look at them. Binary files
 would need upload limits, content type checks, a way to return images to models, and decisions about LFS,
@@ -146,9 +149,11 @@ search index built from it.
 ### Discovery
 
 Every discovery round lists the app's installations, keeps those of allowed accounts, lists each one's
-repositories, and fetches `speki.yaml` only from repositories pushed to since the last round. With "all
-repositories" installs on large organizations, that keeps discovery from fetching hundreds of files every
-5 minutes.
+repositories, and fetches `speki.yaml` only from repositories pushed to, or whose default branch changed,
+since the last round. With "all repositories" installs on large organizations, that keeps discovery from
+fetching hundreds of files every 5 minutes. With Redis, the installation and repository lists are shared
+between instances, like branch heads below. Each instance still fetches `speki.yaml` itself, since an older
+shared copy would hide a new one until the next push.
 
 A vault is only removed on a definite answer: GitHub says the installation or repository is gone, the
 repository no longer has `speki.yaml`, the account isn't allowed anymore, or the installation is
@@ -167,7 +172,11 @@ uses go-git, a git implementation in Go, so the container image needs no git bin
 
 Each update fetches the new head at depth 1 and diffs the old and new trees locally. Every fetch leaves a
 pack file behind. When a copy has more than 50, speki clones it fresh next to the old one and swaps it in, at
-most once an hour, which is simpler and safer than repacking a shallow repository.
+most once an hour, which is simpler and safer than repacking a shallow repository. This also happens when the
+poller finds the vault current, since an instance's own writes add packs without the poller ever syncing. If
+a commit lands during the clone, the clone is thrown away and tried again 10 minutes later. If the swap fails,
+the old copy goes back in place and keeps serving; if it can't go back, the vault is marked broken and its next
+full sync clones it again.
 
 A vault is identified by its repository ID, not its name. After a rename or a transfer, the copy fetches
 from the new name with the new installation's credentials, and keeps its files and index. Before each
@@ -181,13 +190,26 @@ request. An unchanged head costs no rate limit. When the head moved, speki fetch
 changed files to the index. Twenty vaults polled every minute are about 1,200 requests an hour, nearly all
 free.
 
-Slower work runs in the background, four vaults at a time, so one vault can't hold up the others: a full
-rebuild, a fresh clone, opening a vault that failed, or switching to a new default branch (cloned next to
-the old copy while the old index keeps serving). A clone or build that makes no progress for 5 minutes is
+With Redis, instances share these answers. The first instance due to ask takes a 30-second lock in Redis,
+asks GitHub with the ETag of the shared answer, and stores the result. The others use it until it's 90% of
+the poll interval old, so N instances cost about as much of the rate limit as one. If Redis fails, each
+instance asks GitHub itself. Each instance still fetches its own git copy.
+
+Each poll round checks four vaults at a time. Slower work runs in the background, outside the round, so one
+vault can't hold up the others: a full rebuild, opening a vault that failed, or switching to a new default
+branch (cloned next to the old copy while the old index keeps serving). At most four of those run at once; a
+fresh clone that only compacts a copy doesn't count against them. A clone or build that makes no progress for 5 minutes is
 canceled and retried later. Large vaults that keep making progress are left to finish.
 
 A vault whose update fails keeps serving its last good index and shows the error on the status page. It's
-retried with backoff from 2 minutes up to 30.
+retried with backoff from 2 minutes up to 30. A failure from SQLite running out of memory, usually caused by
+other work such as a heavy query, is retried after a minute instead.
+
+On startup, speki serves every vault whose git copy and index on disk are usable, opening up to four at once.
+It checks each copy by walking its tree once, without the network. A copy it can't use is left in place and
+cloned again in the background once discovery finds the vault. An index file that can't be opened for a
+reason that may pass (a canceled start, too many open files) is kept; only a corrupt one, one of another
+schema, or one without a recorded commit is discarded.
 
 Writes through speki and, with Redis, change notices from other instances update the copy right away
 ([changes.md](changes.md#after-the-commit)). Polling is what guarantees changes made outside speki arrive.

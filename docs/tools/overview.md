@@ -117,8 +117,11 @@ Such a vault is never searched or read, but it isn't hidden either. `list` and `
 `state`. `search` and `query` without `vaults` name it in `skipped_vaults` and in one line of text:
 
 ```text
-Not searched, so this result says nothing about them: acme/new (still building its index; try again shortly)
+Not searched, so this result says nothing about them: acme/new (still building its index; try again shortly).
 ```
+
+`query` writes the same line starting "Not queried". A failed vault reads "failed to open; tell the user", a
+gone one "just removed or reopening; try again shortly".
 
 Naming such a vault in any tool fails with `unavailable`, saying which state it's in. A vault the user
 can't read answers `not_found`, the same as one that doesn't exist.
@@ -137,8 +140,15 @@ changed since. Changes to other documents in the vault don't cause conflicts. Se
 ## Results
 
 Every successful call returns structured content matching the tool's output schema, plus a text rendering
-of the same result for clients that only show text. Structured content carries raw values. The text is
-where the trust boundary is drawn.
+for clients that only show text. Document content, outlines and vault guidelines are in the text only,
+fenced, so vault text goes out once and never unfenced; the structured content keeps the metadata, with
+titles, descriptions and snippets raw. The text is where the trust boundary is drawn.
+
+A result is at most 80 KiB as it goes out, JSON-encoded, which keeps it under the roughly 25k tokens Claude
+Code accepts from an MCP tool by default; a bigger result is cut off or rejected before the agent sees it.
+`read` sizes each part to fit ([read.md](read.md#long-documents)), and `query` stops adding rows when the
+next one wouldn't fit ([query.md](query.md#limits)). A `read` whose metadata leaves less than 4 KiB for
+content can go over.
 
 Text that a vault supplies is untrusted. In the text rendering:
 
@@ -179,7 +189,7 @@ Error results carry no structured content, because it wouldn't match the tool's 
 | `not_found` | No such vault or document, or the user can't see it. Use `search` or `list` to find it |
 | `conflict` | The document changed since the given version. Includes the current version, unless the document was deleted |
 | `already_exists` | `write` without a version, or `move`, onto a path that's taken. Includes the current version when the path is a document |
-| `invalid` | Bad input: path, frontmatter, `old_text` not found or not unique, bad SQL, a letter-case collision. Says what and where |
+| `invalid` | Bad input: path, frontmatter, `old_text` not found or not unique, bad SQL, a letter-case collision, a cursor `list` or `history` didn't return. Says what and where |
 | `broken` | The file can't be parsed, so speki can't read or change it. Includes the reason and the current version. Only `delete` with that version works |
 | `no_write_access` | The user can read the vault but not write to it |
 | `read_only_session` | The user signed in read-only. Ask them to reconnect with write access |
@@ -188,7 +198,7 @@ Error results carry no structured content, because it wouldn't match the tool's 
 | `too_large` | Over a size limit, or a query needed more memory than queries may use. Says how to stay under it |
 | `timeout` | A query ran past 3 seconds, a search past 5, or the call ran out of its 50. After a change, read the document before retrying: it may have landed |
 | `rate_limited` | GitHub asked speki to slow down during a write. Says how long to wait |
-| `unavailable` | Something on speki's or GitHub's side: the vault is building, failed, gone or rebuilding, GitHub no longer accepts the sign-in, too many queries are running, or another change to the vault was still being committed after 15 seconds. Ends with a request ID for the operator |
+| `unavailable` | Something on speki's or GitHub's side: the vault is building, failed, gone or rebuilding, GitHub no longer accepts the sign-in, too many queries are running or speki is short of memory for one, or another change to the vault was still being committed after 15 seconds. Ends with a request ID for the operator |
 
 Any error that isn't one of these classes becomes `unavailable` with a generic message and the request ID,
 and the full error is logged under that ID. Raw GitHub and SQLite messages don't reach the agent, with two

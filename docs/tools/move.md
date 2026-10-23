@@ -14,7 +14,7 @@ links to it break.
 | `from` | the document's current path | required |
 | `to` | the new path, ending in `.md` | required |
 | `version` | the version of `from`, from `read` | required |
-| `message` | one-line commit message | `Move <from> to <to>` |
+| `message` | one-line commit message. Only its first line is used, cut to 200 bytes | `Move <from> to <to>` |
 
 ## What happens
 
@@ -41,14 +41,17 @@ markdown links, wikilinks and `related` entries all count.
   "linked_from": ["services/index.md", "runbooks/deploy.md"] }
 ```
 
+The text says "Moved in commit ...", gives the version, and lists the linking documents under "These
+documents link to the old path:".
+
 ## Errors
 
 | Code | When |
 |---|---|
 | `read_only_session`, `no_write_access` | The user can't write here |
-| `invalid` | No `version`; `from` and `to` are the same path; `to` isn't a path speki will write; a letter-case collision |
+| `invalid` | No `version`; `from` and `to` are the same path, also when they differ only in Unicode normalization; `to` isn't a path speki will write; `to` differs from an existing path only in letter case |
 | `not_found` | No such vault or document at `from` |
-| `already_exists` | `to` is taken. Includes the version when it's a document |
+| `already_exists` | `to` is taken by a document (with its version), a file speki doesn't index, a folder, or the same path in another Unicode normalization |
 | `conflict` | `from` changed since `version`, or the vault kept changing while speki tried to commit |
 | `broken` | `from` can't be parsed. Only `delete` works on it |
 | `vault_read_only`, `secret_detected`, `rate_limited` | GitHub refused the commit |

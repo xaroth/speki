@@ -17,7 +17,7 @@ no longer appears, the edit fails instead of landing in the wrong place.
 | `new_text` | the replacement | required |
 | `replace_all` | replace every occurrence instead of requiring exactly one | false |
 | `version` | the version the agent read | optional, recommended |
-| `message` | one-line commit message | `Update <path>` |
+| `message` | one-line commit message. Only its first line is used, cut to 200 bytes | `Update <path>` |
 
 ## What happens
 
@@ -28,7 +28,8 @@ no longer appears, the edit fails instead of landing in the wrong place.
    twice and is ambiguous. Zero matches, or more than one without `replace_all`, is `invalid`, with the
    count when there are several. With `replace_all`, every non-overlapping occurrence is replaced.
 4. The result must still be a valid document, and must not add problems the document didn't have
-   ([documents.md](../documents.md#what-a-change-may-do)). Speki sets `updated` and commits.
+   ([documents.md](../documents.md#what-a-change-may-do)). Frontmatter that isn't valid YAML is always
+   refused, because speki rewrites the block to set `updated`. Speki sets `updated` and commits.
 
 Because `edit` works on raw bytes, an agent can change frontmatter with it too, and speki still checks the
 outcome.

@@ -22,8 +22,8 @@ semantic or embedding search. For questions about metadata and links rather than
 
 Titles, aliases and file names are also matched by substring, so "auth" finds a document titled
 "OAuthProvider" and "proxy" finds `esi-proxy.md`. Only file names count, not folders, or "ops" would match
-everything under `ops/`. Substring matches rank below every full-text match in the same vault. They need words of at least 3
-letters.
+everything under `ops/`. Substring matches score half the lowest full-text match in the same vault, and at
+most 0.01, so they rank below every full-text match there. They need words of at least 3 letters.
 
 ## Typo correction
 
@@ -60,8 +60,12 @@ rare across the vault and when it makes up more of a short field. Matches are we
 A `deprecated` document's score is halved, inside the ranking, so deprecated documents can't push active
 ones out of the top results. A `draft` keeps its score. Broken documents aren't searchable.
 
-Each vault has its own index and its own idea of which words are rare, so a hit in a small vault can rank
-slightly higher than the same hit in a large one. Speki merges raw scores across vaults and accepts that.
+Each vault has its own index and its own idea of which words are rare, so raw scores from different vaults
+don't compare. Scores are therefore relative to the best match in the same vault: it scores 1 (0.5 if
+deprecated), and the others score their share of it. Results from all vaults are merged on that score, then by
+vault and path, so the best match of a small vault isn't buried under a large vault's weaker ones. A score says
+how good a match is within its vault, not overall. Dividing by the best score keeps how much better one hit is
+than the next within a vault, at the cost of treating every vault's best match as equally good.
 
 ## Snippets
 
@@ -72,7 +76,9 @@ Each result has a snippet of up to 32 words from the body around the best match,
 
 `path` keeps documents under a folder, `tags` keeps documents that have all the given tags, and
 `exclude_deprecated` drops deprecated ones. `repository` searches only the vaults that cover a code
-repository ([vaults.md](vaults.md#repositories)).
+repository ([vaults.md](vaults.md#repositories)). Filters apply inside the ranking, each answered by an
+index, so a filtered search ranks only up to the limit and never reads the bodies of documents it filters
+out.
 
 ## Limits
 
@@ -105,8 +111,8 @@ Extension loading is compiled out.
 
 ## Measured
 
-On generated vaults of documents of about 5 KB, limited to 4 cores. `library/index/measure_internal_test.go`
-repeats these with `SPEKI_MEASURE=1`.
+Measured 2026-10-10 on generated vaults of documents of about 5 KB, limited to 4 cores.
+`TestMeasure` in `library/index/build_internal_test.go` repeats these with `SPEKI_MEASURE=1`.
 
 | What | Result |
 |---|---|

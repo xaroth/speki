@@ -132,8 +132,10 @@ People edit vaults in Obsidian, on github.com and in their editor, and speki can
 frontmatter it wouldn't accept. So reading is lenient:
 
 - A field with the wrong type is ignored on its own: a `status` of `wip`, a `title` that's a list.
-- `tags` written as one string (`tags: a, b`), which Obsidian allows, is split on commas, with a warning.
-- Frontmatter that isn't valid YAML, isn't a mapping, repeats a key or uses anchors is ignored as a whole.
+- A list field written as one string (`tags: a, b`), which Obsidian allows for tags, is split on commas, with
+  a warning. That applies to `tags`, `aliases` and `related`.
+- Frontmatter that isn't valid YAML, holds more than one YAML document, isn't a mapping, has property names
+  that aren't plain text, repeats a key or uses anchors is ignored as a whole.
   The title then comes from the first heading or the path, and the body is still searchable.
 - More than 20 tags or 10 aliases are kept, with a warning.
 

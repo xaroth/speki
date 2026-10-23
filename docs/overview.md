@@ -94,7 +94,7 @@ Instance
 │                          │                                   │
 │                  per vault: shallow git copy + SQLite index  │
 │                                                              │
-│  short-lived state: memory, or Redis for several instances   │
+│  shared state: memory, or Redis for several instances        │
 └──────────────────────────────────────────────────────────────┘
         │ GitHub REST/GraphQL           │ git fetch
         ▼                               ▼
@@ -136,7 +136,7 @@ The [tools](tools/overview.md) are:
 | [`edit`](tools/edit.md) | Replaces an exact piece of text in a document |
 | [`move`](tools/move.md) | Moves or renames a document |
 | [`delete`](tools/delete.md) | Deletes a document |
-| [`history`](tools/history.md) | Shows recent commits for a vault or a document |
+| [`history`](tools/history.md) | Shows recent commits for a vault or a document, a page at a time |
 
 ## What speki doesn't do
 
