@@ -14,7 +14,7 @@ type ReadInput struct {
 	Vault     string `json:"vault" jsonschema:"the vault, owner/repo"`
 	Path      string `json:"path" jsonschema:"the document's path in the vault, e.g. services/edge-proxy.md"`
 	FromLine  int    `json:"from_line,omitempty" jsonschema:"first line to return, counting from 1 at the top of the file. Default 1"`
-	LineCount int    `json:"line_count,omitempty" jsonschema:"how many lines to return. Default: as many as fit in 1,000 lines and one answer"`
+	LineCount int    `json:"line_count,omitempty" jsonschema:"how many lines to return. Default: as many as fit in 1,000 lines and about 75 KiB"`
 }
 
 // Metadata is a document's frontmatter, as speki understands it.

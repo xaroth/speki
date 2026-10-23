@@ -15,7 +15,7 @@ type ListInput struct {
 	Repository string `json:"repository,omitempty" jsonschema:"without a vault: list only the vaults covering this code repository. Pass its git remote URL or host/owner/repo"`
 	Path       string `json:"path,omitempty" jsonschema:"the folder to list, relative to the vault root. Leave out for the root"`
 	Recursive  bool   `json:"recursive,omitempty" jsonschema:"list documents in subfolders too, instead of one entry per subfolder"`
-	Cursor     string `json:"cursor,omitempty" jsonschema:"next_cursor from the previous call, to get the next page"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"the cursor the previous call gave, to get the next page"`
 }
 
 // DocumentSummary is a document in a listing.

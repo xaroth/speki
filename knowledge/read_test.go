@@ -91,7 +91,7 @@ func TestRead(t *testing.T) {
 			name: "byte cap",
 			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "bytes.md"},
 			check: func(t *testing.T, p knowledge.Page) {
-				room := knowledge.MaxReadBytes - knowledge.MetadataSize(p.Document)
+				room := knowledge.MaxReadBytes
 				if want := room / knowledge.TextSize(long); p.LineCount != want || len(p.Content) != want*len(long) {
 					t.Errorf("got %d lines, %d bytes, want %d whole lines", p.LineCount, len(p.Content), want)
 				}
@@ -110,7 +110,7 @@ func TestRead(t *testing.T) {
 			name: "cut before a character the cap would split",
 			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "straddle.md"},
 			check: func(t *testing.T, p knowledge.Page) {
-				want := knowledge.MaxReadBytes - knowledge.MetadataSize(p.Document) - knowledge.WarningsSize(p.Warnings)
+				want := knowledge.MaxReadBytes - knowledge.WarningsSize(p.Warnings)
 				if len(p.Content) < want-1 || len(p.Content) > want || !strings.HasSuffix(p.Content, "é") || !utf8.ValidString(p.Content) {
 					t.Errorf("got %d bytes, valid UTF-8 %t, want %d or one less, ending in é", len(p.Content), utf8.ValidString(p.Content), want)
 				}
@@ -121,7 +121,7 @@ func TestRead(t *testing.T) {
 			name: "markup counts as escaped",
 			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "angles.md", MaxBytes: 20_000},
 			check: func(t *testing.T, p knowledge.Page) {
-				room := 20_000 - knowledge.MetadataSize(p.Document) - knowledge.OutlineSize(p.Outline)
+				room := 20_000 - knowledge.OutlineSize(p.Outline)
 				if want := room / (99*len(`\u0026lt;`) + 2); p.LineCount != want {
 					t.Errorf("got %d lines, want %d", p.LineCount, want)
 				}
@@ -193,17 +193,17 @@ func TestRead(t *testing.T) {
 	}
 }
 
-// Metadata that fills a read's cap on its own leaves out the outline, and every page still shows
-// content, so paging reaches the end.
-func TestReadLargeMetadata(t *testing.T) {
+// An outline that fills a read's cap on its own is left out, and every page still shows content, so
+// paging reaches the end.
+func TestReadLargeOutline(t *testing.T) {
 	t.Parallel()
 	var doc strings.Builder
-	doc.WriteString("---\ntitle: Fat\nnote: " + strings.Repeat("z", 30_000) + "\n---\n")
+	doc.WriteString("---\ntitle: Fat\n---\n")
 	for i := range 300 {
 		fmt.Fprintf(&doc, "# Heading %d\nbody\n", i)
 	}
 	f := newFixture(t, withKB(map[string]string{"fat.md": doc.String()}))
-	const maxBytes = 20_000
+	const maxBytes = 6_000
 	for from, pages := 1, 0; ; pages++ {
 		if pages == 100 {
 			t.Fatalf("still at line %d after %d pages", from, pages)
@@ -211,9 +211,6 @@ func TestReadLargeMetadata(t *testing.T) {
 		p, err := f.base.Read(t.Context(), f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: "fat.md", FromLine: from, MaxBytes: maxBytes})
 		if err != nil {
 			t.Fatalf("Read from %d: %v", from, err)
-		}
-		if knowledge.MetadataSize(p.Document) <= maxBytes {
-			t.Fatalf("metadata takes %d bytes, want more than %d", knowledge.MetadataSize(p.Document), maxBytes)
 		}
 		if p.LineCount < 1 || p.Content == "" || len(p.Outline) != 0 {
 			t.Fatalf("from %d: got %d lines, %d bytes, an outline of %d, want content and no outline", from, p.LineCount, len(p.Content), len(p.Outline))
