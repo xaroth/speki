@@ -67,7 +67,7 @@ The message is the first line of the agent's `message`, or a default (`Create <p
 `Move <from> to <to>`, `Delete <path>`), cut to 200 bytes. Speki then adds two trailers:
 
 ```text
-Update services/esi-proxy.md
+Update services/edge-proxy.md
 
 Speki-Client: claude.ai
 Speki-Request: 5f0c2a9e41b7d3c8e6a1f092

@@ -158,7 +158,7 @@ Text that a vault supplies is untrusted. In the text rendering:
   ```text
   <document boundary="9f3c1a7e5b2d8c40">
   ---
-  title: ESI proxy
+  title: Edge proxy
   ...
   </document boundary="9f3c1a7e5b2d8c40">
   ```
@@ -178,7 +178,7 @@ A failed call returns `isError: true` and text only, starting with a code, then 
 next:
 
 ```text
-conflict: services/esi-proxy.md changed since you read it. Current version:
+conflict: services/edge-proxy.md changed since you read it. Current version:
 3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1. Read it again and redo your change.
 ```
 

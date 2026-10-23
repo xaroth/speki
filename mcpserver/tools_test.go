@@ -207,8 +207,10 @@ func (s *safeBuffer) logged(tb testing.TB, msg string) []map[string]any {
 	return lines
 }
 
+const noConclusion = "Don't conclude something is undocumented, or write a document that may duplicate one there."
+
 const notCovered = "ours/new (still building its index; try again shortly), ours/old (failed to open; tell the user), " +
-	"ours/was (just removed or reopening; try again shortly).\n"
+	"ours/was (just removed or reopening; try again shortly). " + noConclusion + "\n"
 
 var (
 	skipped = []knowledge.Skipped{
@@ -277,7 +279,7 @@ func TestTools(t *testing.T) {
 		{
 			name: "list a folder",
 			kb: &fakeKB{listing: knowledge.Listing{
-				Folders:    []string{"services/esi/"},
+				Folders:    []string{"services/edge/"},
 				Documents:  []index.Entry{{Path: "services/a.md", Title: "A\nB", Description: "About A.", Status: "active", Updated: "2026-10-09", Version: version}},
 				NextCursor: "services/a.md",
 				Guidelines: "Short pages.",
@@ -285,7 +287,7 @@ func TestTools(t *testing.T) {
 			tool:    "list",
 			args:    map[string]any{"vault": "ours/kb", "path": "services", "recursive": true, "cursor": "services/0.md"},
 			wantReq: knowledge.ListRequest{Vault: "ours/kb", Path: "services", Recursive: true, Cursor: "services/0.md"},
-			wantText: "services/esi/\nservices/a.md  A B  version " + version + "\n" +
+			wantText: "services/edge/\n<results boundary=\"B\">\nservices/a.md  A B  updated 2026-10-09  version " + version + "\n  About A.\n</results boundary=\"B\">\n" +
 				"More entries follow: call list again with cursor \"services/a.md\".\n" +
 				"<guidelines boundary=\"B\">\nShort pages.\n</guidelines boundary=\"B\">\n",
 		},
@@ -302,7 +304,7 @@ func TestTools(t *testing.T) {
 			kb: &fakeKB{search: knowledge.SearchResult{
 				Results: index.Results{
 					Hits: []index.Hit{
-						{Source: "ours/kb", Path: "services/esi-proxy.md", Title: "ESI\u202eproxy", Description: "The proxy.", Tags: []string{"esi"}, Status: "deprecated", Updated: "2026-10-09", Version: version, Snippet: "the **proxy**\ncaches", Score: 12.4},
+						{Source: "ours/kb", Path: "services/edge-proxy.md", Title: "Edge\u202eproxy", Description: "The proxy.", Tags: []string{"edge"}, Status: "deprecated", Updated: "2026-10-09", Version: version, Snippet: "the **proxy**\ncaches", Score: 12.4},
 						{Source: "ours/kb", Path: "b.md", Title: "B", Status: "active", Version: version, Snippet: "b", Score: 1},
 					},
 					Corrected: map[string]string{"proxi": "proxy"},
@@ -311,13 +313,13 @@ func TestTools(t *testing.T) {
 				Skipped: skipped,
 			}},
 			tool:    "search",
-			args:    map[string]any{"query": "proxi caches", "path": "services", "tags": []string{"esi"}, "exclude_deprecated": true, "limit": 5},
-			wantReq: knowledge.SearchRequest{Query: "proxi caches", Path: "services", Tags: []string{"esi"}, ExcludeDeprecated: true, Limit: 5},
+			args:    map[string]any{"query": "proxi caches", "path": "services", "tags": []string{"edge"}, "exclude_deprecated": true, "limit": 5},
+			wantReq: knowledge.SearchRequest{Query: "proxi caches", Path: "services", Tags: []string{"edge"}, ExcludeDeprecated: true, Limit: 5},
 			wantText: "Not searched, so this result says nothing about them: " + notCovered +
 				"No document has \"proxi\"; searched for \"proxy\" instead.\n" +
 				"No document matched every word; these match some of them.\n" +
-				"<results boundary=\"B\">\nours/kb services/esi-proxy.md  ESIproxy [deprecated]  version " + version + "\nthe **proxy** caches\n" +
-				"\nours/kb b.md  B  version " + version + "\nb\n</results boundary=\"B\">\n",
+				"<results boundary=\"B\">\nours/kb services/edge-proxy.md  Edgeproxy [deprecated]  updated 2026-10-09\nThe proxy.\nthe **proxy** caches\n" +
+				"\nours/kb b.md  B\nb\n</results boundary=\"B\">\n",
 		},
 		{
 			name:     "list vaults covering a repository",
@@ -341,7 +343,7 @@ func TestTools(t *testing.T) {
 			tool:     "search",
 			args:     map[string]any{"query": "x", "repository": "ours/api"},
 			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
-			wantText: "Searched the vaults covering github.com/ours/api: ours/kb, ours/ro.\nNo documents found. Try other words, or list a vault to browse it.\n",
+			wantText: "Searched the vaults covering github.com/ours/api: ours/kb, ours/ro.\nNo documents found. Try other words, or list a vault to browse it. If you work it out, write it back.\n",
 		},
 		{
 			name:     "search a repository no named vault covers",
@@ -357,7 +359,7 @@ func TestTools(t *testing.T) {
 			tool:     "search",
 			args:     map[string]any{"query": "x", "repository": "ours/api"},
 			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
-			wantText: "Not searched, so this result says nothing about them: ours/new (still building its index; try again shortly).\n",
+			wantText: "Not searched, so this result says nothing about them: ours/new (still building its index; try again shortly). " + noConclusion + "\n",
 		},
 		{
 			name:     "search finds nothing",
@@ -365,7 +367,7 @@ func TestTools(t *testing.T) {
 			tool:     "search",
 			args:     map[string]any{"query": "x", "vaults": []string{"ours/kb"}},
 			wantReq:  knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/kb"}},
-			wantText: "No documents found. Try other words, or list a vault to browse it.\n",
+			wantText: "No documents found. Try other words, or list a vault to browse it. If you work it out, write it back.\n",
 		},
 		{
 			name: "read part of a document",
@@ -751,7 +753,7 @@ func TestToolCallsAreLogged(t *testing.T) {
 func BenchmarkTool(b *testing.B) {
 	kb := &fakeKB{
 		search: knowledge.SearchResult{Results: index.Results{Hits: []index.Hit{
-			{Source: "ours/kb", Path: "services/esi-proxy.md", Title: "ESI proxy", Status: "active", Version: version, Snippet: "the **proxy** caches", Score: 12.4},
+			{Source: "ours/kb", Path: "services/edge-proxy.md", Title: "Edge proxy", Status: "active", Version: version, Snippet: "the **proxy** caches", Score: 12.4},
 		}}},
 		page: knowledge.Page{
 			Vault: "ours/kb", Document: index.Document{Path: "a.md", Title: "A", Status: "active", Version: version},

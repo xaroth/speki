@@ -58,7 +58,7 @@ Runbooks nobody touched this year:
 What links to a document:
 
     SELECT vault, path, text FROM links
-    WHERE vault = 'owner/repo' AND target_path = 'services/esi-proxy.md';
+    WHERE vault = 'owner/repo' AND target_path = 'services/edge-proxy.md';
 
 Links that point at nothing:
 

@@ -33,9 +33,9 @@ func newSandbox(tb testing.TB) *index.Sandbox {
 func sandboxFixture(tb testing.TB) (*index.Sandbox, []index.Source, *index.Index) {
 	tb.Helper()
 	ours := newIndex(tb, map[string]string{
-		"runbooks/deploy.md":    "---\ntitle: Deploy\ntags: [runbook]\nupdated: 2025-03-01T00:00:00Z\nowner: ops\n---\n# Deploy\n\n## Steps\n\nClear the cache before invalidation of the proxy.\n",
-		"runbooks/restart.md":   "---\ntitle: Restart\ntags: [runbook]\nupdated: 2026-05-01T00:00:00Z\n---\n# Restart\n\nSee [deploy](deploy.md) and [gone](nowhere.md) and [ESI](../services/esi-proxy.md).\n",
-		"services/esi-proxy.md": "---\ntitle: ESI proxy\nstatus: active\nupdated: 2026-09-01T00:00:00Z\n---\n# ESI proxy\n\nThe cache and its invalidation rules.\n",
+		"runbooks/deploy.md":     "---\ntitle: Deploy\ntags: [runbook]\nupdated: 2025-03-01T00:00:00Z\nowner: ops\n---\n# Deploy\n\n## Steps\n\nClear the cache before invalidation of the proxy.\n",
+		"runbooks/restart.md":    "---\ntitle: Restart\ntags: [runbook]\nupdated: 2026-05-01T00:00:00Z\n---\n# Restart\n\nSee [deploy](deploy.md) and [gone](nowhere.md) and [edge](../services/edge-proxy.md).\n",
+		"services/edge-proxy.md": "---\ntitle: Edge proxy\nstatus: active\nupdated: 2026-09-01T00:00:00Z\n---\n# Edge proxy\n\nThe cache and its invalidation rules.\n",
 	})
 	other := newIndex(tb, map[string]string{
 		"notes.md": "---\ntitle: Notes\ntags: [runbook]\n---\nNothing about caches.\n",
@@ -85,8 +85,8 @@ func TestQueryExamples(t *testing.T) {
 		{
 			name: "what links to a document",
 			sql: `SELECT vault, path, text FROM links
-				WHERE vault = 'ours/kb' AND target_path = 'services/esi-proxy.md';`,
-			want: index.Rows{Columns: []string{"vault", "path", "text"}, Rows: [][]any{{"ours/kb", "runbooks/restart.md", "ESI"}}},
+				WHERE vault = 'ours/kb' AND target_path = 'services/edge-proxy.md';`,
+			want: index.Rows{Columns: []string{"vault", "path", "text"}, Rows: [][]any{{"ours/kb", "runbooks/restart.md", "edge"}}},
 		},
 		{
 			name: "links that point at nothing",
@@ -108,7 +108,7 @@ func TestQueryExamples(t *testing.T) {
 				ORDER BY d.updated DESC LIMIT 20;`,
 			want: index.Rows{
 				Columns: []string{"vault", "path", "updated"},
-				Rows:    [][]any{{"ours/kb", "services/esi-proxy.md", "2026-09-01T00:00:00Z"}, {"ours/kb", "runbooks/deploy.md", "2025-03-01T00:00:00Z"}},
+				Rows:    [][]any{{"ours/kb", "services/edge-proxy.md", "2026-09-01T00:00:00Z"}, {"ours/kb", "runbooks/deploy.md", "2025-03-01T00:00:00Z"}},
 			},
 		},
 		{

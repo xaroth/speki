@@ -89,6 +89,7 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 	for _, f := range l.Folders {
 		fmt.Fprintf(&b, "%s\n", oneLine(f))
 	}
+	var docs strings.Builder
 	for _, e := range l.Documents {
 		out.Documents = append(out.Documents, DocumentSummary{
 			Path:        e.Path,
@@ -98,7 +99,13 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 			Updated:     e.Updated,
 			Version:     e.Version,
 		})
-		fmt.Fprintf(&b, "%s  %s  version %s\n", oneLine(e.Path), oneLine(e.Title), e.Version)
+		fmt.Fprintf(&docs, "%s  %s  version %s\n", oneLine(e.Path), docSummary(e.Title, string(e.Status), e.Updated), e.Version)
+		if e.Description != "" {
+			fmt.Fprintf(&docs, "  %s\n", oneLine(e.Description))
+		}
+	}
+	if docs.Len() > 0 {
+		b.WriteString(fence("results", docs.String()))
 	}
 	if len(l.Folders)+len(l.Documents) == 0 {
 		b.WriteString("This vault has no documents yet.\n")

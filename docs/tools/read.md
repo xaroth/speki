@@ -22,9 +22,9 @@ A `line_count` over 1,000 is treated as 1,000.
 ## Output
 
 ```json
-{ "vault": "acme/kb", "path": "services/esi-proxy.md",
+{ "vault": "acme/kb", "path": "services/edge-proxy.md",
   "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1",
-  "metadata": { "title": "ESI proxy", "tags": ["esi", "proxy"], "status": "active",
+  "metadata": { "title": "Edge proxy", "tags": ["edge", "proxy"], "status": "active",
                 "updated": "2026-10-09T14:02:11Z" },
   "from_line": 1, "line_count": 212, "total_lines": 212 }
 ```
@@ -63,11 +63,11 @@ notes: a cut outline, a left-out outline, or a cut line. The key is left out whe
 ## Text rendering
 
 ```text
-acme/kb services/esi-proxy.md
+acme/kb services/edge-proxy.md
 version 3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1, lines 1-212 of 212
 <document boundary="9f3c1a7e5b2d8c40">
 ---
-title: ESI proxy
+title: Edge proxy
 ...
 </document boundary="9f3c1a7e5b2d8c40">
 ```

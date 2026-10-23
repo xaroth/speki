@@ -44,7 +44,7 @@ func changeOutput(r knowledge.Result, what string) (ChangeOutput, string) {
 // WriteInput creates or replaces a document.
 type WriteInput struct {
 	Vault   string `json:"vault" jsonschema:"the vault, owner/repo"`
-	Path    string `json:"path" jsonschema:"the document's path in the vault, ending in .md, e.g. services/esi-proxy.md"`
+	Path    string `json:"path" jsonschema:"the document's path in the vault, ending in .md, e.g. services/edge-proxy.md"`
 	Content string `json:"content" jsonschema:"the whole document: markdown with YAML frontmatter"`
 	Version string `json:"version,omitempty" jsonschema:"the version being replaced, from read. Leave out to create a new document"`
 	Message string `json:"message,omitempty" jsonschema:"a one-line commit message. Default: Create <path> or Update <path>"`

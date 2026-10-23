@@ -88,7 +88,7 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 		b.WriteString("No document matched every word; these match some of them.\n")
 	}
 	if len(res.Hits) == 0 {
-		b.WriteString("No documents found. Try other words, or list a vault to browse it.\n")
+		b.WriteString("No documents found. Try other words, or list a vault to browse it. If you work it out, write it back.\n")
 	}
 	var hits strings.Builder
 	for i, h := range res.Hits {
@@ -104,18 +104,30 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 			Snippet:     h.Snippet,
 			Score:       h.Score,
 		})
-		status := ""
-		if h.Status != "" && h.Status != document.StatusActive {
-			status = " [" + oneLine(string(h.Status)) + "]"
-		}
 		if i > 0 {
 			hits.WriteString("\n")
 		}
-		fmt.Fprintf(&hits, "%s %s  %s%s  version %s\n%s\n",
-			oneLine(h.Source), oneLine(h.Path), oneLine(h.Title), status, h.Version, oneLine(h.Snippet))
+		fmt.Fprintf(&hits, "%s %s  %s\n", oneLine(h.Source), oneLine(h.Path), docSummary(h.Title, string(h.Status), h.Updated))
+		if h.Description != "" {
+			fmt.Fprintf(&hits, "%s\n", oneLine(h.Description))
+		}
+		fmt.Fprintf(&hits, "%s\n", oneLine(h.Snippet))
 	}
 	if hits.Len() > 0 {
 		b.WriteString(fence("results", hits.String()))
 	}
 	return out, b.String(), nil
+}
+
+// docSummary is a document's title, its status when not active, and the day it was last updated, which
+// help an agent pick what to read.
+func docSummary(title, status, updated string) string {
+	s := oneLine(title)
+	if status != "" && status != string(document.StatusActive) {
+		s += " [" + oneLine(status) + "]"
+	}
+	if len(updated) >= len("2006-01-02") {
+		s += "  updated " + oneLine(updated[:len("2006-01-02")])
+	}
+	return s
 }

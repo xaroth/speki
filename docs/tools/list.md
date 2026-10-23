@@ -56,7 +56,7 @@ because an HTTPS remote can carry a token.
       "status": "active", "updated": "2026-10-09T14:02:11Z",
       "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1" }
   ],
-  "next_cursor": "services/esi-proxy.md" }
+  "next_cursor": "services/edge-proxy.md" }
 ```
 
 - Entries are sorted by path, at most 200 per call, folders included. Without `recursive`, each subfolder

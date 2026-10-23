@@ -81,17 +81,17 @@ func TestChanges(t *testing.T) {
 		},
 		{
 			name:        "edit",
-			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", OldText: "Run the job.", NewText: "Run the deploy job."},
-			wantChanges: []gh.FileChange{{Path: "services/esi-proxy.md", Content: []byte(strings.Replace(strings.Replace(esiProxy, "Run the job.", "Run the deploy job.", 1), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))}},
-			wantMessage: "Update services/esi-proxy.md",
-			wantResult:  knowledge.Result{Version: blobID(strings.Replace(strings.Replace(esiProxy, "Run the job.", "Run the deploy job.", 1), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))},
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "services/edge-proxy.md", OldText: "Run the job.", NewText: "Run the deploy job."},
+			wantChanges: []gh.FileChange{{Path: "services/edge-proxy.md", Content: []byte(strings.Replace(strings.Replace(edgeProxy, "Run the job.", "Run the deploy job.", 1), "tags: [edge]\n", "tags: [edge]\nupdated: "+nowStamp+"\n", 1))}},
+			wantMessage: "Update services/edge-proxy.md",
+			wantResult:  knowledge.Result{Version: blobID(strings.Replace(strings.Replace(edgeProxy, "Run the job.", "Run the deploy job.", 1), "tags: [edge]\n", "tags: [edge]\nupdated: "+nowStamp+"\n", 1))},
 		},
 		{
 			name:        "edit every match",
-			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", OldText: "ESI proxy", NewText: "ESI gateway", ReplaceAll: true},
-			wantChanges: []gh.FileChange{{Path: "services/esi-proxy.md", Content: []byte(strings.Replace(strings.ReplaceAll(esiProxy, "ESI proxy", "ESI gateway"), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))}},
-			wantMessage: "Update services/esi-proxy.md",
-			wantResult:  knowledge.Result{Version: blobID(strings.Replace(strings.ReplaceAll(esiProxy, "ESI proxy", "ESI gateway"), "tags: [esi]\n", "tags: [esi]\nupdated: "+nowStamp+"\n", 1))},
+			req:         knowledge.EditRequest{Vault: "ours/kb", Path: "services/edge-proxy.md", OldText: "Edge proxy", NewText: "Edge gateway", ReplaceAll: true},
+			wantChanges: []gh.FileChange{{Path: "services/edge-proxy.md", Content: []byte(strings.Replace(strings.ReplaceAll(edgeProxy, "Edge proxy", "Edge gateway"), "tags: [edge]\n", "tags: [edge]\nupdated: "+nowStamp+"\n", 1))}},
+			wantMessage: "Update services/edge-proxy.md",
+			wantResult:  knowledge.Result{Version: blobID(strings.Replace(strings.ReplaceAll(edgeProxy, "Edge proxy", "Edge gateway"), "tags: [edge]\n", "tags: [edge]\nupdated: "+nowStamp+"\n", 1))},
 		},
 		{
 			name:        "create with a key the vault allows",
@@ -102,10 +102,10 @@ func TestChanges(t *testing.T) {
 		},
 		{
 			name:        "create with related documents",
-			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "services/new.md", Content: "---\ntitle: New\nrelated: [esi-proxy.md, /README.md]\n---\n"},
-			wantChanges: []gh.FileChange{{Path: "services/new.md", Content: []byte("---\ntitle: New\nrelated: [esi-proxy.md, /README.md]\n" + dated + "---\n")}},
+			req:         knowledge.WriteRequest{Vault: "ours/kb", Path: "services/new.md", Content: "---\ntitle: New\nrelated: [edge-proxy.md, /README.md]\n---\n"},
+			wantChanges: []gh.FileChange{{Path: "services/new.md", Content: []byte("---\ntitle: New\nrelated: [edge-proxy.md, /README.md]\n" + dated + "---\n")}},
 			wantMessage: "Create services/new.md",
-			wantResult:  knowledge.Result{Version: blobID("---\ntitle: New\nrelated: [esi-proxy.md, /README.md]\n" + dated + "---\n")},
+			wantResult:  knowledge.Result{Version: blobID("---\ntitle: New\nrelated: [edge-proxy.md, /README.md]\n" + dated + "---\n")},
 		},
 		{
 			name:        "edit keeping a related document that's gone",
@@ -231,16 +231,16 @@ func TestChangeRejects(t *testing.T) {
 	t.Parallel()
 	nfd := norm.NFD.String
 	f := newFixture(t, withKB(map[string]string{
-		"README.md":             readme,
-		"services/esi-proxy.md": esiProxy,
-		"services/db/pg.md":     postgres,
-		"notes.txt":             "x",
-		"dir.md/inside.md":      "# Inside\n",
-		nfd("menü/brötchen.md"): "# Brötchen\n",
-		"café.md":               "# Café\n",
-		"body.md":               "# B\n\nab ab ab\n",
-		"taken.md":              "# Taken\n",
-		"broken.md":             "---\ntitle: [\n---\nBody text.\n",
+		"README.md":              readme,
+		"services/edge-proxy.md": edgeProxy,
+		"services/db/pg.md":      postgres,
+		"notes.txt":              "x",
+		"dir.md/inside.md":       "# Inside\n",
+		nfd("menü/brötchen.md"):  "# Brötchen\n",
+		"café.md":                "# Café\n",
+		"body.md":                "# B\n\nab ab ab\n",
+		"taken.md":               "# Taken\n",
+		"broken.md":              "---\ntitle: [\n---\nBody text.\n",
 	}))
 	f.copy(ours.RepoID).setFile("c1", "huge.md", []byte("too large to index"))
 	readOnly := access.NewGrant(access.User{Login: "octocat", Token: "ghu_x"}, []vault.Vault{ours, shared}, []int64{ours.RepoID})
@@ -248,7 +248,7 @@ func TestChangeRejects(t *testing.T) {
 		return knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content}
 	}
 	edit := func(oldText, newText string) knowledge.EditRequest {
-		return knowledge.EditRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", OldText: oldText, NewText: newText}
+		return knowledge.EditRequest{Vault: "ours/kb", Path: "services/edge-proxy.md", OldText: oldText, NewText: newText}
 	}
 	testCases := []struct {
 		name        string
@@ -265,7 +265,7 @@ func TestChangeRejects(t *testing.T) {
 		{name: "read-only session, bad delete", grant: readOnly, req: knowledge.DeleteRequest{Vault: "ours/kb", Path: "a.md"}, code: knowledge.CodeReadOnlySession},
 		{name: "no write access", req: knowledge.WriteRequest{Vault: "ours/shared", Path: "new.md", Content: "# New\n"}, code: knowledge.CodeNoWriteAccess},
 		{name: "write to a vault the user can't read", req: knowledge.WriteRequest{Vault: "ours/secret", Path: "x.md", Content: "# X\n"}, code: knowledge.CodeNotFound},
-		{name: "delete in a vault the user can't read", req: knowledge.DeleteRequest{Vault: "ours/secret", Path: "services/esi-proxy.md", Version: "v"}, code: knowledge.CodeNotFound},
+		{name: "delete in a vault the user can't read", req: knowledge.DeleteRequest{Vault: "ours/secret", Path: "services/edge-proxy.md", Version: "v"}, code: knowledge.CodeNotFound},
 
 		{name: "create over a document", req: write("README.md", "# New\n"), code: knowledge.CodeAlreadyExists, wantVersion: blobID(readme)},
 		{name: "create over a file the index skips", req: write("huge.md", "# New\n"), code: knowledge.CodeAlreadyExists},
@@ -283,12 +283,12 @@ func TestChangeRejects(t *testing.T) {
 
 		{name: "edit without old text", req: edit("", "x"), code: knowledge.CodeInvalid},
 		{name: "edit of text that isn't there", req: edit("not there", "x"), code: knowledge.CodeInvalid},
-		{name: "edit of text that's there twice", req: edit("ESI proxy", "Proxy"), code: knowledge.CodeInvalid, wantMessage: "2 times"},
+		{name: "edit of text that's there twice", req: edit("Edge proxy", "Proxy"), code: knowledge.CodeInvalid, wantMessage: "2 times"},
 		{name: "edit of overlapping matches", req: knowledge.EditRequest{Vault: "ours/kb", Path: "body.md", OldText: "ab ab", NewText: "x"}, code: knowledge.CodeInvalid, wantMessage: "2 times"},
 		{name: "create with a key the vault doesn't allow", req: write("new.md", "---\ntitle: A\npublish: true\n---\n"), code: knowledge.CodeInvalid, wantMessage: `"publish" can't be added`},
-		{name: "edit adding a key the vault doesn't allow", req: edit("tags: [esi]", "tags: [esi]\npublish: true"), code: knowledge.CodeInvalid, wantMessage: `"publish" can't be added`},
+		{name: "edit adding a key the vault doesn't allow", req: edit("tags: [edge]", "tags: [edge]\npublish: true"), code: knowledge.CodeInvalid, wantMessage: `"publish" can't be added`},
 		{name: "create with related to a missing document", req: write("new.md", "---\ntitle: A\nrelated: [README.md, nope.md, \"[[nope]]\"]\n---\n"), code: knowledge.CodeInvalid, wantMessage: `related: "nope.md" isn't a document in this vault; related: "[[nope]]"`},
-		{name: "edit to content that fails the checks", req: edit("tags: [esi]", "status: wip"), code: knowledge.CodeInvalid},
+		{name: "edit to content that fails the checks", req: edit("tags: [edge]", "status: wip"), code: knowledge.CodeInvalid},
 		{name: "edit keeping frontmatter that doesn't parse", req: knowledge.EditRequest{Vault: "ours/kb", Path: "broken.md", OldText: "Body text.", NewText: "Better text."}, code: knowledge.CodeInvalid},
 		{name: "edit of a stale version", req: knowledge.EditRequest{Vault: "ours/kb", Path: "services/db/pg.md", OldText: "Postgres", NewText: "PG", Version: "0000"}, code: knowledge.CodeConflict, wantVersion: blobID(postgres)},
 		{name: "edit of a missing document", req: knowledge.EditRequest{Vault: "ours/kb", Path: "gone.md", OldText: "x", NewText: "y"}, code: knowledge.CodeNotFound},
@@ -327,9 +327,9 @@ func TestChangeRejects(t *testing.T) {
 func TestBrokenDocument(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	const path = "services/esi-proxy.md"
-	old := blobID(esiProxy)
-	bad := "---\ntitle: ESI proxy\n---\n# ESI proxy\n\nA human's edit \xff\n"
+	const path = "services/edge-proxy.md"
+	old := blobID(edgeProxy)
+	bad := "---\ntitle: Edge proxy\n---\n# Edge proxy\n\nA human's edit \xff\n"
 	f.copy(ours.RepoID).apply(t, "c2", path, []byte(bad))
 	now := blobID(bad)
 
@@ -339,13 +339,13 @@ func TestBrokenDocument(t *testing.T) {
 		t.Errorf("got read error %+v, want broken at version %s", kerr, now)
 	}
 
-	content := "---\ntitle: ESI proxy\n---\nOverwritten.\n"
+	content := "---\ntitle: Edge proxy\n---\nOverwritten.\n"
 	testCases := []struct {
 		name string
 		req  any
 	}{
-		{name: "edit, old version", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "ESI", NewText: "X", Version: old}},
-		{name: "edit, current version", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "ESI", NewText: "X", Version: now}},
+		{name: "edit, old version", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "Edge", NewText: "X", Version: old}},
+		{name: "edit, current version", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "Edge", NewText: "X", Version: now}},
 		{name: "replace, old version", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content, Version: old}},
 		{name: "replace, current version", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content, Version: now}},
 		{name: "create", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content}},

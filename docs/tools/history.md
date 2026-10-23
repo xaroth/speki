@@ -16,8 +16,8 @@ client. Because every change through speki is a commit authored by the user, thi
 
 ```json
 { "commits": [
-  { "sha": "9c1e4b7a...", "author": "noorbergen", "date": "2026-10-09T14:02:11Z",
-    "message": "Update services/esi-proxy.md", "client": "claude.ai" }
+  { "sha": "9c1e4b7a...", "author": "octocat", "date": "2026-10-09T14:02:11Z",
+    "message": "Update services/edge-proxy.md", "client": "claude.ai" }
 ],
   "next_cursor": "4b17...:10" }
 ```

@@ -343,14 +343,14 @@ func TestHandshake(t *testing.T) {
 			name:       "zero identity",
 			wantName:   "speki",
 			wantTitle:  "Speki knowledge base",
-			wantPrefix: "Speki is this team's shared knowledge base: how our systems work",
+			wantPrefix: "Speki is this team's shared knowledge base, for what the code can't tell you",
 		},
 		{
 			name:       "instance with title and long description",
-			id:         mcpserver.Identity{Name: "work", Title: "Fenris work knowledge", Description: strings.Repeat("Runbooks and decisions. ", 13)[:300]},
+			id:         mcpserver.Identity{Name: "work", Title: "Acme work knowledge", Description: strings.Repeat("Runbooks and decisions. ", 13)[:300]},
 			wantName:   "speki-work",
-			wantTitle:  "Fenris work knowledge",
-			wantPrefix: `Speki "Fenris work knowledge": Runbooks and decisions. Runbooks`,
+			wantTitle:  "Acme work knowledge",
+			wantPrefix: `Speki "Acme work knowledge": Runbooks and decisions. Runbooks`,
 		},
 		{
 			name:       "text that needs escaping",

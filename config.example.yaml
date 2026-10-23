@@ -55,5 +55,5 @@ telemetry:
 # Optional: what this speki is, for people who connect to more than one.
 # instance:
 #   name: work                       # the server is called speki-work
-#   title: Fenris work knowledge
-#   description: Documentation for Fenris projects and services: architecture, runbooks and decisions.
+#   title: Acme work knowledge
+#   description: Documentation for Acme projects and services: architecture, runbooks and decisions.

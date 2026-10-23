@@ -21,11 +21,11 @@ contract.
 
 ```json
 { "results": [
-  { "vault": "acme/kb", "path": "services/esi-proxy.md",
-    "title": "ESI proxy", "description": "...", "tags": ["esi", "proxy"],
+  { "vault": "acme/kb", "path": "services/edge-proxy.md",
+    "title": "Edge proxy", "description": "...", "tags": ["edge", "proxy"],
     "status": "active", "updated": "2026-10-09T14:02:11Z",
     "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1",
-    "snippet": "... the proxy **caches** ESI responses for ...", "score": 1 }
+    "snippet": "... the proxy **caches** upstream responses for ...", "score": 1 }
 ],
   "corrected": { "kubrenetes": "kubernetes" },
   "relaxed": false,

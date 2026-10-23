@@ -147,7 +147,7 @@ func (id Identity) instructions() string {
 	if strings.TrimSpace(id.Title) != "" {
 		head = fmt.Sprintf("Speki %q: %s", oneLine(id.title()), desc)
 	}
-	return head + "\n\n" + instanceSearch + instructionsRest
+	return head + "\n\n" + instructionsRest
 }
 
 // New returns the MCP endpoint, with its tools.

@@ -19,7 +19,7 @@ limit.
 
 ```json
 { "columns": ["vault", "path", "updated"],
-  "rows": [["acme/kb", "services/esi-proxy.md", "2026-10-09T14:02:11Z"]],
+  "rows": [["acme/kb", "services/edge-proxy.md", "2026-10-09T14:02:11Z"]],
   "truncated": false,
   "skipped_vaults": [{ "vault": "acme/new", "state": "building" }] }
 ```
