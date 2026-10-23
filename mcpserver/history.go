@@ -15,7 +15,7 @@ type HistoryInput struct {
 	Vault  string `json:"vault" jsonschema:"the vault, owner/repo"`
 	Path   string `json:"path,omitempty" jsonschema:"only commits that changed this document. Leave out for the whole vault"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"how many commits, 1 to 50. Default 10"`
-	Cursor string `json:"cursor,omitempty" jsonschema:"next_cursor from the previous call with the same vault and path, to get older commits"`
+	Cursor string `json:"cursor,omitempty" jsonschema:"the cursor the previous call gave, with the same vault and path, to get older commits"`
 }
 
 // CommitSummary is one commit.

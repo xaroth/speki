@@ -2,7 +2,6 @@ package knowledge
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -31,8 +30,8 @@ type ReadRequest struct {
 	Path      string
 	FromLine  int // 1-based; 0 means 1
 	LineCount int // 0 means as many as fit
-	// MaxBytes caps what the page takes in an answer, JSON-encoded: content, outline, metadata and
-	// warnings. 0 means 64 KiB.
+	// MaxBytes caps what the page takes in an answer, JSON-encoded: content, outline and warnings. 0
+	// means 64 KiB.
 	MaxBytes int
 }
 
@@ -91,7 +90,6 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	if budget <= 0 {
 		budget = maxReadBytes
 	}
-	budget -= metadataSize(doc)
 	// The outline comes with a partial read, and counts against the budget, so it's worked out first.
 	partial := from > 1 || want < len(lines) || textSize(string(raw)) > budget-warningsSize(p.Warnings)
 	if partial {
@@ -104,7 +102,7 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 				p.Warnings = append(p.Warnings, warnings...)
 				budget -= outlineSize(o)
 			} else {
-				p.Warnings = append(p.Warnings, "the outline is left out: the metadata leaves too little room")
+				p.Warnings = append(p.Warnings, "the outline is left out: it leaves too little room for content")
 			}
 		}
 	}
@@ -133,46 +131,13 @@ func (b *Base) Read(ctx context.Context, g *access.Grant, req ReadRequest) (Page
 	return p, nil
 }
 
-// metadataSize is what a document's metadata takes in an answer, JSON-encoded.
-func metadataSize(d index.Document) int {
-	return encodedSize(struct {
-		Title       string         `json:"title"`
-		Description string         `json:"description,omitempty"`
-		Tags        []string       `json:"tags,omitempty"`
-		Aliases     []string       `json:"aliases,omitempty"`
-		Status      string         `json:"status"`
-		Related     []string       `json:"related,omitempty"`
-		Created     string         `json:"created,omitempty"`
-		Updated     string         `json:"updated,omitempty"`
-		Extra       map[string]any `json:"extra,omitempty"`
-	}{
-		Title:       d.Title,
-		Description: d.Description,
-		Tags:        d.Tags,
-		Aliases:     d.Aliases,
-		Status:      string(d.Status),
-		Related:     d.Related,
-		Created:     d.Created,
-		Updated:     d.Updated,
-		Extra:       d.Extra,
-	})
-}
-
-// warningsSize is what warnings take in an answer: each goes out as JSON and as a line of text.
+// warningsSize is what warnings take in an answer, each as a line of text.
 func warningsSize(warnings []string) int {
 	n := 0
 	for _, w := range warnings {
-		n += 2 * (textSize(w) + 16)
+		n += textSize(w) + 16
 	}
 	return n
-}
-
-func encodedSize(v any) int {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return 0
-	}
-	return len(raw)
 }
 
 // textSize is the most s takes in a text answer, JSON-encoded without the quotes: json.Marshal's

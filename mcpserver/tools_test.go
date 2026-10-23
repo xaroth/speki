@@ -462,7 +462,7 @@ func TestTools(t *testing.T) {
 			wantText: "\n0 rows\n",
 		},
 		{
-			// Rows are cut by their encoded size, in the structured rows and the text together.
+			// Rows are cut by their size as lines of text, JSON-encoded.
 			name:     "query cut to fit one answer",
 			kb:       &fakeKB{rows: knowledge.QueryResult{Rows: index.Rows{Columns: []string{"x"}, Rows: [][]any{{"a"}, {big}}}}},
 			tool:     "query",

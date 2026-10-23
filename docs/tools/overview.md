@@ -152,7 +152,7 @@ tool page shows the text its tool returns. The text is where the trust boundary 
 A result is at most 80 KiB as it goes out, JSON-encoded, which keeps it under the roughly 25k tokens Claude
 Code accepts from an MCP tool by default; a bigger result is cut off or rejected before the agent sees it.
 `read` sizes each part to fit ([read.md](read.md#long-documents)), and `query` stops adding rows when the
-next one wouldn't fit ([query.md](query.md#limits)). A `read` whose metadata leaves less than 4 KiB for
+next one wouldn't fit ([query.md](query.md#limits)). A `read` whose warnings leave less than 4 KiB for
 content can go over.
 
 Text that a vault supplies is untrusted. In the text:

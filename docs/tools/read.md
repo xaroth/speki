@@ -15,7 +15,7 @@ such text has to be copied as it is in the file.
 | `vault` | vault name | required |
 | `path` | document path | required |
 | `from_line` | first line, counting from 1 at the top of the file | 1 |
-| `line_count` | number of lines | as many as fit in 1,000 lines and one answer (80 KiB) |
+| `line_count` | number of lines | as many as fit in 1,000 lines and about 75 KiB |
 
 A `line_count` over 1,000 is treated as 1,000.
 
@@ -39,18 +39,17 @@ Line numbers count from the top of the file, frontmatter included, so they match
 ## Long documents
 
 One call returns at most 1,000 lines, and as many as fit in one answer of 80 KiB, JSON-encoded, beside
-the vault, path, warnings and outline. The budget also sets aside the size of the document's parsed
-frontmatter fields, JSON-encoded, called the metadata below. The tool description puts it at about 75 KiB
-of content. Each `<` or look-alike counts as the `&lt;` a fence may turn it into, so markup-heavy text
-gets fewer lines. Content always gets at least 4 KiB, so a document whose metadata fills the budget still
-pages to the end; the answer may then go over 80 KiB.
+the vault, path, warnings and outline. The tool description puts it at about 75 KiB of content. Each `<`
+or look-alike counts as the `&lt;` a fence may turn it into, so markup-heavy text gets fewer lines.
+Content always gets at least 4 KiB, so a read whose warnings fill the budget still pages to the end; the
+answer may then go over 80 KiB.
 
 When the call doesn't start at line 1 or doesn't return the whole document, the text has an `outline` fence
 before the content, listing its headings as `line N: ## text`, so the agent can read just the part it needs
 with `from_line` and `line_count`. The outline shows at most 200 headings, each cut to 200 bytes, about 16
 KiB in all, and counts against the answer. When it's cut, a warning says "the outline shows the first N of M
-headings only". When the metadata leaves less than 4 KiB, the outline is left out with the warning "the
-outline is left out: the metadata leaves too little room".
+headings only". When the outline would leave content less than 4 KiB, it's left out with the warning "the
+outline is left out: it leaves too little room for content".
 
 A single line longer than fits is cut, with the warning "line N is longer than fits in one read; only its
 start is shown".

@@ -24,10 +24,10 @@ it back and tell the user. Mark outdated documents `status: deprecated` instead 
   with a `Not available:` line can't be served right now; the line says what to do.
 - `query` runs read-only SQL over metadata, links and text, for what search can't answer: "runbooks not
   updated this year", "what links here". Call `schema` first.
-- `read` returns the raw file with its frontmatter. Past 1,000 lines or 80 KiB it comes in parts with an
-  outline of headings and line numbers; pass `from_line` and `line_count` for the part you need.
-- `history` shows who changed a vault or document, when and why. Pass `next_cursor` back as `cursor` for
-  older commits.
+- `read` returns the raw file with its frontmatter. Past 1,000 lines or about 75 KiB it comes in parts
+  with an outline of headings and line numbers; pass `from_line` and `line_count` for the part you need.
+- `history` shows who changed a vault or document, when and why. When older commits follow, it gives a
+  `cursor` to pass back.
 
 ## Changing documents
 
