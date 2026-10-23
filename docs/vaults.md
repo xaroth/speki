@@ -58,9 +58,11 @@ newer `speki.yaml` doesn't break an older speki.
 
 A `speki.yaml` that doesn't parse, misses a required field, goes over a limit or is larger than 64 KiB is
 rejected. A new vault with a bad file isn't added. An existing vault keeps running on its last good
-configuration, so a typo doesn't take a vault away from everyone. Either way the problem is logged and
-shown on the status page ([operating.md](operating.md#status-page)). Speki reads the file again after the
-next push to the repository, or after a restart.
+configuration until speki restarts, so a typo doesn't take a vault away from everyone. Speki keeps that
+configuration only in memory: after a restart, a vault whose file is still bad is dropped and its local copy
+deleted, and fixing the file means cloning and indexing it again. Either way the problem is logged and shown
+on the status page ([operating.md](operating.md#status-page)). Speki reads the file again at the first
+discovery round after a push to the repository or a change of its default branch, and at startup.
 
 The guidelines are written by anyone who can push to the repository. Agents get them inside a fence, like
 document text, and are told to treat them as information

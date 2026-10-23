@@ -51,6 +51,6 @@ branch head first.
 
 | Code | When |
 |---|---|
-| `invalid` | `limit` outside 1 to 50; a cursor `history` didn't return, or whose commit GitHub doesn't know |
+| `invalid` | `limit` above 50 or negative (0 means 10); a cursor `history` didn't return, or whose commit GitHub doesn't know |
 | `not_found` | No such vault the user can read |
 | `unavailable` | The vault is building, failed or gone; GitHub no longer accepts the user's sign-in; GitHub failed |
