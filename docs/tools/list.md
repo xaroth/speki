@@ -9,13 +9,13 @@ repository they're working in.
 | Input | Type | Default |
 |---|---|---|
 | `vault` | vault name | |
-| `repository` | git remote URL, `host/owner/repo`, or `owner/repo` on github.com | |
+| `repositories` | up to 10 of: git remote URL, `host/owner/repo`, or `owner/repo` on github.com | |
 | `path` | folder in the vault | the root |
 | `recursive` | bool | false |
 | `cursor` | the cursor the previous call ended with | |
 
 All inputs are optional. Which ones are given picks one of three modes. Passing both `vault` and
-`repository` is `invalid`: `repository` filters the list of vaults, so it has no meaning inside one.
+`repositories` is `invalid`: `repositories` filters the list of vaults, so it has no meaning inside one.
 
 ## Without `vault`: the user's vaults
 
@@ -36,17 +36,21 @@ description, repositories and access or "Not available" lines, then a blank line
 guidelines are left out. When no vault is served yet, it starts with "No vault is ready yet. Try again in
 a minute."
 
-## With `repository`: the vaults that cover it
+## With `repositories`: the vaults that cover them
 
-Only the vaults whose `repositories` cover the given repository, in the same form, unserved ones included
-with their "Not available" line. No match isn't an error: the text says "None of your vaults covers
-<host/owner/repo>."
+Only the vaults whose `repositories` cover any of the given repositories, in the same form, unserved ones
+included with their "Not available" line. No match isn't an error: the text says "None of your vaults
+covers <host/owner/repo> or <host/owner/repo>."
 
-The repository is normalized the same way `speki.yaml` entries are ([vaults.md](../vaults.md#repositories)):
+Taking several is for forks: a fork's `origin` is the fork, while vaults name the upstream repository. An
+agent passes every remote of its checkout (`git remote -v`), and a vault covering any of them matches.
+
+Each repository is normalized the same way `speki.yaml` entries are ([vaults.md](../vaults.md#repositories)):
 scheme, user, port and `.git` are dropped, `ssh.github.com` becomes `github.com`, and ASCII letters are
 lowercased; a query string or fragment is dropped, and a local path is refused with a hint to pass the
-remote instead. So an agent can pass `git remote get-url origin` as is. Error messages never quote the input,
-because an HTTPS remote can carry a token.
+remote instead. So an agent can pass remote URLs as is; duplicates after normalizing are dropped. Error
+messages never quote the input, because an HTTPS remote can carry a token: they name it by index,
+`repositories[1]`.
 
 ## With `vault`: folders and documents
 
@@ -83,6 +87,6 @@ changing it.
 
 | Code | When |
 |---|---|
-| `invalid` | Both `vault` and `repository`; a malformed `repository`; a cursor from another listing |
+| `invalid` | Both `vault` and `repositories`; a malformed repository or more than 10; a cursor from another listing |
 | `not_found` | No such vault the user can read; a folder other than the root with nothing under it |
 | `unavailable` | The vault is building, failed or gone |

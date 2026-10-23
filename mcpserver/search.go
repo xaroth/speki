@@ -16,7 +16,7 @@ import (
 type SearchInput struct {
 	Query             string   `json:"query" jsonschema:"words; \"quoted phrases\" must appear as written; -word excludes"`
 	Vaults            []string `json:"vaults,omitempty" jsonschema:"only these vaults, owner/repo. Default: all"`
-	Repository        string   `json:"repository,omitempty" jsonschema:"only vaults covering this code repository: its git remote URL or host/owner/repo"`
+	Repositories      []string `json:"repositories,omitempty" jsonschema:"only vaults covering any of these code repositories: git remote URLs or host/owner/repo"`
 	Path              string   `json:"path,omitempty" jsonschema:"only documents under this folder"`
 	Tags              []string `json:"tags,omitempty" jsonschema:"only documents with all these tags"`
 	ExcludeDeprecated bool     `json:"exclude_deprecated,omitempty" jsonschema:"leave out deprecated documents, which otherwise rank lower"`
@@ -43,14 +43,14 @@ type SearchOutput struct {
 	Corrected map[string]string `json:"corrected,omitempty" jsonschema:"words found in none of your vaults, and what was searched for instead"`
 	Relaxed   bool              `json:"relaxed" jsonschema:"true when no document matched every word, and these results match only some"`
 	Skipped   []SkippedVault    `json:"skipped_vaults,omitempty" jsonschema:"vaults you can read that weren't searched because speki can't serve them right now. The results say nothing about what they hold"`
-	Searched  []string          `json:"repository_vaults,omitempty" jsonschema:"with a repository: the vaults covering it that were searched"`
+	Searched  []string          `json:"repository_vaults,omitempty" jsonschema:"with repositories: the vaults covering them that were searched"`
 }
 
 func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (SearchOutput, string, error) {
 	res, err := s.kb.Search(ctx, g, knowledge.SearchRequest{
 		Query:             in.Query,
 		Vaults:            in.Vaults,
-		Repository:        in.Repository,
+		Repositories:      in.Repositories,
 		Path:              in.Path,
 		Tags:              in.Tags,
 		ExcludeDeprecated: in.ExcludeDeprecated,
@@ -68,18 +68,19 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 	}
 	var b strings.Builder
 	writeSkipped(&b, "searched", out.Skipped)
-	if res.Repository != "" {
+	if len(res.Repositories) > 0 {
+		repos := strings.Join(res.Repositories, " or ")
 		if len(res.Searched) == 0 {
 			if len(res.Skipped) == 0 {
 				which := "you can read"
 				if len(in.Vaults) > 0 {
 					which = "you named"
 				}
-				fmt.Fprintf(&b, "None of the vaults %s covers %s, so nothing was searched. Leave out repository to search them anyway.\n", which, res.Repository)
+				fmt.Fprintf(&b, "None of the vaults %s covers %s, so nothing was searched. Leave out repositories to search them anyway.\n", which, repos)
 			}
 			return out, b.String(), nil
 		}
-		fmt.Fprintf(&b, "Searched the vaults covering %s: %s.\n", res.Repository, oneLine(strings.Join(res.Searched, ", ")))
+		fmt.Fprintf(&b, "Searched the vaults covering %s: %s.\n", repos, oneLine(strings.Join(res.Searched, ", ")))
 	}
 	for _, word := range slices.Sorted(maps.Keys(res.Corrected)) {
 		fmt.Fprintf(&b, "No document has %q; searched for %q instead.\n", oneLine(word), oneLine(res.Corrected[word]))

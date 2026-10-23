@@ -80,16 +80,20 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 	return out, nil
 }
 
-// Covering is the vaults that cover a repository.
+// Covering is the vaults that cover any of a set of repositories.
 type Covering struct {
-	Repository string // normalised, host/owner/repo
-	Vaults     []VaultInfo
+	Repositories []string // normalised, host/owner/repo, without duplicates
+	Vaults       []VaultInfo
 }
 
-// Covering returns the vaults the user may read whose repositories cover repository, a git remote or
-// host/owner/repo, sorted by name. Vaults speki doesn't serve right now are included, with their state.
-func (b *Base) Covering(ctx context.Context, g *access.Grant, repository string) (Covering, error) {
-	repo, names, err := covering(g, repository)
+// maxRepositories bounds the repositories one request may name; a checkout has a few remotes.
+const maxRepositories = 10
+
+// Covering returns the vaults the user may read whose repositories cover any of repositories, each a git
+// remote or host/owner/repo, sorted by name. Vaults speki doesn't serve right now are included, with
+// their state.
+func (b *Base) Covering(ctx context.Context, g *access.Grant, repositories []string) (Covering, error) {
+	repos, names, err := covering(g, repositories)
 	if err != nil {
 		return Covering{}, err
 	}
@@ -97,7 +101,7 @@ func (b *Base) Covering(ctx context.Context, g *access.Grant, repository string)
 	if err != nil {
 		return Covering{}, err
 	}
-	out := Covering{Repository: repo.String()}
+	out := Covering{Repositories: repos}
 	for _, v := range all {
 		if names[v.Name] {
 			out.Vaults = append(out.Vaults, v)
@@ -106,24 +110,39 @@ func (b *Base) Covering(ctx context.Context, g *access.Grant, repository string)
 	return out, nil
 }
 
-// covering parses repository and returns the names of the user's vaults, served or not, that cover it.
-func covering(g *access.Grant, repository string) (vault.Repository, map[string]bool, error) {
-	repo, err := vault.ParseRemote(repository)
-	if err != nil {
-		return vault.Repository{}, nil, errorf(CodeInvalid, "repository: %s", err)
+// covering parses repositories and returns them normalised, with the names of the user's vaults, served
+// or not, that cover any of them.
+func covering(g *access.Grant, repositories []string) ([]string, map[string]bool, error) {
+	if len(repositories) > maxRepositories {
+		return nil, nil, errorf(CodeInvalid, "at most %d repositories", maxRepositories)
+	}
+	var repos []vault.Repository
+	var normalised []string
+	for i, s := range repositories {
+		repo, err := vault.ParseRemote(s)
+		if err != nil {
+			return nil, nil, errorf(CodeInvalid, "repositories[%d]: %s", i, err)
+		}
+		if !slices.Contains(repos, repo) {
+			repos = append(repos, repo)
+			normalised = append(normalised, repo.String())
+		}
 	}
 	names := map[string]bool{}
+	covers := func(c vault.Config) bool {
+		return slices.ContainsFunc(repos, c.Repositories.Covers)
+	}
 	for _, v := range g.Readable() {
-		if v.Config.Repositories.Covers(repo) {
+		if covers(v.Config) {
 			names[v.Name] = true
 		}
 	}
 	for _, u := range g.Unavailable() {
-		if u.Vault.Config.Repositories.Covers(repo) {
+		if covers(u.Vault.Config) {
 			names[u.Vault.Name] = true
 		}
 	}
-	return repo, names, nil
+	return normalised, names, nil
 }
 
 // ListRequest asks for the folders and documents under a folder.

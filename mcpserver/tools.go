@@ -24,7 +24,7 @@ const instructions = `Speki is this team's shared knowledge base, for what the c
 
 ` + instructionsRest
 
-const instructionsRest = `Search it before answering questions about the systems, services, infrastructure, processes or decisions it covers, before debugging or changing one of those systems, and when working out how one works, alongside reading the code. One search is cheaper than rediscovering what someone already wrote down. At the start of a task in a git repository, pass its remote (git remote get-url origin) as repository to search or list, for the vaults that cover it. Say which documents an answer came from, by vault and path.
+const instructionsRest = `Search it before answering questions about the systems, services, infrastructure, processes or decisions it covers, before debugging or changing one of those systems, and when working out how one works, alongside reading the code. One search is cheaper than rediscovering what someone already wrote down. At the start of a task in a git repository, pass its remote URLs (git remote -v) as repositories to search or list, for the vaults that cover it. Say which documents an answer came from, by vault and path.
 
 When you learn something worth keeping, such as how something works, a fix, or a decision and its reason, write it back. Update the document that covers it, or create one if none does, and tell the user what you saved. Mark outdated documents deprecated instead of leaving them wrong.
 
@@ -44,7 +44,7 @@ var schemaText string
 
 type knowledgeBase interface {
 	Vaults(ctx context.Context, g *access.Grant) ([]knowledge.VaultInfo, error)
-	Covering(ctx context.Context, g *access.Grant, repository string) (knowledge.Covering, error)
+	Covering(ctx context.Context, g *access.Grant, repositories []string) (knowledge.Covering, error)
 	List(ctx context.Context, g *access.Grant, req knowledge.ListRequest) (knowledge.Listing, error)
 	Search(ctx context.Context, g *access.Grant, req knowledge.SearchRequest) (knowledge.SearchResult, error)
 	Read(ctx context.Context, g *access.Grant, req knowledge.ReadRequest) (knowledge.Page, error)
@@ -107,7 +107,7 @@ func (s *Server) addTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:  "list",
 		Title: "List vaults or documents",
-		Description: "Without a vault, list the vaults you can read; with a repository, only those that cover it. With a vault, list the folders and documents under a path, 200 at a time, sorted by path. " +
+		Description: "Without a vault, list the vaults you can read; with repositories, only those that cover them. With a vault, list the folders and documents under a path, 200 at a time, sorted by path. " +
 			"Use it to browse when you don't know what to search for.",
 		Annotations: readOnly(),
 	}, handle(s, "list", s.list))

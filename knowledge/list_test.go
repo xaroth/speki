@@ -72,35 +72,44 @@ func TestCovering(t *testing.T) {
 	f := newFixture(t)
 	withUnavailable(t, f)
 	testCases := []struct {
-		name       string
-		repository string
-		want       knowledge.Covering
-		code       knowledge.Code
+		name         string
+		repositories []string
+		want         knowledge.Covering
+		code         knowledge.Code
 	}{
 		{
-			name:       "pattern",
-			repository: "git@github.com:Ours/api-gateway.git",
-			want: knowledge.Covering{Repository: "github.com/ours/api-gateway", Vaults: []knowledge.VaultInfo{{
+			name:         "pattern",
+			repositories: []string{"git@github.com:Ours/api-gateway.git"},
+			want: knowledge.Covering{Repositories: []string{"github.com/ours/api-gateway"}, Vaults: []knowledge.VaultInfo{{
 				Name: "ours/kb", Title: "KB", Description: "Our knowledge.", Guidelines: "One page per service.", Frontmatter: []string{"owner"},
 				Repositories: []string{"github.com/ours/api-*"}, CanWrite: true, Documents: 3,
 			}}},
 		},
 		{
-			name:       "served and unavailable",
-			repository: "https://github.com/ours/zeppelin",
-			want: knowledge.Covering{Repository: "github.com/ours/zeppelin", Vaults: []knowledge.VaultInfo{
+			name:         "served and unavailable",
+			repositories: []string{"https://github.com/ours/zeppelin"},
+			want: knowledge.Covering{Repositories: []string{"github.com/ours/zeppelin"}, Vaults: []knowledge.VaultInfo{
 				{Name: "ours/new", Title: "New", Repositories: []string{"github.com/ours/zeppelin"}, State: access.StateBuilding},
 				sharedInfo,
 			}},
 		},
-		{name: "none", repository: "ours/api", want: knowledge.Covering{Repository: "github.com/ours/api"}},
-		{name: "local path", repository: "/home/me/api", code: knowledge.CodeInvalid},
-		{name: "pattern", repository: "ours/*", code: knowledge.CodeInvalid},
+		{
+			name:         "fork and upstream, with duplicates",
+			repositories: []string{"git@github.com:me/zeppelin.git", "https://github.com/me/zeppelin", "https://github.com/ours/zeppelin.git"},
+			want: knowledge.Covering{Repositories: []string{"github.com/me/zeppelin", "github.com/ours/zeppelin"}, Vaults: []knowledge.VaultInfo{
+				{Name: "ours/new", Title: "New", Repositories: []string{"github.com/ours/zeppelin"}, State: access.StateBuilding},
+				sharedInfo,
+			}},
+		},
+		{name: "none", repositories: []string{"ours/api"}, want: knowledge.Covering{Repositories: []string{"github.com/ours/api"}}},
+		{name: "local path", repositories: []string{"ours/zeppelin", "/home/me/api"}, code: knowledge.CodeInvalid},
+		{name: "pattern", repositories: []string{"ours/*"}, code: knowledge.CodeInvalid},
+		{name: "too many", repositories: slices.Repeat([]string{"ours/api"}, 11), code: knowledge.CodeInvalid},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := f.base.Covering(t.Context(), f.grant, testCase.repository)
+			got, err := f.base.Covering(t.Context(), f.grant, testCase.repositories)
 			if testCase.code != "" {
 				wantCode(t, err, testCase.code)
 				return

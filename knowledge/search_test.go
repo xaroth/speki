@@ -26,7 +26,7 @@ func TestSearch(t *testing.T) {
 		req         knowledge.SearchRequest
 		wantHits    []string // vault:path, sorted
 		wantSkipped []knowledge.Skipped
-		wantRepo    string
+		wantRepos   []string
 		wantSearch  []string // vaults searched for a repository
 		code        knowledge.Code
 	}{
@@ -48,33 +48,40 @@ func TestSearch(t *testing.T) {
 		},
 		{
 			name:        "repository",
-			req:         knowledge.SearchRequest{Query: "zeppelin", Repository: "git@github.com:ours/zeppelin.git"},
+			req:         knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"git@github.com:ours/zeppelin.git"}},
 			wantHits:    []string{"ours/shared:zeppelin.md"},
 			wantSkipped: []knowledge.Skipped{{Name: "ours/new", State: access.StateBuilding}},
-			wantRepo:    "github.com/ours/zeppelin",
+			wantRepos:   []string{"github.com/ours/zeppelin"},
 			wantSearch:  []string{"ours/shared"},
 		},
 		{
 			name:       "repository by pattern",
-			req:        knowledge.SearchRequest{Query: "zeppelin", Repository: "ours/api-gateway"},
+			req:        knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"ours/api-gateway"}},
 			wantHits:   []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/edge-proxy.md"},
-			wantRepo:   "github.com/ours/api-gateway",
+			wantRepos:  []string{"github.com/ours/api-gateway"},
 			wantSearch: []string{"ours/kb"},
 		},
 		{
 			name:       "repository and a vault named in another letter case",
-			req:        knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"OURS/Shared"}, Repository: "ours/zeppelin"},
+			req:        knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"OURS/Shared"}, Repositories: []string{"ours/zeppelin"}},
 			wantHits:   []string{"ours/shared:zeppelin.md"},
-			wantRepo:   "github.com/ours/zeppelin",
+			wantRepos:  []string{"github.com/ours/zeppelin"},
 			wantSearch: []string{"ours/shared"},
 		},
 		{
-			name:     "repository no named vault covers",
-			req:      knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}, Repository: "ours/zeppelin"},
-			wantRepo: "github.com/ours/zeppelin",
+			name:      "repository no named vault covers",
+			req:       knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}, Repositories: []string{"ours/zeppelin"}},
+			wantRepos: []string{"github.com/ours/zeppelin"},
 		},
-		{name: "repository nobody covers", req: knowledge.SearchRequest{Query: "zeppelin", Repository: "ours/other"}, wantRepo: "github.com/ours/other"},
-		{name: "repository invalid", req: knowledge.SearchRequest{Query: "zeppelin", Repository: "./api"}, code: knowledge.CodeInvalid},
+		{
+			name:       "fork and upstream",
+			req:        knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"me/api-gateway", "ours/api-gateway"}},
+			wantHits:   []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/edge-proxy.md"},
+			wantRepos:  []string{"github.com/me/api-gateway", "github.com/ours/api-gateway"},
+			wantSearch: []string{"ours/kb"},
+		},
+		{name: "repository nobody covers", req: knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"ours/other"}}, wantRepos: []string{"github.com/ours/other"}},
+		{name: "repository invalid", req: knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"./api"}}, code: knowledge.CodeInvalid},
 		{name: "empty", req: knowledge.SearchRequest{Query: "  "}, code: knowledge.CodeInvalid},
 		{name: "only exclusions", req: knowledge.SearchRequest{Query: "-zeppelin"}, code: knowledge.CodeInvalid},
 		{name: "limit too high", req: knowledge.SearchRequest{Query: "x", Limit: 51}, code: knowledge.CodeInvalid},
@@ -101,8 +108,8 @@ func TestSearch(t *testing.T) {
 			if diff := cmp.Diff(testCase.wantSkipped, got.Skipped); diff != "" {
 				t.Errorf("skipped (-want +got):\n%s", diff)
 			}
-			if got.Repository != testCase.wantRepo || !slices.Equal(got.Searched, testCase.wantSearch) {
-				t.Errorf("got repository %q searched %v, want %q searched %v", got.Repository, got.Searched, testCase.wantRepo, testCase.wantSearch)
+			if !slices.Equal(got.Repositories, testCase.wantRepos) || !slices.Equal(got.Searched, testCase.wantSearch) {
+				t.Errorf("got repositories %v searched %v, want %v searched %v", got.Repositories, got.Searched, testCase.wantRepos, testCase.wantSearch)
 			}
 		})
 	}

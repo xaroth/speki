@@ -11,11 +11,11 @@ import (
 
 // ListInput asks for vaults, or a folder.
 type ListInput struct {
-	Vault      string `json:"vault,omitempty" jsonschema:"the vault to list, owner/repo. Leave out to list your vaults"`
-	Repository string `json:"repository,omitempty" jsonschema:"without a vault: list only the vaults covering this code repository. Pass its git remote URL or host/owner/repo"`
-	Path       string `json:"path,omitempty" jsonschema:"the folder to list, relative to the vault root. Leave out for the root"`
-	Recursive  bool   `json:"recursive,omitempty" jsonschema:"list documents in subfolders too, instead of one entry per subfolder"`
-	Cursor     string `json:"cursor,omitempty" jsonschema:"the cursor the previous call gave, to get the next page"`
+	Vault        string   `json:"vault,omitempty" jsonschema:"the vault to list, owner/repo. Leave out to list your vaults"`
+	Repositories []string `json:"repositories,omitempty" jsonschema:"without a vault: list only the vaults covering any of these code repositories, as git remote URLs or host/owner/repo"`
+	Path         string   `json:"path,omitempty" jsonschema:"the folder to list, relative to the vault root. Leave out for the root"`
+	Recursive    bool     `json:"recursive,omitempty" jsonschema:"list documents in subfolders too, instead of one entry per subfolder"`
+	Cursor       string   `json:"cursor,omitempty" jsonschema:"the cursor the previous call gave, to get the next page"`
 }
 
 // DocumentSummary is a document in a listing.
@@ -37,18 +37,18 @@ type ListOutput struct {
 }
 
 func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListOutput, string, error) {
-	if in.Vault != "" && in.Repository != "" {
-		return ListOutput{}, "", &knowledge.Error{Code: knowledge.CodeInvalid, Message: "repository filters the list of vaults. Leave out vault"}
+	if in.Vault != "" && len(in.Repositories) > 0 {
+		return ListOutput{}, "", &knowledge.Error{Code: knowledge.CodeInvalid, Message: "repositories filters the list of vaults. Leave out vault"}
 	}
-	if in.Repository != "" {
-		c, err := s.kb.Covering(ctx, g, in.Repository)
+	if len(in.Repositories) > 0 {
+		c, err := s.kb.Covering(ctx, g, in.Repositories)
 		if err != nil {
 			return ListOutput{}, "", err
 		}
 		out := ListOutput{Vaults: vaultSummaries(c.Vaults, false)}
 		var b strings.Builder
 		if len(c.Vaults) == 0 {
-			fmt.Fprintf(&b, "None of your vaults covers %s.\n", c.Repository)
+			fmt.Fprintf(&b, "None of your vaults covers %s.\n", strings.Join(c.Repositories, " or "))
 		}
 		for _, v := range out.Vaults {
 			fmt.Fprintf(&b, "%s\n", oneLine(v.Vault))
