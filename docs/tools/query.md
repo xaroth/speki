@@ -17,28 +17,28 @@ limit.
 
 ## Output
 
-```json
-{ "columns": ["vault", "path", "updated"],
-  "rows": [["acme/kb", "services/esi-proxy.md", "2026-10-09T14:02:11Z"]],
-  "truncated": false,
-  "skipped_vaults": [{ "vault": "acme/new", "state": "building" }] }
+```text
+vault	path	updated
+acme/kb	services/edge-proxy.md	2026-10-09T14:02:11Z
+acme/kb	runbooks/proxy-restart.md	NULL
+2 rows
+Not queried, so this result says nothing about them: acme/new (still building its index; try again
+shortly). Don't conclude something is undocumented, or write a document that may duplicate one there.
 ```
 
-`columns` and `rows` are never null. Binary values come back as text, and NaN and infinity as strings.
-`truncated` is true when rows were cut at 200 rows or at the size of one answer. `skipped_vaults` works as in
-`search`: readable vaults that weren't covered because speki can't serve them, when `vaults` was left out.
-
-The text rendering is tab-separated, header first, with `NULL` for nulls, then a line with the row count.
-When rows were cut it adds ", truncated: add a LIMIT or narrow the query to see the rest". Skipped vaults
-follow on their own line ("Not queried, ..."). It isn't fenced; each cell is put on one line and escaped
-instead ([overview.md](overview.md#results)). The text and `rows` always hold the same rows.
+The text is tab-separated, header first, with `NULL` for nulls, then a line with the row count. Binary
+values come back as text. When rows were cut, at 200 rows or at the size of one answer, the count line
+adds ", truncated: add a LIMIT or narrow the query to see the rest". Skipped vaults follow on their own
+line, as in `search`: readable vaults that weren't covered because speki can't serve them, when `vaults`
+was left out. The text isn't fenced; each cell is put on one line and escaped instead
+([overview.md](overview.md#results)).
 
 ## Limits
 
 | Limit | Value | When reached |
 |---|---|---|
-| Rows | 200 | `truncated` |
-| Result size | one answer of 80 KiB, JSON-encoded, each row counted twice: in `rows` and as a line of text | `truncated` |
+| Rows | 200 | the count line says truncated |
+| Result size | one answer of 80 KiB, JSON-encoded: the header, the skipped-vaults line and each row as a line of text | the count line says truncated |
 | Time | 3 seconds, waiting for a slot included | `timeout` |
 | Queries per user | one at a time, per instance | the next waits, within its own 3 seconds |
 | Queries in all | two at a time, per instance, across all users | waits up to 1 second, then `unavailable` |

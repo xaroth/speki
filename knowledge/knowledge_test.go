@@ -157,7 +157,7 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 		}
 	}
 	// A readable vault's document at the same path is that vault's, not the secret one.
-	p, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md"})
+	p, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: "ours/kb", Path: "services/edge-proxy.md"})
 	if err != nil || strings.Contains(p.Content, hidden) {
 		t.Errorf("read: got %q, %v, want ours/kb's document", p.Content, err)
 	}
@@ -172,11 +172,11 @@ func TestOtherVaultsStayHidden(t *testing.T) {
 			return err
 		},
 		"read": func() error {
-			_, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: secret.Name, Path: "services/esi-proxy.md"})
+			_, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: secret.Name, Path: "services/edge-proxy.md"})
 			return err
 		},
 		"read in another letter case": func() error {
-			_, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: "OURS/SECRET", Path: "services/esi-proxy.md"})
+			_, err := f.base.Read(ctx, f.grant, knowledge.ReadRequest{Vault: "OURS/SECRET", Path: "services/edge-proxy.md"})
 			return err
 		},
 		"history": func() error {

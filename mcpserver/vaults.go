@@ -87,7 +87,7 @@ func writeSkipped(b *strings.Builder, what string, skipped []SkippedVault) {
 	}
 	fmt.Fprintf(
 		b,
-		"Not %s, so this result says nothing about them: %s.\n",
+		"Not %s, so this result says nothing about them: %s. Don't conclude something is undocumented, or write a document that may duplicate one there.\n",
 		what,
 		strings.Join(parts, ", "),
 	)

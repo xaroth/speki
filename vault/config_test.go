@@ -42,20 +42,20 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "repositories",
-			raw:  "title: T\ndescription: D\nrepositories:\n  - Xaroth/Speki\n  - git@gitlab.com:team/sub/repo.git\n  - github.com/xaroth/mantine-*\n",
+			raw:  "title: T\ndescription: D\nrepositories:\n  - Acme/Speki\n  - git@gitlab.com:team/sub/repo.git\n  - github.com/acme/web-*\n",
 			want: vault.Config{Title: "T", Description: "D", Repositories: vault.Repositories{
-				{Host: "github.com", Owner: "xaroth", Name: "speki"},
+				{Host: "github.com", Owner: "acme", Name: "speki"},
 				{Host: "gitlab.com", Owner: "team/sub", Name: "repo"},
-				{Host: "github.com", Owner: "xaroth", Name: "mantine-*"},
+				{Host: "github.com", Owner: "acme", Name: "web-*"},
 			}},
 		},
 		{name: "repositories null", raw: "title: T\ndescription: D\nrepositories:\n", want: vault.Config{Title: "T", Description: "D"}},
 		{name: "repositories empty", raw: "title: T\ndescription: D\nrepositories: []\n", want: vault.Config{Title: "T", Description: "D", Repositories: vault.Repositories{}}},
-		{name: "bad repository", raw: "title: T\ndescription: D\nrepositories:\n  - xaroth/speki\n  - https://user:ghp_secret@github.com/xaroth\n", wantErr: []string{"repositories, line 5: not a repository"}},
+		{name: "bad repository", raw: "title: T\ndescription: D\nrepositories:\n  - acme/speki\n  - https://user:ghp_secret@github.com/acme\n", wantErr: []string{"repositories, line 5: not a repository"}},
 		{name: "repository pattern in owner", raw: "title: T\ndescription: D\nrepositories: [\"*/speki\"]\n", wantErr: []string{"repositories, line 3: * can only"}},
-		{name: "repositories not a list", raw: "title: T\ndescription: D\nrepositories: xaroth/speki\n", wantErr: []string{"repositories, line 3: not a list"}},
-		{name: "repository not a string", raw: "title: T\ndescription: D\nrepositories:\n  - {repo: xaroth/speki}\n", wantErr: []string{"repositories, line 4: not a repository"}},
-		{name: "repository twice", raw: "title: T\ndescription: D\nrepositories: [xaroth/speki, \"https://github.com/Xaroth/speki.git\"]\n", wantErr: []string{"repositories lists github.com/xaroth/speki twice"}},
+		{name: "repositories not a list", raw: "title: T\ndescription: D\nrepositories: acme/speki\n", wantErr: []string{"repositories, line 3: not a list"}},
+		{name: "repository not a string", raw: "title: T\ndescription: D\nrepositories:\n  - {repo: acme/speki}\n", wantErr: []string{"repositories, line 4: not a repository"}},
+		{name: "repository twice", raw: "title: T\ndescription: D\nrepositories: [acme/speki, \"https://github.com/Acme/speki.git\"]\n", wantErr: []string{"repositories lists github.com/acme/speki twice"}},
 		{name: "too many repositories", raw: "title: T\ndescription: D\nrepositories: [" + manyRepositories(51) + "]\n", wantErr: []string{"repositories has 51 entries, at most 50"}},
 		{name: "frontmatter set by speki", raw: "title: T\ndescription: D\nfrontmatter:\n  allow: [updated, \"\"]\n", wantErr: []string{"updated is set by speki", "empty key"}},
 		{name: "unknown read role", raw: "title: T\ndescription: D\nread_role: owner\n", wantErr: []string{`unknown role "owner"`}},
@@ -94,7 +94,7 @@ func TestParseConfig(t *testing.T) {
 func manyRepositories(n int) string {
 	names := make([]string, n)
 	for i := range names {
-		names[i] = fmt.Sprintf("xaroth/repo-%d", i)
+		names[i] = fmt.Sprintf("acme/repo-%d", i)
 	}
 	return strings.Join(names, ", ")
 }
@@ -107,8 +107,8 @@ func TestConfigJSON(t *testing.T) {
 		Readers: []vault.Principal{{Org: "ours", Team: "editors"}, {Login: "alice"}},
 		Writers: []vault.Principal{{Login: "bob"}},
 		Repositories: vault.Repositories{
-			{Host: "github.com", Owner: "xaroth", Name: "speki"},
-			{Host: "gitlab.com", Owner: "team/sub", Name: "mantine-*"},
+			{Host: "github.com", Owner: "acme", Name: "speki"},
+			{Host: "gitlab.com", Owner: "team/sub", Name: "web-*"},
 		},
 	}
 	raw, err := json.Marshal(want)

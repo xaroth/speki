@@ -23,16 +23,16 @@ func TestRead(t *testing.T) {
 		outlined.WriteString("# " + strings.Repeat("é", 2500) + "\n" + strings.Repeat("text ", 200) + "\n")
 	}
 	f := newFixture(t, withKB(map[string]string{
-		"services/esi-proxy.md": esiProxy,
-		"lines.md":              strings.Repeat("a\n", 1500),
-		"bytes.md":              strings.Repeat(long, 100),
-		"huge.md":               "é" + strings.Repeat("y", knowledge.MaxReadBytes+10) + "\ntail\n",
-		"crlf.md":               "# A\r\n\r\nb\r\n",
-		"empty.md":              "",
-		"headings.md":           strings.Repeat("# H\n", knowledge.MaxOutline+5),
-		"straddle.md":           strings.Repeat("y", knowledge.MaxReadBytes-1000) + strings.Repeat("é", 1000) + "\n",
-		"angles.md":             strings.Repeat(strings.Repeat("<", 99)+"\n", 200),
-		"outlined.md":           outlined.String(),
+		"services/edge-proxy.md": edgeProxy,
+		"lines.md":               strings.Repeat("a\n", 1500),
+		"bytes.md":               strings.Repeat(long, 100),
+		"huge.md":                "é" + strings.Repeat("y", knowledge.MaxReadBytes+10) + "\ntail\n",
+		"crlf.md":                "# A\r\n\r\nb\r\n",
+		"empty.md":               "",
+		"headings.md":            strings.Repeat("# H\n", knowledge.MaxOutline+5),
+		"straddle.md":            strings.Repeat("y", knowledge.MaxReadBytes-1000) + strings.Repeat("é", 1000) + "\n",
+		"angles.md":              strings.Repeat(strings.Repeat("<", 99)+"\n", 200),
+		"outlined.md":            outlined.String(),
 	}))
 	testCases := []struct {
 		name  string
@@ -42,20 +42,20 @@ func TestRead(t *testing.T) {
 	}{
 		{
 			name: "whole document",
-			req:  knowledge.ReadRequest{Vault: "Ours/KB", Path: "services/esi-proxy.md"},
+			req:  knowledge.ReadRequest{Vault: "Ours/KB", Path: "services/edge-proxy.md"},
 			check: func(t *testing.T, p knowledge.Page) {
 				want := knowledge.Page{
 					Vault: "ours/kb",
 					Document: index.Document{
-						Path:    "services/esi-proxy.md",
-						Title:   "ESI proxy",
+						Path:    "services/edge-proxy.md",
+						Title:   "Edge proxy",
 						Status:  document.StatusActive,
-						Tags:    []string{"esi"},
-						Bytes:   len(esiProxy),
+						Tags:    []string{"edge"},
+						Bytes:   len(edgeProxy),
 						Lines:   12, // the index counts the empty line after the last line ending
-						Version: blobID(esiProxy),
+						Version: blobID(edgeProxy),
 					},
-					Content:    esiProxy,
+					Content:    edgeProxy,
 					FromLine:   1,
 					LineCount:  11,
 					TotalLines: 11,
@@ -67,12 +67,12 @@ func TestRead(t *testing.T) {
 		},
 		{
 			name: "one line, with the outline",
-			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "/services/esi-proxy.md", FromLine: 9, LineCount: 1},
+			req:  knowledge.ReadRequest{Vault: "ours/kb", Path: "/services/edge-proxy.md", FromLine: 9, LineCount: 1},
 			check: func(t *testing.T, p knowledge.Page) {
 				if p.Content != "## Deploying\n" || p.LineCount != 1 || p.TotalLines != 11 {
 					t.Errorf("got %q, line count %d of %d, want line 9 of 11", p.Content, p.LineCount, p.TotalLines)
 				}
-				want := []document.Heading{{Level: 1, Text: "ESI proxy", Line: 5}, {Level: 2, Text: "Deploying", Line: 9}}
+				want := []document.Heading{{Level: 1, Text: "Edge proxy", Line: 5}, {Level: 2, Text: "Deploying", Line: 9}}
 				if diff := cmp.Diff(want, p.Outline); diff != "" {
 					t.Errorf("outline (-want +got):\n%s", diff)
 				}
@@ -173,8 +173,8 @@ func TestRead(t *testing.T) {
 				}
 			},
 		},
-		{name: "past the end", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", FromLine: 12}, code: knowledge.CodeInvalid},
-		{name: "negative line count", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "services/esi-proxy.md", LineCount: -1}, code: knowledge.CodeInvalid},
+		{name: "past the end", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "services/edge-proxy.md", FromLine: 12}, code: knowledge.CodeInvalid},
+		{name: "negative line count", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "services/edge-proxy.md", LineCount: -1}, code: knowledge.CodeInvalid},
 		{name: "no such document", req: knowledge.ReadRequest{Vault: "ours/kb", Path: "nope.md"}, code: knowledge.CodeNotFound},
 	}
 	for _, testCase := range testCases {

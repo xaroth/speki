@@ -33,7 +33,7 @@ func TestSearch(t *testing.T) {
 		{
 			name:        "every vault",
 			req:         knowledge.SearchRequest{Query: "zeppelin"},
-			wantHits:    []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/esi-proxy.md", "ours/shared:zeppelin.md"},
+			wantHits:    []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/edge-proxy.md", "ours/shared:zeppelin.md"},
 			wantSkipped: notServed,
 		},
 		{
@@ -43,8 +43,8 @@ func TestSearch(t *testing.T) {
 		},
 		{
 			name:     "path and tags",
-			req:      knowledge.SearchRequest{Query: "zeppelin", Path: "services", Tags: []string{"esi"}},
-			wantHits: []string{"ours/kb:services/esi-proxy.md"}, wantSkipped: notServed,
+			req:      knowledge.SearchRequest{Query: "zeppelin", Path: "services", Tags: []string{"edge"}},
+			wantHits: []string{"ours/kb:services/edge-proxy.md"}, wantSkipped: notServed,
 		},
 		{
 			name:        "repository",
@@ -57,7 +57,7 @@ func TestSearch(t *testing.T) {
 		{
 			name:       "repository by pattern",
 			req:        knowledge.SearchRequest{Query: "zeppelin", Repository: "ours/api-gateway"},
-			wantHits:   []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/esi-proxy.md"},
+			wantHits:   []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/edge-proxy.md"},
 			wantRepo:   "github.com/ours/api-gateway",
 			wantSearch: []string{"ours/kb"},
 		},

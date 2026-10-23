@@ -67,7 +67,7 @@ The message is the first line of the agent's `message`, or a default (`Create <p
 `Move <from> to <to>`, `Delete <path>`), cut to 200 bytes. Speki then adds two trailers:
 
 ```text
-Update services/esi-proxy.md
+Update services/edge-proxy.md
 
 Speki-Client: claude.ai
 Speki-Request: 5f0c2a9e41b7d3c8e6a1f092
@@ -118,14 +118,15 @@ After a successful commit, speki:
 1. computes the new version, the git blob SHA of the content it sent
 2. syncs its copy of the vault and waits, at most 10 seconds, until the index has the change
 3. tells other instances about the new head through Redis, if configured
-4. answers with the version, the commit SHA and `index_pending`
+4. answers with the commit SHA and the new version
 
-So an agent that writes and then searches normally finds its own change. `index_pending: true` means the
-commit landed but the index hadn't caught up in time, or the vault needs a full rebuild, which the poller
-does in the background. Search and `read` may show the old state for a little while.
+So an agent that writes and then searches normally finds its own change. When the commit landed but the
+index hadn't caught up in time, or the vault needs a full rebuild, which the poller does in the
+background, the answer adds "Search may not show the change for a little while." Search and `read` may
+show the old state for that long.
 
-Steps 2 and 3 run as background work that outlives the request. When the request runs out of time first, the
-answer is the commit with `index_pending: true` straight away, since the commit landed whatever happens next.
+Steps 2 and 3 run as background work that outlives the request. When the request runs out of time first,
+the answer is the commit with that note straight away, since the commit landed whatever happens next.
 
 Other instances sync when they get the notice, within seconds. Notices are a shortcut: a lost one only means
 waiting for the next poll.

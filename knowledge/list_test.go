@@ -138,7 +138,7 @@ func TestList(t *testing.T) {
 			req:  knowledge.ListRequest{Vault: "ours/kb", Path: "/services", Recursive: true},
 			want: knowledge.Listing{Documents: []index.Entry{
 				{Path: "services/db/pg.md", Title: "Postgres", Status: document.StatusActive, Version: blobID(postgres)},
-				{Path: "services/esi-proxy.md", Title: "ESI proxy", Status: document.StatusActive, Version: blobID(esiProxy)},
+				{Path: "services/edge-proxy.md", Title: "Edge proxy", Status: document.StatusActive, Version: blobID(edgeProxy)},
 			}},
 		},
 		{name: "no such folder", req: knowledge.ListRequest{Vault: "ours/kb", Path: "nothing"}, code: knowledge.CodeNotFound},

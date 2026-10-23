@@ -430,9 +430,9 @@ var (
 
 // The default documents of ours/kb.
 const (
-	readme   = "---\ntitle: About\n---\n# About\n\nThis vault holds zeppelin notes.\n"
-	esiProxy = "---\ntitle: ESI proxy\ntags: [esi]\n---\n# ESI proxy\n\nThe proxy caches zeppelin responses.\n\n## Deploying\n\nRun the job.\n"
-	postgres = "# Postgres\n\nZeppelin database.\n"
+	readme    = "---\ntitle: About\n---\n# About\n\nThis vault holds zeppelin notes.\n"
+	edgeProxy = "---\ntitle: Edge proxy\ntags: [edge]\n---\n# Edge proxy\n\nThe proxy caches zeppelin responses.\n\n## Deploying\n\nRun the job.\n"
+	postgres  = "# Postgres\n\nZeppelin database.\n"
 )
 
 // fixedNow is the fixture's clock.
@@ -492,7 +492,7 @@ func withLogger(l *slog.Logger) fixtureOption {
 func newFixture(tb testing.TB, opts ...fixtureOption) *fixture {
 	tb.Helper()
 	o := fixtureOptions{
-		kb:     map[string]string{"README.md": readme, "services/esi-proxy.md": esiProxy, "services/db/pg.md": postgres},
+		kb:     map[string]string{"README.md": readme, "services/edge-proxy.md": edgeProxy, "services/db/pg.md": postgres},
 		logger: discard(),
 	}
 	for _, opt := range opts {
@@ -502,7 +502,7 @@ func newFixture(tb testing.TB, opts ...fixtureOption) *fixture {
 		copies: map[int64]*fakeCopy{
 			ours.RepoID:   newCopy(tb, ours, o.kb),
 			shared.RepoID: newCopy(tb, shared, map[string]string{"zeppelin.md": "# Zeppelin\n\nShared zeppelin facts.\n"}),
-			secret.RepoID: newCopy(tb, secret, map[string]string{"services/esi-proxy.md": "# Hidden\n\nThe secret zeppelin plan.\n"}),
+			secret.RepoID: newCopy(tb, secret, map[string]string{"services/edge-proxy.md": "# Hidden\n\nThe secret zeppelin plan.\n"}),
 		},
 	}
 	f.github = &fakeGitHub{f: f, repos: map[string]*fakeRepo{}}

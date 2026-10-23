@@ -53,7 +53,7 @@ func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (Que
 		cells[i] = oneLine(c)
 	}
 	b.WriteString(strings.Join(cells, "\t") + "\n")
-	size := encodedSize(out) + encodedSize(b.String()+skipped.String()) + answerOverhead
+	size := encodedSize(b.String()+skipped.String()) + answerOverhead
 	for _, row := range r.Rows {
 		for i, v := range row {
 			if v == nil {
@@ -63,8 +63,7 @@ func (s *Server) query(ctx context.Context, g *access.Grant, in QueryInput) (Que
 			}
 		}
 		line := strings.Join(cells, "\t") + "\n"
-		// Each row goes out twice: in the structured rows and as a line of text.
-		size += encodedSize(row) + 1 + encodedSize(line) - 2
+		size += encodedSize(line) - 2 // the quotes are counted once, above
 		if size > maxAnswer {
 			out.Truncated = true
 			break

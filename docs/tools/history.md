@@ -10,30 +10,26 @@ client. Because every change through speki is a commit authored by the user, thi
 | `vault` | vault name | required |
 | `path` | document path | the whole vault |
 | `limit` | 1 to 50 | 10 |
-| `cursor` | `next_cursor` from the previous call with the same `vault` and `path` | |
+| `cursor` | the cursor the previous call with the same `vault` and `path` ended with | |
 
 ## Output
 
-```json
-{ "commits": [
-  { "sha": "9c1e4b7a...", "author": "noorbergen", "date": "2026-10-09T14:02:11Z",
-    "message": "Update services/esi-proxy.md", "client": "claude.ai" }
-],
-  "next_cursor": "4b17...:10" }
+```text
+9c1e4b7a2d5f8e0c3b6a9d2e5f8c1b4a7d0e3f6c 2026-10-09T14:02:11Z octocat via claude.ai: Add cache TTLs
+4b17e2c9a0d3f6b8e1c4a7d0f3b6e9c2a5d8f1b4 2026-10-08T09:00:00Z hubot: Create services/edge-proxy.md
+More commits follow: call history again with cursor "9c1e4b7a2d5f8e0c3b6a9d2e5f8c1b4a7d0e3f6c:2".
 ```
 
-Newest first. `author` is the GitHub login, or the git author name for a commit not linked to an account,
-cut to 100 bytes. `message` is the commit's first line, cut to 300 bytes. `client` names the MCP client that
-made the change through speki, read from the last `Speki-Client` trailer of the message
-([changes.md](../changes.md#commits)), cut to 64 bytes. It's left out for commits made outside speki.
+One line per commit, newest first: the full SHA, the date in UTC, the author, "via" the client when there
+is one, and the message. The author is the GitHub login, or the git author name for a commit not linked
+to an account, cut to 100 bytes. The message is the commit's first line, cut to 300 bytes. The client
+names the MCP client that made the change through speki, read from the last `Speki-Client` trailer of the
+message ([changes.md](../changes.md#commits)), cut to 64 bytes. Commits made outside speki have none.
 
-When older commits follow, `next_cursor` is set: pass it as `cursor`, with the same `vault` and `path`, to get
-the next page. It's left out on the last page. Pages continue from the branch head the first page was read
-at, so commits made in between don't shift them.
-
-The text rendering is one line per commit: SHA, date, author, "via" the client when there is one, and the
-message. It says "No commits found." when there are none, and ends with "More commits follow: call history
-again with cursor "..."." when more follow.
+When older commits follow, the text ends with "More commits follow: call history again with cursor
+"..."." Passing that as `cursor`, with the same `vault` and `path`, gets the next page. Pages continue
+from the branch head the first page was read at, so commits made in between don't shift them. With no
+commits it says "No commits found."
 
 ## How it works
 

@@ -126,7 +126,7 @@ The [tools](tools/overview.md) are:
 
 | Tool | What it does |
 |---|---|
-| [`guide`](tools/guide.md) | Explains speki and lists the user's vaults with their descriptions and writing guidelines |
+| [`guide`](tools/guide.md) | Lists the user's vaults with their guidelines, and explains how to search them and how documents are written |
 | [`list`](tools/list.md) | Lists vaults, or the folders and documents under a path in a vault |
 | [`search`](tools/search.md) | Ranked full-text search across the user's vaults |
 | [`schema`](tools/schema.md) | Describes the views `query` can use |

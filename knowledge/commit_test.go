@@ -255,8 +255,8 @@ func TestConcurrentEdits(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 3)
 	for _, e := range []knowledge.EditRequest{
-		{Path: "services/esi-proxy.md", OldText: "Run the job.", NewText: "Run the deploy job."},
-		{Path: "services/esi-proxy.md", OldText: "caches", NewText: "stores"},
+		{Path: "services/edge-proxy.md", OldText: "Run the job.", NewText: "Run the deploy job."},
+		{Path: "services/edge-proxy.md", OldText: "caches", NewText: "stores"},
 		{Path: "services/db/pg.md", OldText: "Zeppelin database.", NewText: "Main database."},
 	} {
 		wg.Go(func() {
@@ -272,7 +272,7 @@ func TestConcurrentEdits(t *testing.T) {
 			t.Errorf("Edit: %v", err)
 		}
 	}
-	got := f.read(t, "services/esi-proxy.md").Content
+	got := f.read(t, "services/edge-proxy.md").Content
 	if !strings.Contains(got, "Run the deploy job.") || !strings.Contains(got, "stores") {
 		t.Errorf("got\n%s\nwant both edits", got)
 	}
@@ -415,15 +415,15 @@ func guardMismatches(tb testing.TB) float64 {
 // Before committing, the index's version is checked against git: an index that fell behind the tree must
 // not let a change overwrite what it doesn't know about. Not parallel: it counts a global metric.
 func TestChangeRefusesWhenTheIndexDisagreesWithGit(t *testing.T) {
-	const path = "services/esi-proxy.md"
-	v := blobID(esiProxy)
-	changed := "# ESI proxy\n\nChanged in git.\n"
+	const path = "services/edge-proxy.md"
+	v := blobID(edgeProxy)
+	changed := "# Edge proxy\n\nChanged in git.\n"
 	changes := []struct {
 		name string
 		req  any
 	}{
 		{name: "edit", req: knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: v}},
-		{name: "replace", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: "# ESI proxy\n\nReplaced.\n", Version: v}},
+		{name: "replace", req: knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: "# Edge proxy\n\nReplaced.\n", Version: v}},
 		{name: "move", req: knowledge.MoveRequest{Vault: "ours/kb", From: path, To: "services/proxy.md", Version: v}},
 		{name: "delete", req: knowledge.DeleteRequest{Vault: "ours/kb", Path: path, Version: v}},
 	}
@@ -484,12 +484,12 @@ func (b *syncBuffer) String() string {
 // The guard checks the document at the index's commit, not at a newer one the mirror already fetched.
 // Not parallel: it counts a global metric.
 func TestChangeChecksTheIndexHead(t *testing.T) {
-	const path = "services/esi-proxy.md"
+	const path = "services/edge-proxy.md"
 	f := newFixture(t)
-	f.copy(ours.RepoID).setFile("c2", path, []byte("# ESI proxy\n\nFetched, not indexed yet.\n"))
+	f.copy(ours.RepoID).setFile("c2", path, []byte("# Edge proxy\n\nFetched, not indexed yet.\n"))
 	before := guardMismatches(t)
 
-	_, err := f.base.Edit(t.Context(), f.grant, knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: blobID(esiProxy)})
+	_, err := f.base.Edit(t.Context(), f.grant, knowledge.EditRequest{Vault: "ours/kb", Path: path, OldText: "Run the job.", NewText: "Run it.", Version: blobID(edgeProxy)})
 	if err != nil {
 		t.Fatalf("Edit: %v", err)
 	}

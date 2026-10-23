@@ -37,8 +37,8 @@ guidelines: |
 frontmatter:
   allow: [owner, review_by]
 repositories:
-  - xaroth/speki-infra
-  - github.com/xaroth/mantine-*
+  - acme/speki-infra
+  - github.com/acme/web-*
   - gitlab.com/team/sub/deploy
 ```
 
@@ -76,12 +76,12 @@ its git remote to `list` or `search` as `repository`, and finds the knowledge ab
 knowing vault names. A vault can cover several repositories, and several vaults can cover the same one.
 
 Each entry is `host/owner/repo`, or `owner/repo` for github.com. A git remote URL works too
-(`https://github.com/xaroth/speki.git`, `git@gitlab.com:team/sub/deploy.git`): speki drops the scheme,
+(`https://github.com/acme/speki.git`, `git@gitlab.com:team/sub/deploy.git`): speki drops the scheme,
 user, port and `.git`, maps `ssh.github.com` to `github.com`, and lowercases ASCII letters. `owner` can
 hold GitLab subgroups, but a github.com entry is always exactly `owner/repo`.
 
 A `*` in the repository name covers every repository of that owner whose name matches:
-`xaroth/mantine-*` covers `xaroth/mantine-core` but not `xaroth/mantine`. `*` can't be used in the host or
+`acme/web-*` covers `acme/web-core` but not `acme/web`. `*` can't be used in the host or
 owner, and covers one level only: `gitlab.com/team/*` doesn't cover `gitlab.com/team/sub/deploy`.
 
 Speki doesn't check that the repositories exist or who can see them. Entries are shown to everyone who can
