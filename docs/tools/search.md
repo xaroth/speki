@@ -37,6 +37,7 @@ Notes come first, each on its own line, when they apply:
 |---|---|
 | "Not searched, so this result says nothing about them: ..." | Readable vaults speki can't serve weren't searched. Only when `vaults` was left out ([overview.md](overview.md#vaults-speki-cant-serve)) |
 | "Searched the vaults covering <repo> or <repo>: ..." | With `repositories`: the vaults that were searched |
+| "None of the vaults you can read covers <repo>, so all of them were searched instead." | With `repositories` no vault covers |
 | "No document has "x"; searched for "y" instead." | One per word no searched vault contains |
 | "No document matched every word; these match some of them." | The search was relaxed ([search.md](../search.md#what-the-query-means)) |
 | "No documents found. Try other words, or list a vault to browse it. If you work it out, write it back." | No hits |
@@ -58,9 +59,11 @@ Order follows a score from 0 to 1, relative to the best match in the same vault,
 
 Only the vaults whose `repositories` cover any of the given repositories are searched, narrowed further by
 `vaults` if given, and the skipped-vaults note names only covering vaults. When no vault covers them,
-nothing is searched and the text says "None of the vaults you can read covers <repo>, so nothing was
-searched. Leave out repositories to search them anyway." ("you named" when `vaults` was given). Speki
-doesn't fall back to every vault: those results would look as if they were about the repository.
+served or not, speki searches every vault instead, sets `uncovered`, and the text starts with "None of
+the vaults you can read covers <repo>, so all of them were searched instead." ("you named" when `vaults`
+was given). That saves the agent a second call, and the note keeps it from reading the results as being
+about the repository. When covering vaults exist but none can be served, nothing is searched and the
+skipped-vaults note names them.
 
 This is how an agent working in a code checkout finds the knowledge about that code: pass every remote
 URL from `git remote -v` as is. In a fork, `origin` is the fork and the vault names the upstream

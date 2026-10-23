@@ -26,8 +26,10 @@ type SearchResult struct {
 	index.Results
 	Skipped []Skipped // only when no vault was named
 	// With Repositories: the repositories normalised, and the vaults covering them that were searched.
+	// Uncovered means no vault covers them, so every vault was searched instead.
 	Repositories []string
 	Searched     []string
+	Uncovered    bool
 }
 
 // Search runs a full-text search across vaults, best match first, within index.SearchTimeout. Hits carry
@@ -54,18 +56,24 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 		return SearchResult{}, err
 	}
 	var searched []string
+	var uncovered bool
 	if covered != nil {
-		sources = slices.DeleteFunc(sources, func(s index.Source) bool { return !covered[s.Name] })
-		notServed = slices.DeleteFunc(notServed, func(s Skipped) bool { return !covered[s.Name] })
-		if len(notServed) == 0 {
-			notServed = nil
-		}
-		for _, s := range sources {
-			searched = append(searched, s.Name)
-		}
-		slices.Sort(searched)
-		if len(sources) == 0 {
-			return SearchResult{Skipped: notServed, Repositories: repositories}, nil
+		in := slices.DeleteFunc(slices.Clone(sources), func(s index.Source) bool { return !covered[s.Name] })
+		out := slices.DeleteFunc(slices.Clone(notServed), func(s Skipped) bool { return !covered[s.Name] })
+		if len(in)+len(out) == 0 {
+			uncovered = true // nothing to narrow to: search them all, and say so
+		} else {
+			sources, notServed = in, out
+			if len(notServed) == 0 {
+				notServed = nil
+			}
+			for _, s := range sources {
+				searched = append(searched, s.Name)
+			}
+			slices.Sort(searched)
+			if len(sources) == 0 {
+				return SearchResult{Skipped: notServed, Repositories: repositories}, nil
+			}
 		}
 	}
 
@@ -93,5 +101,5 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	case err != nil:
 		return SearchResult{}, err
 	}
-	return SearchResult{Results: res, Skipped: notServed, Repositories: repositories, Searched: searched}, nil
+	return SearchResult{Results: res, Skipped: notServed, Repositories: repositories, Searched: searched, Uncovered: uncovered}, nil
 }

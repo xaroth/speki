@@ -46,7 +46,9 @@ type fakeKB struct {
 
 func (f *fakeKB) answer(ctx context.Context, req any) error {
 	f.mu.Lock()
-	f.got = req
+	if req != nil { // list calls Vaults after Covering; keep the request that names repositories
+		f.got = req
+	}
 	f.mu.Unlock()
 	if f.wait {
 		<-ctx.Done()
@@ -330,12 +332,13 @@ func TestTools(t *testing.T) {
 			wantText: "ours/kb\nTitle: KB\nDescription: Our knowledge.\nRepositories: github.com/ours/api, github.com/ours/api-*\nAccess: read and write. Documents: 3\n\n",
 		},
 		{
-			name:     "list vaults covering a repository, none",
-			kb:       &fakeKB{covering: knowledge.Covering{Repositories: []string{"github.com/me/other", "github.com/ours/other"}}},
-			tool:     "list",
-			args:     map[string]any{"repositories": []string{"me/other", "ours/other"}},
-			wantReq:  []string{"me/other", "ours/other"},
-			wantText: "None of your vaults covers github.com/me/other or github.com/ours/other.\n",
+			name:    "list vaults covering a repository, none",
+			kb:      &fakeKB{covering: knowledge.Covering{Repositories: []string{"github.com/me/other", "github.com/ours/other"}}, vaults: []knowledge.VaultInfo{ourKB}},
+			tool:    "list",
+			args:    map[string]any{"repositories": []string{"me/other", "ours/other"}},
+			wantReq: []string{"me/other", "ours/other"},
+			wantText: "None of your vaults covers github.com/me/other or github.com/ours/other; these are all of them.\n" +
+				"ours/kb\nTitle: KB\nDescription: Our knowledge.\nRepositories: github.com/ours/api, github.com/ours/api-*\nAccess: read and write. Documents: 3\n\n",
 		},
 		{
 			name:     "search vaults covering a repository",
@@ -346,12 +349,22 @@ func TestTools(t *testing.T) {
 			wantText: "Searched the vaults covering github.com/me/api or github.com/ours/api: ours/kb, ours/ro.\nNo documents found. Try other words, or list a vault to browse it. If you work it out, write it back.\n",
 		},
 		{
-			name:     "search a repository no named vault covers",
-			kb:       &fakeKB{search: knowledge.SearchResult{Repositories: []string{"github.com/ours/api"}}},
-			tool:     "search",
-			args:     map[string]any{"query": "x", "vaults": []string{"ours/ro"}, "repositories": []string{"ours/api"}},
-			wantReq:  knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/ro"}, Repositories: []string{"ours/api"}},
-			wantText: "None of the vaults you named covers github.com/ours/api, so nothing was searched. Leave out repositories to search them anyway.\n",
+			name:    "search a repository no named vault covers",
+			kb:      &fakeKB{search: knowledge.SearchResult{Repositories: []string{"github.com/ours/api"}, Uncovered: true}},
+			tool:    "search",
+			args:    map[string]any{"query": "x", "vaults": []string{"ours/ro"}, "repositories": []string{"ours/api"}},
+			wantReq: knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/ro"}, Repositories: []string{"ours/api"}},
+			wantText: "None of the vaults you named covers github.com/ours/api, so all of them were searched instead.\n" +
+				"No documents found. Try other words, or list a vault to browse it. If you work it out, write it back.\n",
+		},
+		{
+			name:    "search a repository no vault covers",
+			kb:      &fakeKB{search: knowledge.SearchResult{Repositories: []string{"github.com/ours/api"}, Uncovered: true, Results: index.Results{Hits: []index.Hit{{Source: "ours/kb", Path: "a.md", Title: "A", Snippet: "a"}}}}},
+			tool:    "search",
+			args:    map[string]any{"query": "x", "repositories": []string{"ours/api"}},
+			wantReq: knowledge.SearchRequest{Query: "x", Repositories: []string{"ours/api"}},
+			wantText: "None of the vaults you can read covers github.com/ours/api, so all of them were searched instead.\n" +
+				"<results boundary=\"B\">\nours/kb a.md  A\na\n</results boundary=\"B\">\n",
 		},
 		{
 			name:     "search a repository only an unserved vault covers",

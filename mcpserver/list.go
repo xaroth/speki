@@ -34,39 +34,38 @@ type ListOutput struct {
 	Folders    []string          `json:"folders,omitempty"`
 	Documents  []DocumentSummary `json:"documents,omitempty"`
 	NextCursor string            `json:"next_cursor,omitempty" jsonschema:"pass as cursor to get the next page; absent on the last page"`
+	Uncovered  bool              `json:"uncovered,omitempty" jsonschema:"with repositories: true when no vault covers them, so every vault is listed instead"`
 }
 
 func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListOutput, string, error) {
 	if in.Vault != "" && len(in.Repositories) > 0 {
 		return ListOutput{}, "", &knowledge.Error{Code: knowledge.CodeInvalid, Message: "repositories filters the list of vaults. Leave out vault"}
 	}
-	if len(in.Repositories) > 0 {
-		c, err := s.kb.Covering(ctx, g, in.Repositories)
-		if err != nil {
-			return ListOutput{}, "", err
-		}
-		out := ListOutput{Vaults: vaultSummaries(c.Vaults, false)}
-		var b strings.Builder
-		if len(c.Vaults) == 0 {
-			fmt.Fprintf(&b, "None of your vaults covers %s.\n", strings.Join(c.Repositories, " or "))
-		}
-		for _, v := range out.Vaults {
-			fmt.Fprintf(&b, "%s\n", oneLine(v.Vault))
-			writeVaultDetails(&b, v)
-			b.WriteString("\n")
-		}
-		return out, b.String(), nil
-	}
 	if in.Vault == "" {
-		vaults, err := s.kb.Vaults(ctx, g)
-		if err != nil {
-			return ListOutput{}, "", err
-		}
-		out := ListOutput{Vaults: vaultSummaries(vaults, false)}
 		var b strings.Builder
-		if served(vaults) == 0 {
-			b.WriteString("No vault is ready yet. Try again in a minute.\n")
+		var vaults []knowledge.VaultInfo
+		var uncovered bool
+		if len(in.Repositories) > 0 {
+			c, err := s.kb.Covering(ctx, g, in.Repositories)
+			if err != nil {
+				return ListOutput{}, "", err
+			}
+			vaults = c.Vaults
+			if len(vaults) == 0 {
+				uncovered = true
+				fmt.Fprintf(&b, "None of your vaults covers %s; these are all of them.\n", strings.Join(c.Repositories, " or "))
+			}
 		}
+		if len(in.Repositories) == 0 || uncovered {
+			var err error
+			if vaults, err = s.kb.Vaults(ctx, g); err != nil {
+				return ListOutput{}, "", err
+			}
+			if served(vaults) == 0 {
+				b.WriteString("No vault is ready yet. Try again in a minute.\n")
+			}
+		}
+		out := ListOutput{Vaults: vaultSummaries(vaults, false), Uncovered: uncovered}
 		for _, v := range out.Vaults {
 			fmt.Fprintf(&b, "%s\n", oneLine(v.Vault))
 			writeVaultDetails(&b, v)

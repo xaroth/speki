@@ -76,7 +76,8 @@ Each result has a snippet of up to 32 words from the body around the best match,
 
 `path` keeps documents under a folder, `tags` keeps documents that have all the given tags, and
 `exclude_deprecated` drops deprecated ones. `repositories` searches only the vaults that cover any of the
-given code repositories ([vaults.md](vaults.md#repositories)). Filters apply inside the ranking, each
+given code repositories ([vaults.md](vaults.md#repositories)), or every vault, with a note, when none
+covers them. Filters apply inside the ranking, each
 answered by an index, so a filtered search ranks only up to the limit and never reads the bodies of
 documents it filters out.
 

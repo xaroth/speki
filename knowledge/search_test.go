@@ -22,13 +22,14 @@ func TestSearch(t *testing.T) {
 		{Name: "ours/old", State: access.StateFailed},
 	}
 	testCases := []struct {
-		name        string
-		req         knowledge.SearchRequest
-		wantHits    []string // vault:path, sorted
-		wantSkipped []knowledge.Skipped
-		wantRepos   []string
-		wantSearch  []string // vaults searched for a repository
-		code        knowledge.Code
+		name          string
+		req           knowledge.SearchRequest
+		wantHits      []string // vault:path, sorted
+		wantSkipped   []knowledge.Skipped
+		wantRepos     []string
+		wantSearch    []string // vaults searched for a repository
+		wantUncovered bool
+		code          knowledge.Code
 	}{
 		{
 			name:        "every vault",
@@ -69,9 +70,11 @@ func TestSearch(t *testing.T) {
 			wantSearch: []string{"ours/shared"},
 		},
 		{
-			name:      "repository no named vault covers",
-			req:       knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}, Repositories: []string{"ours/zeppelin"}},
-			wantRepos: []string{"github.com/ours/zeppelin"},
+			name:          "repository no named vault covers",
+			req:           knowledge.SearchRequest{Query: "zeppelin", Vaults: []string{"ours/kb"}, Repositories: []string{"ours/zeppelin"}},
+			wantHits:      []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/edge-proxy.md"},
+			wantRepos:     []string{"github.com/ours/zeppelin"},
+			wantUncovered: true,
 		},
 		{
 			name:       "fork and upstream",
@@ -80,7 +83,14 @@ func TestSearch(t *testing.T) {
 			wantRepos:  []string{"github.com/me/api-gateway", "github.com/ours/api-gateway"},
 			wantSearch: []string{"ours/kb"},
 		},
-		{name: "repository nobody covers", req: knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"ours/other"}}, wantRepos: []string{"github.com/ours/other"}},
+		{
+			name:          "repository nobody covers",
+			req:           knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"ours/other"}},
+			wantHits:      []string{"ours/kb:README.md", "ours/kb:services/db/pg.md", "ours/kb:services/edge-proxy.md", "ours/shared:zeppelin.md"},
+			wantSkipped:   notServed,
+			wantRepos:     []string{"github.com/ours/other"},
+			wantUncovered: true,
+		},
 		{name: "repository invalid", req: knowledge.SearchRequest{Query: "zeppelin", Repositories: []string{"./api"}}, code: knowledge.CodeInvalid},
 		{name: "empty", req: knowledge.SearchRequest{Query: "  "}, code: knowledge.CodeInvalid},
 		{name: "only exclusions", req: knowledge.SearchRequest{Query: "-zeppelin"}, code: knowledge.CodeInvalid},
@@ -108,8 +118,9 @@ func TestSearch(t *testing.T) {
 			if diff := cmp.Diff(testCase.wantSkipped, got.Skipped); diff != "" {
 				t.Errorf("skipped (-want +got):\n%s", diff)
 			}
-			if !slices.Equal(got.Repositories, testCase.wantRepos) || !slices.Equal(got.Searched, testCase.wantSearch) {
-				t.Errorf("got repositories %v searched %v, want %v searched %v", got.Repositories, got.Searched, testCase.wantRepos, testCase.wantSearch)
+			if !slices.Equal(got.Repositories, testCase.wantRepos) || !slices.Equal(got.Searched, testCase.wantSearch) || got.Uncovered != testCase.wantUncovered {
+				t.Errorf("got repositories %v searched %v uncovered %v, want %v searched %v uncovered %v",
+					got.Repositories, got.Searched, got.Uncovered, testCase.wantRepos, testCase.wantSearch, testCase.wantUncovered)
 			}
 		})
 	}
