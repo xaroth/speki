@@ -54,7 +54,7 @@ because an HTTPS remote can carry a token.
 runbooks/
 services/
 <results boundary="9f3c1a7e5b2d8c40">
-README.md  About this vault  updated 2026-10-09  version 3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1
+README.md  About this vault  updated 2026-10-09
   What this vault holds and how it's organized.
 </results boundary="9f3c1a7e5b2d8c40">
 <guidelines boundary="9f3c1a7e5b2d8c40">
@@ -63,8 +63,9 @@ One page per service. ...
 ```
 
 Folders come first, one per line. Documents go in one `results` fence: per document its path, title,
-status in brackets when it isn't `active`, the day it was last updated and its version, then its
-description on an indented line when it has one.
+status in brackets when it isn't `active` and the day it was last updated, then its description on an
+indented line when it has one. There's no version: `read` gives it, and an agent reads a document before
+changing it.
 
 - Entries are sorted by path, at most 200 per call, folders included. Without `recursive`, each subfolder
   is one entry ending in `/`. With it, every document under `path` is listed and there are no folder

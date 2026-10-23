@@ -14,13 +14,13 @@ import (
 
 // SearchInput is a full-text search.
 type SearchInput struct {
-	Query             string   `json:"query" jsonschema:"words to search for. \"quoted phrases\" must appear as written; -word excludes documents with that word"`
-	Vaults            []string `json:"vaults,omitempty" jsonschema:"only these vaults (owner/repo). Leave out to search all your vaults"`
-	Repository        string   `json:"repository,omitempty" jsonschema:"only the vaults covering this code repository. Pass its git remote URL or host/owner/repo"`
+	Query             string   `json:"query" jsonschema:"words; \"quoted phrases\" must appear as written; -word excludes"`
+	Vaults            []string `json:"vaults,omitempty" jsonschema:"only these vaults, owner/repo. Default: all"`
+	Repository        string   `json:"repository,omitempty" jsonschema:"only vaults covering this code repository: its git remote URL or host/owner/repo"`
 	Path              string   `json:"path,omitempty" jsonschema:"only documents under this folder"`
-	Tags              []string `json:"tags,omitempty" jsonschema:"only documents that have all of these tags"`
-	ExcludeDeprecated bool     `json:"exclude_deprecated,omitempty" jsonschema:"leave out deprecated documents. By default they're included but ranked lower"`
-	Limit             int      `json:"limit,omitempty" jsonschema:"how many results, 1 to 50. Default 10"`
+	Tags              []string `json:"tags,omitempty" jsonschema:"only documents with all these tags"`
+	ExcludeDeprecated bool     `json:"exclude_deprecated,omitempty" jsonschema:"leave out deprecated documents, which otherwise rank lower"`
+	Limit             int      `json:"limit,omitempty" jsonschema:"1 to 50. Default 10"`
 }
 
 // SearchHit is one search result.
@@ -108,7 +108,7 @@ func (s *Server) search(ctx context.Context, g *access.Grant, in SearchInput) (S
 			hits.WriteString("\n")
 		}
 		fmt.Fprintf(&hits, "%s %s  %s\n", oneLine(h.Source), oneLine(h.Path), docSummary(h.Title, string(h.Status), h.Updated))
-		if h.Description != "" {
+		if h.Description != "" && h.Description != h.Snippet { // the snippet falls back to the description
 			fmt.Fprintf(&hits, "%s\n", oneLine(h.Description))
 		}
 		fmt.Fprintf(&hits, "%s\n", oneLine(h.Snippet))

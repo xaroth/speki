@@ -46,7 +46,7 @@ separated by a blank line, and each has:
 
 1. The vault, the path, the title, the status in brackets when it isn't `active`, and the day it was last
    updated. The title is cut to 200 bytes.
-2. The description, when there is one, cut to 500 bytes.
+2. The description, when there is one and it isn't the snippet, cut to 500 bytes.
 3. The snippet: up to 32 words of the body around the best match, matches in `**bold**`. The description
    when the body didn't match, and for a substring hit. At most 500 bytes.
 
