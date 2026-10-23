@@ -56,11 +56,11 @@ Order follows a score from 0 to 1, relative to the best match in the same vault,
 
 ## With `repositories`
 
-Only the vaults whose `repositories` cover any of the given repositories are searched, narrowed further by `vaults` if
-given, and the skipped-vaults note names only covering vaults. When no vault covers them, nothing
-is searched and the text says "None of the vaults you can read covers <repo>, so nothing was searched.
-Leave out repositories to search them anyway." ("you named" when `vaults` was given). Speki doesn't fall back to
-every vault: those results would look as if they were about the repository.
+Only the vaults whose `repositories` cover any of the given repositories are searched, narrowed further by
+`vaults` if given, and the skipped-vaults note names only covering vaults. When no vault covers them,
+nothing is searched and the text says "None of the vaults you can read covers <repo>, so nothing was
+searched. Leave out repositories to search them anyway." ("you named" when `vaults` was given). Speki
+doesn't fall back to every vault: those results would look as if they were about the repository.
 
 This is how an agent working in a code checkout finds the knowledge about that code: pass every remote
 URL from `git remote -v` as is. In a fork, `origin` is the fork and the vault names the upstream
