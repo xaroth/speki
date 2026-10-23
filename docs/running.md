@@ -75,7 +75,7 @@ public_url: https://speki.example.com
 github:
   app_id: 123456
   client_id: Iv23liAbCdEf
-  private_key_file: /run/secrets/github-app-pem
+  private_key_file: /run/secrets/github-app.pem
   client_secret_file: /run/secrets/github-client-secret
   # allowed_accounts: [87654321]
 
@@ -83,7 +83,7 @@ github:
 #   required_orgs: [acme]
 
 auth:
-  keys_file: /run/secrets/speki-keys
+  keys_file: /run/secrets/speki-keys.yaml
 
 sync:
   # Required in the image: the default, "data" in the working directory, isn't writable there.
@@ -122,9 +122,9 @@ services:
       - ./config.yaml:/etc/speki/config.yaml:ro
       - speki-data:/var/lib/speki
     secrets:
-      - github-app-pem
+      - github-app.pem
       - github-client-secret
-      - speki-keys
+      - speki-keys.yaml
     # Environment variables override config.yaml:
     # environment:
     #   SPEKI_TELEMETRY_LOG_LEVEL: debug
@@ -149,11 +149,11 @@ services:
     restart: unless-stopped
 
 secrets:
-  github-app-pem:
+  github-app.pem:
     file: ./secrets/github-app.pem
   github-client-secret:
     file: ./secrets/github-client-secret
-  speki-keys:
+  speki-keys.yaml:
     file: ./secrets/speki-keys.yaml
 
 volumes:

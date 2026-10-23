@@ -50,11 +50,11 @@ documents found. Try other words, or list a vault to browse it."
 
 ## With `repository`
 
-Only the vaults whose `repositories` cover the repository are searched, narrowed further by `vaults` if
-given, and `skipped_vaults` lists only covering vaults. When no vault covers it, nothing is searched and the
-text says "None of the vaults you can read covers <repo>, so nothing was searched. Leave out repository to
-search them anyway." ("you named" when `vaults` was given). Speki doesn't fall back to every vault: those results would look as if they were about the
-repository.
+Only the vaults whose `repositories` cover the repository are searched, narrowed further by `vaults` if given,
+and `skipped_vaults` lists only covering vaults. When no vault covers it, nothing is searched and the text
+says "None of the vaults you can read covers <repo>, so nothing was searched. Leave out repository to search
+them anyway." ("you named" when `vaults` was given). Speki doesn't fall back to every vault: those results
+would look as if they were about the repository.
 
 This is how an agent working in a code checkout finds the knowledge about that code: pass `git remote
 get-url origin` as is.

@@ -33,8 +33,8 @@ cleared out with the version the `broken` error gives.
 ```
 
 The text says "Deleted in commit ..." and lists the linking documents under "These documents link to the old
-path:". There's no `version`: the document is gone. `linked_from` lists the documents whose links now point nowhere,
-so the agent can fix them with `edit`.
+path:". There's no `version`: the document is gone. `linked_from` lists the documents whose links now point
+nowhere, so the agent can fix them with `edit`.
 
 ## Errors
 

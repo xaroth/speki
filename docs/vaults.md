@@ -59,10 +59,12 @@ newer `speki.yaml` doesn't break an older speki.
 A `speki.yaml` that doesn't parse, misses a required field, goes over a limit or is larger than 64 KiB is
 rejected. A new vault with a bad file isn't added. An existing vault keeps running on its last good
 configuration, so a typo doesn't take a vault away from everyone. Either way the problem is logged and
-shown on the status page ([operating.md](operating.md#status-page)).
+shown on the status page ([operating.md](operating.md#status-page)). Speki reads the file again after the
+next push to the repository, or after a restart.
 
 The guidelines are written by anyone who can push to the repository. Agents get them inside a fence, like
-document text, and are told to treat them as information ([security.md](security.md#prompt-injection-stored-in-documents)).
+document text, and are told to treat them as information
+([security.md](security.md#prompt-injection-stored-in-documents)).
 
 ## Repositories
 
@@ -198,8 +200,8 @@ instance asks GitHub itself. Each instance still fetches its own git copy.
 Each poll round checks four vaults at a time. Slower work runs in the background, outside the round, so one
 vault can't hold up the others: a full rebuild, opening a vault that failed, or switching to a new default
 branch (cloned next to the old copy while the old index keeps serving). At most four of those run at once; a
-fresh clone that only compacts a copy doesn't count against them. A clone or build that makes no progress for 5 minutes is
-canceled and retried later. Large vaults that keep making progress are left to finish.
+fresh clone that only compacts a copy doesn't count against them. A clone or build that makes no progress for
+5 minutes is canceled and retried later. Large vaults that keep making progress are left to finish.
 
 A vault whose update fails keeps serving its last good index and shows the error on the status page. It's
 retried with backoff from 2 minutes up to 30. A failure from SQLite running out of memory, usually caused by

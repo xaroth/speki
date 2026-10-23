@@ -3,12 +3,12 @@
 Explains speki and lists the vaults the user can use, with their descriptions and writing guidelines.
 Agents call it once, before they first use speki in a conversation.
 
-The server instructions are short because clients cut them at 2,048 characters. `guide` carries the
-longer version: when to search and when to write, the document format and core fields, link style, how
-versions and conflicts work, how search treats words and the vaults covering a repository, how long documents are read in parts and
-history in pages, when to use `query`, what the access and availability errors mean, and
-the trust rule for document text. It also carries what instructions can't: the vaults this user can see,
-which differ per user.
+The server instructions are short because clients cut them at 2,048 characters. `guide` carries the longer
+version: when to search and when to write, the document format and core fields, link style, how versions and
+conflicts work, how search treats words and the vaults covering a repository, how long documents are read in
+parts and history in pages, when to use `query`, what the access and availability errors mean, and the trust
+rule for document text. It also carries what instructions can't: the vaults this user can see, which differ
+per user.
 
 ## Input
 

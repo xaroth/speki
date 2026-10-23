@@ -108,10 +108,10 @@ See [access.md](access.md#tokens).
 ## Stale data
 
 A document deleted because it contained a secret stays searchable on another instance until that instance
-hears about the change: within seconds with Redis, otherwise at its next poll. Changes made outside speki
-wait for the next poll (60 seconds by default); with Redis, instances share what polling learns from
-GitHub, so it can take up to about two poll intervals. Access answers are cached for 5 minutes, so someone removed
-from an organization, repository or team keeps access for up to 5 minutes.
+hears about the change: within seconds with Redis, otherwise at its next poll. Changes made outside speki wait
+for the next poll (60 seconds by default); with Redis, instances share what polling learns from GitHub, so it
+can take up to about two poll intervals. Access answers are cached for 5 minutes, so someone removed from an
+organization, repository or team keeps access for up to 5 minutes.
 
 One malformed file must not stop a vault from updating, or a deleted secret would stay searchable. A file
 that can't be parsed is indexed as broken instead of failing the update.

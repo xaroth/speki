@@ -141,9 +141,9 @@ services:
       redis:
         condition: service_started
     secrets:
-      - github-app-pem
+      - github-app.pem
       - github-client-secret
-      - speki-keys
+      - speki-keys.yaml
       - redis-url
 
 secrets:
@@ -169,9 +169,9 @@ the `Caddyfile` lists every instance as an upstream, for example `reverse_proxy 
 
 - `ready`: what `/readyz` reports.
 - `store`: `memory` or `redis`.
-- `vaults`: every vault with its state (`serving`, `building`, `failed`), index commit, document count and
-  size, a warning when it's larger than speki is built for, last successful sync, when the index was last
-  confirmed current, and last error.
+- `vaults`: per vault `name`, `repo_id`, `state` (`serving`, `building`, `failed`), `commit`, `documents`,
+  `bytes`, `large` (larger than speki is built for), `last_sync`, `fresh` (when the index was last confirmed
+  current) and `error`.
 - `problems`: repositories whose `speki.yaml` couldn't be used, with the reason.
 - `warnings`: configuration warnings, such as the memory store.
 

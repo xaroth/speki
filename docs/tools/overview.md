@@ -68,7 +68,8 @@ tools.
 ## Protocol
 
 The endpoint is stateless and answers every request with a plain JSON body, never a stream. It serves
-clients on MCP `2026-07-28` and negotiates older versions, up to `2025-11-25`, on the same URL. Nothing a tool
+clients on MCP `2026-07-28` and still negotiates older versions, from `2025-11-25` back to `2024-11-05`, on
+the same URL. Nothing a tool
 does needs a session, and no tool streams, so this keeps load balancers and proxies simple: any instance
 can answer any request.
 

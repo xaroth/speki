@@ -25,8 +25,8 @@ limit.
 ```
 
 `columns` and `rows` are never null. Binary values come back as text, and NaN and infinity as strings.
-`truncated` is true when rows were cut at 200 rows or at the size of one answer. `skipped_vaults` works as in `search`: readable vaults
-that weren't covered because speki can't serve them, when `vaults` was left out.
+`truncated` is true when rows were cut at 200 rows or at the size of one answer. `skipped_vaults` works as in
+`search`: readable vaults that weren't covered because speki can't serve them, when `vaults` was left out.
 
 The text rendering is tab-separated, header first, with `NULL` for nulls, then a line with the row count.
 When rows were cut it adds ", truncated: add a LIMIT or narrow the query to see the rest". Skipped vaults
@@ -45,8 +45,9 @@ instead ([overview.md](overview.md#results)). The text and `rows` always hold th
 | Memory | a budget shared by all queries (`sqlite.query_memory_mib`) | `too_large` |
 | Vaults | 10 | `invalid` |
 
-The sandbox also stops reading at 1 MiB, which bounds memory. The two shared slots mean two slow queries hold up everyone else's for a few seconds. That's acceptable at a
-team's size, and few slots keep few queries sharing the memory budget.
+The sandbox also stops reading at 1 MiB, which bounds memory. The two shared slots mean two slow queries hold
+up everyone else's for a few seconds. That's acceptable at a team's size, and few slots keep few queries
+sharing the memory budget.
 
 ## Errors
 
