@@ -39,8 +39,10 @@ a minute."
 ## With `repositories`: the vaults that cover them
 
 Only the vaults whose `repositories` cover any of the given repositories, in the same form, unserved ones
-included with their "Not available" line. No match isn't an error: the text says "None of your vaults
-covers <host/owner/repo> or <host/owner/repo>."
+included with their "Not available" line. No match isn't an error: speki lists every vault instead, as
+without `repositories`, sets `uncovered`, and the text starts with "None of your vaults covers
+<host/owner/repo> or <host/owner/repo>; these are all of them." The agent sees what else it can search
+without a second call.
 
 Taking several is for forks: a fork's `origin` is the fork, while vaults name the upstream repository. An
 agent passes every remote of its checkout (`git remote -v`), and a vault covering any of them matches.

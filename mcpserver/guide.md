@@ -19,7 +19,8 @@ it back and tell the user. Mark outdated documents `status: deprecated` instead 
 - Titles, aliases and tags count for more than the body. Deprecated documents rank lower; filter by
   `tags` or `path`, or set `exclude_deprecated`.
 - A vault can name the code `repositories` it covers, as `host/owner/repo` (`*` matches names). Pass a
-  checkout's remotes as `repositories` to `search` or `list` to use only the vaults that cover them.
+  checkout's remotes as `repositories` to `search` or `list` to use only the vaults that cover them. When
+  none does, both use every vault and say so.
 - `list` browses a vault's folders, 200 entries at a time. Without a vault it lists your vaults; one
   with a `Not available:` line can't be served right now; the line says what to do.
 - `query` runs read-only SQL over metadata, links and text, for what search can't answer: "runbooks not

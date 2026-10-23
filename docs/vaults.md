@@ -73,7 +73,8 @@ document text, and are told to treat them as information
 
 `repositories` tells agents which code repositories a vault covers. An agent working in a checkout passes
 its git remotes to `list` or `search` as `repositories`, and finds the knowledge about that code without
-knowing vault names. A vault can cover several repositories, and several vaults can cover the same one.
+knowing vault names. When no vault covers them, both use every vault and say so. A vault can cover
+several repositories, and several vaults can cover the same one.
 List the upstream repository, not forks: a fork's checkout has the upstream as a remote, and any remote
 matching is enough.
 
