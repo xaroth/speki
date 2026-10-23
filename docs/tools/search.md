@@ -19,42 +19,48 @@ contract.
 
 ## Output
 
-```json
-{ "results": [
-  { "vault": "acme/kb", "path": "services/edge-proxy.md",
-    "title": "Edge proxy", "description": "...", "tags": ["edge", "proxy"],
-    "status": "active", "updated": "2026-10-09T14:02:11Z",
-    "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1",
-    "snippet": "... the proxy **caches** upstream responses for ...", "score": 1 }
-],
-  "corrected": { "kubrenetes": "kubernetes" },
-  "relaxed": false,
-  "skipped_vaults": [{ "vault": "acme/new", "state": "building" }] }
+```text
+No document has "kubrenetes"; searched for "kubernetes" instead.
+<results boundary="9f3c1a7e5b2d8c40">
+acme/kb services/edge-proxy.md  Edge proxy  updated 2026-10-09
+How the edge proxy routes and caches requests to upstream services.
+... the proxy **caches** upstream responses for ...
+
+acme/kb runbooks/proxy-restart.md  Restarting the proxy [deprecated]  updated 2025-03-14
+... drain the **proxy** before ...
+</results boundary="9f3c1a7e5b2d8c40">
 ```
 
-| Field | Meaning |
-|---|---|
-| `results` | Hits, highest `score` first. Ties sort by vault, then path |
-| `score` | From 0 to 1, relative to the best match in the same vault: that one scores 1 (0.5 if deprecated), and the others score their share of it. It says how good a match is within its vault, not overall. Substring hits on a title, alias or file name score half the vault's lowest full-text score, at most 0.01 ([search.md](../search.md#ranking)) |
-| `snippet` | Up to 32 words of the body around the best match, matches in `**bold**`. The description when the body didn't match, and for a substring hit. At most 500 bytes |
-| `corrected` | Words no searched vault contains, and what speki searched for instead |
-| `relaxed` | True when no document matched every word, and these results match only some |
-| `skipped_vaults` | Readable vaults that weren't searched because speki can't serve them. Only when `vaults` was left out |
-| `repository_vaults` | With `repository`: the vaults that were searched |
+Notes come first, each on its own line, when they apply:
 
-The text rendering puts notes first: skipped vaults, "Searched the vaults covering <repo>: ...", one "No
-document has "x"; searched for "y" instead." per correction, and "No document matched every word; these
-match some of them." Then all hits go in one `results` fence: per hit a line with vault, path, title, its
-status in brackets when not `active`, and `version <sha>`, then the snippet. With no hits it says "No
-documents found. Try other words, or list a vault to browse it."
+| Note | When |
+|---|---|
+| "Not searched, so this result says nothing about them: ..." | Readable vaults speki can't serve weren't searched. Only when `vaults` was left out ([overview.md](overview.md#vaults-speki-cant-serve)) |
+| "Searched the vaults covering <repo>: ..." | With `repository`: the vaults that were searched |
+| "No document has "x"; searched for "y" instead." | One per word no searched vault contains |
+| "No document matched every word; these match some of them." | The search was relaxed ([search.md](../search.md#what-the-query-means)) |
+| "No documents found. Try other words, or list a vault to browse it. If you work it out, write it back." | No hits |
+
+Then all hits go in one `results` fence, best match first, ties sorted by vault, then path. Hits are
+separated by a blank line, and each has:
+
+1. The vault, the path, the title, the status in brackets when it isn't `active`, and the day it was last
+   updated. The title is cut to 200 bytes.
+2. The description, when there is one, cut to 500 bytes.
+3. The snippet: up to 32 words of the body around the best match, matches in `**bold**`. The description
+   when the body didn't match, and for a substring hit. At most 500 bytes.
+
+The hit carries no version: an agent reads a document before changing it, and `read` gives the version.
+Order follows a score from 0 to 1, relative to the best match in the same vault, which isn't shown
+([search.md](../search.md#ranking)).
 
 ## With `repository`
 
-Only the vaults whose `repositories` cover the repository are searched, narrowed further by `vaults` if given,
-and `skipped_vaults` lists only covering vaults. When no vault covers it, nothing is searched and the text
-says "None of the vaults you can read covers <repo>, so nothing was searched. Leave out repository to search
-them anyway." ("you named" when `vaults` was given). Speki doesn't fall back to every vault: those results
-would look as if they were about the repository.
+Only the vaults whose `repositories` cover the repository are searched, narrowed further by `vaults` if
+given, and the skipped-vaults note names only covering vaults. When no vault covers it, nothing is
+searched and the text says "None of the vaults you can read covers <repo>, so nothing was searched. Leave
+out repository to search them anyway." ("you named" when `vaults` was given). Speki doesn't fall back to
+every vault: those results would look as if they were about the repository.
 
 This is how an agent working in a code checkout finds the knowledge about that code: pass `git remote
 get-url origin` as is.

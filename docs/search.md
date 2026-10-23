@@ -17,8 +17,8 @@ semantic or embedding search. For questions about metadata and links rather than
   matched as a prefix. When the last term is quoted, nothing is matched as a prefix.
 - `-word` excludes documents containing the word.
 - Every word has to match somewhere in the document: title, aliases, tags, description, headings or body.
-  When nothing matches every word and there was more than one, speki searches again requiring any word, and
-  marks the result `relaxed`.
+  When nothing matches every word and there was more than one, speki searches again requiring any word,
+  and says so in the result.
 
 Titles, aliases and file names are also matched by substring, so "auth" finds a document titled
 "OAuthProvider" and "proxy" finds `edge-proxy.md`. Only file names count, not folders, or "ops" would match

@@ -1,8 +1,8 @@
 # edit
 
-Replaces an exact piece of text in a document and commits the change. It's the tool for changing part of a
-document. What every change has in common (the write lock, commits, conflicts, retries, `index_pending`) is
-in [changes.md](../changes.md).
+Replaces an exact piece of text in a document and commits the change. It's the tool for changing part of
+a document. What every change has in common (the write lock, commits, conflicts, retries, waiting for the
+index) is in [changes.md](../changes.md).
 
 The agent names the text it expects to find, not a line number. If the document changed so that the text
 no longer appears, the edit fails instead of landing in the wrong place.
@@ -44,12 +44,13 @@ answer was lost. Speki looks for a commit whose answer was lost before reporting
 
 ## Output
 
-```json
-{ "version": "8d1f...", "commit": "4be0...", "index_pending": false }
+```text
+Saved in commit 4be0c7a1d4f7b0e3a6c9d2f5b8e1a4c7d0f3b6e9.
+New version: 8d1f0b3e6a9c2d5f8b1e4a7c0d3f6b9e2a5c8d1f
 ```
 
-The text says "Saved in commit ...", gives the new version, and adds that search may not show the change for
-a little while when `index_pending` is true.
+When the index hadn't caught up in time ([changes.md](../changes.md#after-the-commit)), a third line says
+"Search may not show the change for a little while."
 
 ## Errors
 

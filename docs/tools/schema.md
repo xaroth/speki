@@ -9,12 +9,14 @@ None.
 
 ## Output
 
-```json
-{ "schema": "# Querying speki\n\n`query` runs one read-only SQLite `SELECT` ..." }
+```text
+# Querying speki
+
+`query` runs one read-only SQLite `SELECT` ...
 ```
 
-The text rendering is the same text. It's embedded in the binary from `mcpserver/schema.md`, the source of
-truth for what agents are told. [query.md](../query.md) describes the same views for people.
+The text is embedded in the binary from `mcpserver/schema.md`, the source of truth for what agents are
+told. [query.md](../query.md) describes the same views for people.
 
 The text says the views are the interface, and that the tables behind them can be read but change without
 notice. That way the index schema stays free to change: an index with another schema version is rebuilt

@@ -28,13 +28,15 @@ cleared out with the version the `broken` error gives.
 
 ## Output
 
-```json
-{ "commit": "4be0...", "index_pending": false, "linked_from": ["services/index.md"] }
+```text
+Deleted in commit 4be0c7a1d4f7b0e3a6c9d2f5b8e1a4c7d0f3b6e9.
+These documents link to the old path:
+  services/index.md
 ```
 
-The text says "Deleted in commit ..." and lists the linking documents under "These documents link to the old
-path:". There's no `version`: the document is gone. `linked_from` lists the documents whose links now point
-nowhere, so the agent can fix them with `edit`.
+There's no version: the document is gone. The listed documents have links that now point nowhere, so the
+agent can fix them with `edit`. "Search may not show the change for a little while." follows the commit
+line when the index hadn't caught up in time.
 
 ## Errors
 

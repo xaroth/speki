@@ -36,13 +36,16 @@ markdown links, wikilinks and `related` entries all count.
 
 ## Output
 
-```json
-{ "version": "3f2a...", "commit": "4be0...", "index_pending": false,
-  "linked_from": ["services/index.md", "runbooks/deploy.md"] }
+```text
+Moved in commit 4be0c7a1d4f7b0e3a6c9d2f5b8e1a4c7d0f3b6e9.
+New version: 3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1
+These documents link to the old path:
+  services/index.md
+  runbooks/deploy.md
 ```
 
-The text says "Moved in commit ...", gives the version, and lists the linking documents under "These
-documents link to the old path:".
+The version is the one the document had, since the content is unchanged. "Search may not show the change
+for a little while." follows the version when the index hadn't caught up in time.
 
 ## Errors
 

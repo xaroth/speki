@@ -12,34 +12,35 @@ repository they're working in.
 | `repository` | git remote URL, `host/owner/repo`, or `owner/repo` on github.com | |
 | `path` | folder in the vault | the root |
 | `recursive` | bool | false |
-| `cursor` | `next_cursor` from the previous call | |
+| `cursor` | the cursor the previous call ended with | |
 
 All inputs are optional. Which ones are given picks one of three modes. Passing both `vault` and
 `repository` is `invalid`: `repository` filters the list of vaults, so it has no meaning inside one.
 
 ## Without `vault`: the user's vaults
 
-```json
-{ "vaults": [
-  { "vault": "acme/kb", "title": "Infrastructure knowledge",
-    "description": "How our services are deployed and operated...",
-    "repositories": ["github.com/acme/infra", "github.com/acme/svc-*"],
-    "can_write": true, "documents": 412 },
-  { "vault": "acme/new", "title": "New team notes", "description": "...",
-    "can_write": false, "documents": 0, "state": "building" }
-] }
+```text
+acme/kb
+Title: Infrastructure knowledge
+Description: How our services are deployed and operated.
+Repositories: github.com/acme/infra, github.com/acme/svc-*
+Access: read and write. Documents: 412
+
+acme/new
+Title: New team notes
+Not available: still building its index; try again shortly
 ```
 
-The same entries as [`guide`](guide.md), sorted by name, without frontmatter keys. Vaults speki can't serve
-right now carry a `state`. The text has, per vault, its name and the same title, description, repositories
-and access or "Not available" lines as `guide`. When no vault is served yet, it starts with "No vault is ready
-yet. Try again in a minute."
+The same vaults as [`guide`](guide.md), sorted by name: per vault its name, then the same title,
+description, repositories and access or "Not available" lines, then a blank line. Frontmatter keys and
+guidelines are left out. When no vault is served yet, it starts with "No vault is ready yet. Try again in
+a minute."
 
 ## With `repository`: the vaults that cover it
 
 Only the vaults whose `repositories` cover the given repository, in the same form, unserved ones included
-with their `state`. No match isn't an error: the `vaults` key is left out, and the text says "None of your
-vaults covers <host/owner/repo>."
+with their "Not available" line. No match isn't an error: the text says "None of your vaults covers
+<host/owner/repo>."
 
 The repository is normalized the same way `speki.yaml` entries are ([vaults.md](../vaults.md#repositories)):
 scheme, user, port and `.git` are dropped, `ssh.github.com` becomes `github.com`, and ASCII letters are
@@ -49,31 +50,33 @@ because an HTTPS remote can carry a token.
 
 ## With `vault`: folders and documents
 
-```json
-{ "folders": ["runbooks/", "services/"],
-  "documents": [
-    { "path": "README.md", "title": "About this vault", "description": "...",
-      "status": "active", "updated": "2026-10-09T14:02:11Z",
-      "version": "3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1" }
-  ],
-  "next_cursor": "services/edge-proxy.md" }
+```text
+runbooks/
+services/
+<results boundary="9f3c1a7e5b2d8c40">
+README.md  About this vault  updated 2026-10-09  version 3f2a91c4e0b8d2a7c6f1e9b3d5a8c0f2e4b6d8a1
+  What this vault holds and how it's organized.
+</results boundary="9f3c1a7e5b2d8c40">
+<guidelines boundary="9f3c1a7e5b2d8c40">
+One page per service. ...
+</guidelines boundary="9f3c1a7e5b2d8c40">
 ```
+
+Folders come first, one per line. Documents go in one `results` fence: per document its path, title,
+status in brackets when it isn't `active`, the day it was last updated and its version, then its
+description on an indented line when it has one.
 
 - Entries are sorted by path, at most 200 per call, folders included. Without `recursive`, each subfolder
   is one entry ending in `/`. With it, every document under `path` is listed and there are no folder
   entries.
-- `next_cursor` is set when more entries follow. Pass it as `cursor` with the same `vault` and `path`.
-  Paging is by path rather than by offset, so the cursor stays valid when documents are added or removed in
-  between.
-- The vault's guidelines come along in the text, in a `guidelines` fence, when listing the vault's root
-  without a cursor, so an agent that starts browsing a vault sees its rules. They aren't in the structured
-  result.
-- A document whose file can't be parsed is listed with `status: broken` and its path as title.
+- When more entries follow, the documents are followed by "More entries follow: call list again with
+  cursor "..."." The agent passes that as `cursor` with the same `vault` and `path`. Paging is by path
+  rather than by offset, so the cursor stays valid when documents are added or removed in between.
+- The vault's guidelines come last, in a `guidelines` fence, when listing the vault's root without a
+  cursor, so an agent that starts browsing a vault sees its rules.
+- A document whose file can't be parsed is listed as `[broken]`, with its path as title.
 - Titles are cut to 200 bytes and descriptions to 500.
-
-The text rendering has one line per folder and one per document (`path  title  version <sha>`). It says "This
-vault has no documents yet." when there's nothing to show, and "More entries follow: call list again with
-cursor "..."." when there's more.
+- With nothing to show, the text says "This vault has no documents yet."
 
 ## Errors
 

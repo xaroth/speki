@@ -123,7 +123,7 @@ ORDER BY d.updated DESC LIMIT 20;
 - No `PRAGMA`, `ATTACH`, writes or temporary tables, and no `randomblob`, `zeroblob`, `load_extension` or
   `sqlite_*` functions.
 - 200 rows, and as many as fit in one answer of 80 KiB, 3 seconds, one query per user at a time, at most
-  10 vaults. `truncated` says when rows were cut.
+  10 vaults. The result says when rows were cut.
 
 ## The sandbox
 
