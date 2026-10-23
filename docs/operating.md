@@ -228,7 +228,7 @@ GitHub sign-in callback carries its code there. Speki doesn't send its trace con
 
 | Symptom | Look at |
 |---|---|
-| A vault doesn't show up | `/status`: is it under `problems` (a bad `speki.yaml`; after a restart, an existing vault with a bad file is dropped at the first complete discovery round), or `failed`? Is the app installed on the repository by an allowed account? Discovery runs every 5 minutes |
+| A vault doesn't show up | `/status`: is it under `problems` (a bad `speki.yaml`; after a restart, an existing vault with a bad file is dropped at the first discovery round in which every request to GitHub succeeds), or `failed`? Is the app installed on the repository by an allowed account? Discovery runs every 5 minutes |
 | A vault shows old content | `/status` for its last sync and error; `speki_vault_fresh_timestamp_seconds` |
 | Users get 403 | Not in a required organization, or no readable vault. The message says which |
 | Users are signed out often | `speki_refreshes_total` by result. `lost_to_timeout` means GitHub timeouts; several instances on the memory store cause sign-outs too |
