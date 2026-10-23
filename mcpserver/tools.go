@@ -24,7 +24,7 @@ const instructions = `Speki is this team's shared knowledge base, for what the c
 
 ` + instructionsRest
 
-const instructionsRest = `Search it before answering questions about the systems, services, infrastructure, processes or decisions it covers, before debugging or changing one of those systems, and when working out how one works, alongside reading the code. One search is cheaper than rediscovering what someone already wrote down. At the start of a task in a git repository, pass its remote URLs (git remote -v) as repositories to search or list, for the vaults that cover it. Say which documents an answer came from, by vault and path.
+const instructionsRest = `Search it before answering questions about the systems, services, infrastructure, processes or decisions it covers, before debugging or changing one of those systems, and when working out how one works, alongside reading the code. One search is cheaper than rediscovering what someone already wrote down. Knowledge written for something else is often the best place to start something new: search all vaults, even when none covers what you're doing. At the start of a task in a git repository, pass its remote URLs (git remote -v) as repositories to search or list, for the vaults that cover it. Say which documents an answer came from, by vault and path.
 
 When you learn something worth keeping, such as how something works, a fix, or a decision and its reason, write it back. Update the document that covers it, or create one if none does, and tell the user what you saved. Mark outdated documents deprecated instead of leaving them wrong.
 
