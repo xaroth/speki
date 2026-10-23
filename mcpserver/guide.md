@@ -21,8 +21,7 @@ it back and tell the user. Mark outdated documents `status: deprecated` instead 
 - A vault can name the code `repositories` it covers, as `host/owner/repo` (`*` matches names). Pass a
   git remote as `repository` to `search` or `list` to use only the vaults that cover it.
 - `list` browses a vault's folders, 200 entries at a time. Without a vault it lists your vaults; one
-  with a `state` can't be served right now: `building` or `gone` (try again in a minute) or `failed`
-  (tell the user).
+  with a `Not available:` line can't be served right now; the line says what to do.
 - `query` runs read-only SQL over metadata, links and text, for what search can't answer: "runbooks not
   updated this year", "what links here". Call `schema` first.
 - `read` returns the raw file with its frontmatter. Past 1,000 lines or 80 KiB it comes in parts with an
