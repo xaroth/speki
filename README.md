@@ -13,7 +13,8 @@ it over MCP (Model Context Protocol). GitHub decides who can see and change what
 
 ## Getting started
 
-Speki is a single Go binary. Building it needs Go and a C compiler (the search index uses SQLite):
+Speki is a single Go binary. Building it needs Go and a C compiler (the search index uses SQLite). `go.mod`
+pins the Go toolchain; with the default `GOTOOLCHAIN=auto`, an older Go downloads it:
 
 ```sh
 task build
@@ -25,7 +26,8 @@ Without [Task](https://taskfile.dev):
 CGO_ENABLED=1 go build -tags 'sqlite_fts5,sqlite_omit_load_extension' -o bin/speki ./cmd/speki
 ```
 
-Or pull the container image, published for each release:
+Or pull the container image, published for each release for linux/amd64 and linux/arm64 and signed with
+cosign:
 
 ```sh
 docker pull ghcr.io/xaroth/speki:latest
@@ -38,11 +40,11 @@ docker build -t speki .
 ```
 
 To run it you need a GitHub App, a configuration file and a secret key.
-[docs/functional/running.md](docs/functional/running.md) walks through all three.
+[docs/running.md](docs/running.md) walks through all three.
 [config.example.yaml](config.example.yaml) is a starting point for the configuration.
 
 Once speki is running at its public URL, turn a repository into a vault
-([vaults.md](docs/functional/vaults.md)) and connect a client:
+([vaults.md](docs/vaults.md)) and connect a client:
 
 ```sh
 claude mcp add --transport http speki https://speki.example.com/mcp
@@ -52,6 +54,6 @@ claude mcp add --transport http speki https://speki.example.com/mcp
 
 [docs/README.md](docs/README.md) lists everything. Good places to start:
 
-- [What speki is](docs/functional/overview.md)
-- [Running speki](docs/functional/running.md)
-- [The tools agents use](docs/functional/tools.md)
+- [What speki is](docs/overview.md)
+- [Running speki](docs/running.md)
+- [The tools agents use](docs/tools/overview.md)

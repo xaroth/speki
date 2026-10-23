@@ -1,31 +1,33 @@
 # Speki documentation
 
-Start with [what speki is](functional/overview.md).
+Start with [what speki is](overview.md): its design principles explain most of what the other pages
+describe.
 
-Functional documentation describes what speki does, for the people running it and the people (and agents)
-using it:
+How speki works:
 
-- [overview.md](functional/overview.md): what speki is, the words we use, the tools
-- [vaults.md](functional/vaults.md): turning a repository into a vault, `speki.yaml`
-- [documents.md](functional/documents.md): document format, frontmatter, paths, links
-- [access.md](functional/access.md): signing in, who gets in, what they can do
-- [tools.md](functional/tools.md): every MCP tool, its input and output
-- [search-and-query.md](functional/search-and-query.md): how search ranks, what `query` can see
-- [running.md](functional/running.md): GitHub App setup, configuration, building, deployment
+- [overview.md](overview.md): what speki is, its design principles, how the parts fit together
+- [vaults.md](vaults.md): turning a repository into a vault, `speki.yaml`, who may read and write, how speki
+  keeps its copy current
+- [documents.md](documents.md): the document format, frontmatter, links, paths, and what a change may do
+- [changes.md](changes.md): how a change becomes a commit: versions, conflicts, lost answers, catching up
+- [search.md](search.md): how search matches, corrects and ranks, and why it's SQLite FTS5
+- [query.md](query.md): the views agents can query with SQL, and the sandbox that keeps them in their vaults
+- [access.md](access.md): signing in, who gets in, permissions, tokens and refreshing
+- [security.md](security.md): the threats speki is designed against, and what answers each
 
-Design documentation describes how it's built:
+The MCP tools agents use:
 
-- [architecture.md](design/architecture.md): packages, the request path, startup
-- [oauth.md](design/oauth.md): sign-in, tokens, the authorization server
-- [sync.md](design/sync.md): vault discovery, mirrors, polling, writes
-- [index.md](design/index.md): the SQLite index, search, the query sandbox
-- [document.md](design/document.md): parsing and changing documents
-- [mcp.md](design/mcp.md): the MCP server and its instructions
-- [operations.md](design/operations.md): configuration, telemetry, builds
+- [tools/overview.md](tools/overview.md): what every tool shares: instructions, checks before a tool runs,
+  results, fencing, errors
+- [guide](tools/guide.md), [list](tools/list.md), [search](tools/search.md), [read](tools/read.md),
+  [history](tools/history.md), [schema](tools/schema.md), [query](tools/query.md)
+- [write](tools/write.md), [edit](tools/edit.md), [move](tools/move.md), [delete](tools/delete.md)
 
-Research notes record what we looked at and why we chose what we did:
-[MCP](research/mcp-protocol.md), [authentication](research/authentication.md),
-[search engine](research/search-engine.md), [git access](research/git-access.md),
-[storage format](research/storage-format.md), [security](research/security.md).
+Running it:
+
+- [running.md](running.md): GitHub App, secrets, configuration, Docker Compose, connecting clients, keys,
+  building
+- [operating.md](operating.md): ports, startup and shutdown, disk and memory, several instances, status,
+  logs, metrics, traces
 
 [CONVENTIONS.md](CONVENTIONS.md) has the code rules.

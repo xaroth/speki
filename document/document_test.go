@@ -127,7 +127,7 @@ func TestParseUnusable(t *testing.T) {
 			if err == nil {
 				t.Fatalf("got no error, want %q", testCase.want)
 			}
-			// Agents see this text in the broken error and the broken column; docs/functional/tools.md lists it.
+			// Agents see this text in the broken error and the broken column; docs/tools/overview.md lists it.
 			if err.Error() != testCase.want {
 				t.Errorf("got error %q, want %q", err, testCase.want)
 			}
