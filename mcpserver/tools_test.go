@@ -65,8 +65,8 @@ func (f *fakeKB) Vaults(ctx context.Context, _ *access.Grant) ([]knowledge.Vault
 	return f.vaults, f.answer(ctx, nil)
 }
 
-func (f *fakeKB) Covering(ctx context.Context, _ *access.Grant, repository string) (knowledge.Covering, error) {
-	return f.covering, f.answer(ctx, repository)
+func (f *fakeKB) Covering(ctx context.Context, _ *access.Grant, repositories []string) (knowledge.Covering, error) {
+	return f.covering, f.answer(ctx, repositories)
 }
 
 func (f *fakeKB) List(ctx context.Context, _ *access.Grant, req knowledge.ListRequest) (knowledge.Listing, error) {
@@ -323,42 +323,42 @@ func TestTools(t *testing.T) {
 		},
 		{
 			name:     "list vaults covering a repository",
-			kb:       &fakeKB{covering: knowledge.Covering{Repository: "github.com/ours/api", Vaults: []knowledge.VaultInfo{ourKB}}},
+			kb:       &fakeKB{covering: knowledge.Covering{Repositories: []string{"github.com/ours/api"}, Vaults: []knowledge.VaultInfo{ourKB}}},
 			tool:     "list",
-			args:     map[string]any{"repository": "git@github.com:ours/api.git"},
-			wantReq:  "git@github.com:ours/api.git",
+			args:     map[string]any{"repositories": []string{"git@github.com:ours/api.git"}},
+			wantReq:  []string{"git@github.com:ours/api.git"},
 			wantText: "ours/kb\nTitle: KB\nDescription: Our knowledge.\nRepositories: github.com/ours/api, github.com/ours/api-*\nAccess: read and write. Documents: 3\n\n",
 		},
 		{
 			name:     "list vaults covering a repository, none",
-			kb:       &fakeKB{covering: knowledge.Covering{Repository: "github.com/ours/other"}},
+			kb:       &fakeKB{covering: knowledge.Covering{Repositories: []string{"github.com/me/other", "github.com/ours/other"}}},
 			tool:     "list",
-			args:     map[string]any{"repository": "ours/other"},
-			wantReq:  "ours/other",
-			wantText: "None of your vaults covers github.com/ours/other.\n",
+			args:     map[string]any{"repositories": []string{"me/other", "ours/other"}},
+			wantReq:  []string{"me/other", "ours/other"},
+			wantText: "None of your vaults covers github.com/me/other or github.com/ours/other.\n",
 		},
 		{
 			name:     "search vaults covering a repository",
-			kb:       &fakeKB{search: knowledge.SearchResult{Repository: "github.com/ours/api", Searched: []string{"ours/kb", "ours/ro"}}},
+			kb:       &fakeKB{search: knowledge.SearchResult{Repositories: []string{"github.com/me/api", "github.com/ours/api"}, Searched: []string{"ours/kb", "ours/ro"}}},
 			tool:     "search",
-			args:     map[string]any{"query": "x", "repository": "ours/api"},
-			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
-			wantText: "Searched the vaults covering github.com/ours/api: ours/kb, ours/ro.\nNo documents found. Try other words, or list a vault to browse it. If you work it out, write it back.\n",
+			args:     map[string]any{"query": "x", "repositories": []string{"me/api", "ours/api"}},
+			wantReq:  knowledge.SearchRequest{Query: "x", Repositories: []string{"me/api", "ours/api"}},
+			wantText: "Searched the vaults covering github.com/me/api or github.com/ours/api: ours/kb, ours/ro.\nNo documents found. Try other words, or list a vault to browse it. If you work it out, write it back.\n",
 		},
 		{
 			name:     "search a repository no named vault covers",
-			kb:       &fakeKB{search: knowledge.SearchResult{Repository: "github.com/ours/api"}},
+			kb:       &fakeKB{search: knowledge.SearchResult{Repositories: []string{"github.com/ours/api"}}},
 			tool:     "search",
-			args:     map[string]any{"query": "x", "vaults": []string{"ours/ro"}, "repository": "ours/api"},
-			wantReq:  knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/ro"}, Repository: "ours/api"},
-			wantText: "None of the vaults you named covers github.com/ours/api, so nothing was searched. Leave out repository to search them anyway.\n",
+			args:     map[string]any{"query": "x", "vaults": []string{"ours/ro"}, "repositories": []string{"ours/api"}},
+			wantReq:  knowledge.SearchRequest{Query: "x", Vaults: []string{"ours/ro"}, Repositories: []string{"ours/api"}},
+			wantText: "None of the vaults you named covers github.com/ours/api, so nothing was searched. Leave out repositories to search them anyway.\n",
 		},
 		{
 			name:     "search a repository only an unserved vault covers",
-			kb:       &fakeKB{search: knowledge.SearchResult{Repository: "github.com/ours/api", Skipped: []knowledge.Skipped{{Name: "ours/new", State: access.StateBuilding}}}},
+			kb:       &fakeKB{search: knowledge.SearchResult{Repositories: []string{"github.com/ours/api"}, Skipped: []knowledge.Skipped{{Name: "ours/new", State: access.StateBuilding}}}},
 			tool:     "search",
-			args:     map[string]any{"query": "x", "repository": "ours/api"},
-			wantReq:  knowledge.SearchRequest{Query: "x", Repository: "ours/api"},
+			args:     map[string]any{"query": "x", "repositories": []string{"ours/api"}},
+			wantReq:  knowledge.SearchRequest{Query: "x", Repositories: []string{"ours/api"}},
 			wantText: "Not searched, so this result says nothing about them: ours/new (still building its index; try again shortly). " + noConclusion + "\n",
 		},
 		{
@@ -639,19 +639,19 @@ func TestToolErrors(t *testing.T) {
 			wantLogged:  "tool failed",
 		},
 		{
-			name:        "list a vault and a repository",
+			name:        "list a vault and repositories",
 			tool:        "list",
-			args:        map[string]any{"vault": "ours/kb", "repository": "ours/api"},
+			args:        map[string]any{"vault": "ours/kb", "repositories": []string{"ours/api"}},
 			kb:          &fakeKB{},
-			wantText:    "invalid: repository filters the list of vaults. Leave out vault",
+			wantText:    "invalid: repositories filters the list of vaults. Leave out vault",
 			wantOutcome: "invalid",
 		},
 		{
-			name:        "list by repository passes errors on",
+			name:        "list by repositories passes errors on",
 			tool:        "list",
-			args:        map[string]any{"repository": "./api"},
-			kb:          &fakeKB{err: &knowledge.Error{Code: knowledge.CodeInvalid, Message: "repository: a local path"}},
-			wantText:    "invalid: repository: a local path",
+			args:        map[string]any{"repositories": []string{"./api"}},
+			kb:          &fakeKB{err: &knowledge.Error{Code: knowledge.CodeInvalid, Message: "repositories[0]: a local path"}},
+			wantText:    "invalid: repositories[0]: a local path",
 			wantOutcome: "invalid",
 		},
 		{

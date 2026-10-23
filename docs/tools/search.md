@@ -11,7 +11,7 @@ contract.
 |---|---|---|
 | `query` | words, `"quoted phrases"`, `-excluded` words | required |
 | `vaults` | list of vault names | every readable vault |
-| `repository` | only vaults covering this repository: a git remote URL, `host/owner/repo` or `owner/repo` | |
+| `repositories` | only vaults covering any of these, up to 10: git remote URLs, `host/owner/repo` or `owner/repo` | |
 | `path` | only documents under this folder | |
 | `tags` | documents must have all of them. Lowercased, leading `#` dropped | |
 | `exclude_deprecated` | bool | false: deprecated documents are included, ranked lower |
@@ -36,7 +36,7 @@ Notes come first, each on its own line, when they apply:
 | Note | When |
 |---|---|
 | "Not searched, so this result says nothing about them: ..." | Readable vaults speki can't serve weren't searched. Only when `vaults` was left out ([overview.md](overview.md#vaults-speki-cant-serve)) |
-| "Searched the vaults covering <repo>: ..." | With `repository`: the vaults that were searched |
+| "Searched the vaults covering <repo> or <repo>: ..." | With `repositories`: the vaults that were searched |
 | "No document has "x"; searched for "y" instead." | One per word no searched vault contains |
 | "No document matched every word; these match some of them." | The search was relaxed ([search.md](../search.md#what-the-query-means)) |
 | "No documents found. Try other words, or list a vault to browse it. If you work it out, write it back." | No hits |
@@ -54,16 +54,18 @@ The hit carries no version: an agent reads a document before changing it, and `r
 Order follows a score from 0 to 1, relative to the best match in the same vault, which isn't shown
 ([search.md](../search.md#ranking)).
 
-## With `repository`
+## With `repositories`
 
-Only the vaults whose `repositories` cover the repository are searched, narrowed further by `vaults` if
-given, and the skipped-vaults note names only covering vaults. When no vault covers it, nothing is
-searched and the text says "None of the vaults you can read covers <repo>, so nothing was searched. Leave
-out repository to search them anyway." ("you named" when `vaults` was given). Speki doesn't fall back to
-every vault: those results would look as if they were about the repository.
+Only the vaults whose `repositories` cover any of the given repositories are searched, narrowed further by
+`vaults` if given, and the skipped-vaults note names only covering vaults. When no vault covers them,
+nothing is searched and the text says "None of the vaults you can read covers <repo>, so nothing was
+searched. Leave out repositories to search them anyway." ("you named" when `vaults` was given). Speki
+doesn't fall back to every vault: those results would look as if they were about the repository.
 
-This is how an agent working in a code checkout finds the knowledge about that code: pass `git remote
-get-url origin` as is.
+This is how an agent working in a code checkout finds the knowledge about that code: pass every remote
+URL from `git remote -v` as is. In a fork, `origin` is the fork and the vault names the upstream
+repository; passing both matches either way. Normalizing is as for
+[`list`](list.md#with-repositories-the-vaults-that-cover-them).
 
 ## Limits
 
@@ -78,7 +80,7 @@ words or phrases.
 
 | Code | When |
 |---|---|
-| `invalid` | `limit` above 50 or negative (0 means 10); an empty query; only excluded words; more than 32 words; a malformed `repository` |
+| `invalid` | `limit` above 50 or negative (0 means 10); an empty query; only excluded words; more than 32 words; a malformed repository or more than 10 |
 | `not_found` | A named vault the user can't read |
 | `unavailable` | A named vault is building, failed or gone; a vault was removed or reopened during the search |
 | `timeout` | The search ran past 5 seconds. Name fewer vaults, or narrow it with `path` or `tags` |

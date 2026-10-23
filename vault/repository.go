@@ -21,7 +21,7 @@ var remoteSchemes = map[string]bool{"https": true, "http": true, "ssh": true, "g
 // Errors never quote the input: an HTTPS remote can carry a token.
 var (
 	errNotRepository = errors.New("not a repository: use host/owner/repo, owner/repo or a git remote URL")
-	errLocalPath     = errors.New("a local path, not a repository: pass the git remote (git remote get-url origin)")
+	errLocalPath     = errors.New("a local path, not a repository: pass the git remotes (git remote -v)")
 	errPattern       = errors.New("a repository can't contain *")
 	errPatternPlace  = errors.New("* can only be used in the repository name, not the host or owner")
 	errGitHubDepth   = errors.New("a github.com repository is owner/repo, with nothing after it")

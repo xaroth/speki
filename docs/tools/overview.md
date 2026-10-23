@@ -52,8 +52,8 @@ order, they say:
 2. Search it before answering questions about the systems, services, infrastructure, processes or
    decisions it covers, before debugging or changing one of those systems, and when working out how one
    works, alongside reading the code. One search is cheaper than rediscovering what someone wrote down.
-   At the start of a task in a git repository, pass its remote as `repository` to `search` or `list`. Say
-   which documents an answer came from, by vault and path.
+   At the start of a task in a git repository, pass its remote URLs as `repositories` to `search` or
+   `list`. Say which documents an answer came from, by vault and path.
 3. Write back what's worth keeping, update the document that covers it or create one, tell the user, and
    mark outdated documents deprecated.
 4. Call `guide` once, early, for the vaults, how to search them and how documents are written. Then

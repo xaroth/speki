@@ -14,7 +14,7 @@ import (
 type SearchRequest struct {
 	Query             string
 	Vaults            []string // empty means every vault the user may read
-	Repository        string   // only vaults covering this repository, a git remote or host/owner/repo
+	Repositories      []string // only vaults covering any of these repositories, git remotes or host/owner/repo
 	Path              string   // only documents under this folder
 	Tags              []string // documents must have all of them
 	ExcludeDeprecated bool
@@ -25,9 +25,9 @@ type SearchRequest struct {
 type SearchResult struct {
 	index.Results
 	Skipped []Skipped // only when no vault was named
-	// With a Repository: the repository normalised, and the vaults that cover it that were searched.
-	Repository string
-	Searched   []string
+	// With Repositories: the repositories normalised, and the vaults covering them that were searched.
+	Repositories []string
+	Searched     []string
 }
 
 // Search runs a full-text search across vaults, best match first, within index.SearchTimeout. Hits carry
@@ -41,13 +41,13 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	}
 
 	var covered map[string]bool
-	var repository string
-	if req.Repository != "" {
-		repo, names, err := covering(g, req.Repository)
+	var repositories []string
+	if len(req.Repositories) > 0 {
+		repos, names, err := covering(g, req.Repositories)
 		if err != nil {
 			return SearchResult{}, err
 		}
-		covered, repository = names, repo.String()
+		covered, repositories = names, repos
 	}
 	sources, notServed, err := b.sources(g, req.Vaults)
 	if err != nil {
@@ -65,7 +65,7 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 		}
 		slices.Sort(searched)
 		if len(sources) == 0 {
-			return SearchResult{Skipped: notServed, Repository: repository}, nil
+			return SearchResult{Skipped: notServed, Repositories: repositories}, nil
 		}
 	}
 
@@ -93,5 +93,5 @@ func (b *Base) Search(ctx context.Context, g *access.Grant, req SearchRequest) (
 	case err != nil:
 		return SearchResult{}, err
 	}
-	return SearchResult{Results: res, Skipped: notServed, Repository: repository, Searched: searched}, nil
+	return SearchResult{Results: res, Skipped: notServed, Repositories: repositories, Searched: searched}, nil
 }
