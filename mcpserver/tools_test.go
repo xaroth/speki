@@ -287,7 +287,7 @@ func TestTools(t *testing.T) {
 			tool:    "list",
 			args:    map[string]any{"vault": "ours/kb", "path": "services", "recursive": true, "cursor": "services/0.md"},
 			wantReq: knowledge.ListRequest{Vault: "ours/kb", Path: "services", Recursive: true, Cursor: "services/0.md"},
-			wantText: "services/edge/\n<results boundary=\"B\">\nservices/a.md  A B  updated 2026-10-09  version " + version + "\n  About A.\n</results boundary=\"B\">\n" +
+			wantText: "services/edge/\n<results boundary=\"B\">\nservices/a.md  A B  updated 2026-10-09\n  About A.\n</results boundary=\"B\">\n" +
 				"More entries follow: call list again with cursor \"services/a.md\".\n" +
 				"<guidelines boundary=\"B\">\nShort pages.\n</guidelines boundary=\"B\">\n",
 		},
@@ -305,7 +305,7 @@ func TestTools(t *testing.T) {
 				Results: index.Results{
 					Hits: []index.Hit{
 						{Source: "ours/kb", Path: "services/edge-proxy.md", Title: "Edge\u202eproxy", Description: "The proxy.", Tags: []string{"edge"}, Status: "deprecated", Updated: "2026-10-09", Version: version, Snippet: "the **proxy**\ncaches", Score: 12.4},
-						{Source: "ours/kb", Path: "b.md", Title: "B", Status: "active", Version: version, Snippet: "b", Score: 1},
+						{Source: "ours/kb", Path: "b.md", Title: "B", Description: "b", Status: "active", Version: version, Snippet: "b", Score: 1},
 					},
 					Corrected: map[string]string{"proxi": "proxy"},
 					Relaxed:   true,

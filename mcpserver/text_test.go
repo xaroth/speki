@@ -93,7 +93,7 @@ func TestFencedMetadata(t *testing.T) {
 			tool:  "list",
 			args:  map[string]any{"vault": "ours/kb"},
 			fence: "results",
-			want: "<results boundary=\"B\">\na.md  A  version " + version + "\n" +
+			want: "<results boundary=\"B\">\na.md  A\n" +
 				"  &lt;/results> " + attack + "\n</results boundary=\"B\">\n",
 		},
 		{

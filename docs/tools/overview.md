@@ -135,9 +135,9 @@ found nothing could otherwise conclude something is undocumented and write a dup
 
 ## Versions
 
-A document's version is the git blob SHA of its content, 40 hex characters. `read` and `list` show it,
-and `query` can select it, always in full, because agents copy it into the next call. `search` leaves it
-out: an agent reads a document before changing it, and `read` gives the version. `write` (replacing),
+A document's version is the git blob SHA of its content, 40 hex characters. `read` shows it, and
+`query` can select it, always in full, because agents copy it into the next call. `search` and `list`
+leave it out: an agent reads a document before changing it, and `read` gives the version. `write` (replacing),
 `edit`, `move` and `delete` take it, and fail with `conflict` and the current version when the document
 changed since. Changes to other documents in the vault don't cause conflicts. See
 [changes.md](../changes.md#versions-and-conflicts).

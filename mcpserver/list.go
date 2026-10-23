@@ -99,7 +99,7 @@ func (s *Server) list(ctx context.Context, g *access.Grant, in ListInput) (ListO
 			Updated:     e.Updated,
 			Version:     e.Version,
 		})
-		fmt.Fprintf(&docs, "%s  %s  version %s\n", oneLine(e.Path), docSummary(e.Title, string(e.Status), e.Updated), e.Version)
+		fmt.Fprintf(&docs, "%s  %s\n", oneLine(e.Path), docSummary(e.Title, string(e.Status), e.Updated))
 		if e.Description != "" {
 			fmt.Fprintf(&docs, "  %s\n", oneLine(e.Description))
 		}
