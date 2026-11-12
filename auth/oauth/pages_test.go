@@ -58,3 +58,42 @@ func TestFonts(t *testing.T) {
 		})
 	}
 }
+
+// The home page shows the MCP address and how to add it, under the instance's names.
+func TestHome(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name       string
+		target     string
+		opts       []option
+		wantStatus int
+		wantGolden string
+	}{
+		{name: "default", target: "/", wantStatus: 200, wantGolden: "home.html"},
+		{
+			name:       "instance",
+			target:     "/",
+			opts:       []option{withTitle("Home <notes>"), withInstance("speki-home", "Notes on the house & garden.")},
+			wantStatus: 200,
+			wantGolden: "home_instance.html",
+		},
+		{name: "other path", target: "/nope", wantStatus: 404},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, testCase.opts...)
+			rec := e.do(t, testCase.target, nil)
+			if rec.Code != testCase.wantStatus {
+				t.Fatalf("got status %d, want %d", rec.Code, testCase.wantStatus)
+			}
+			if testCase.wantGolden == "" {
+				return
+			}
+			if got := rec.Header().Get("Content-Security-Policy"); got == "" {
+				t.Error("got no Content-Security-Policy, want one")
+			}
+			golden(t, testCase.wantGolden, rec.Body.String())
+		})
+	}
+}

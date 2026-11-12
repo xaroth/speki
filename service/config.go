@@ -118,6 +118,14 @@ type Instance struct {
 	Description string `yaml:"description"`
 }
 
+// serverName is the name the MCP server advertises.
+func (i Instance) serverName() string {
+	if i.Name == "" {
+		return "speki"
+	}
+	return "speki-" + i.Name
+}
+
 func (i Instance) identity() mcpserver.Identity {
 	return mcpserver.Identity{
 		Name:        i.Name,
