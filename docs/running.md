@@ -222,6 +222,9 @@ that. [vaults.md](vaults.md) has every option.
 
 The MCP endpoint is `<public_url>/mcp`.
 
+The public URL itself serves a page for users with the address and how to add it to Claude, Claude Code, Codex
+and Gemini CLI, under the instance's title and server name.
+
 Claude Code:
 
 ```sh

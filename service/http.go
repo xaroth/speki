@@ -32,11 +32,12 @@ func (s *Service) track(h http.Handler) http.Handler {
 	})
 }
 
-// publicHandler serves what MCP clients and browsers need: MCP, sign-in and health checks.
+// publicHandler serves what MCP clients and browsers need: MCP, the home page, sign-in and health checks.
 func (s *Service) publicHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", s.whenReady(s.mcp.Handler()))
 	auth := s.auth.Handler()
+	mux.Handle("GET /{$}", auth)
 	mux.Handle("/.well-known/", auth)
 	mux.Handle("/oauth/", auth)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {

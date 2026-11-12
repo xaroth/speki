@@ -39,6 +39,11 @@ type Config struct {
 	Issuer string
 	// Title names this speki on the sign-in pages. Empty means "speki".
 	Title string
+	// ServerName is the name the MCP server advertises, which the home page suggests for clients. Empty
+	// means "speki".
+	ServerName string
+	// Description says what belongs in this speki, on the home page.
+	Description string
 	// ClientMetadataHosts are the hosts whose client metadata documents are accepted.
 	ClientMetadataHosts []string
 	GitHub              gh.OAuthConfig
@@ -99,7 +104,7 @@ const callbackPath = "/oauth/github/callback"
 
 func (s *Server) callbackURL() string { return s.cfg.Issuer + callbackPath }
 
-// Handler serves the metadata and OAuth endpoints. Mount it at the root: its paths are fixed.
+// Handler serves the home page, the metadata and the OAuth endpoints. Mount it at the root: its paths are fixed.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	prm := auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
@@ -117,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /oauth/authorize", s.consent)
 	mux.HandleFunc("GET "+callbackPath, s.callback)
 	mux.HandleFunc("GET /oauth/fonts/{name}", font)
+	mux.HandleFunc("GET /{$}", s.home)
 	mux.HandleFunc("POST /oauth/token", s.token)
 	return mux
 }
