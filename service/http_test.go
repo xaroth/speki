@@ -133,3 +133,33 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// The home page tells users to add the server under the name the MCP server advertises.
+func TestHomeNamesTheServer(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		instance string
+		want     string
+	}{
+		{name: "unnamed", want: "speki"},
+		{name: "named", instance: "work", want: "work"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := testConfig(t, newGitHub(t, kbFiles, nil))
+			cfg.Instance.Name = testCase.instance
+			s := startService(t, cfg)
+			public, _ := s.URLs()
+			cs := connectMCP(t, s, signIn(t, s).AccessToken)
+			if got := cs.InitializeResult().ServerInfo.Name; got != testCase.want {
+				t.Fatalf("got server name %q, want %q", got, testCase.want)
+			}
+			home := get(t, public+"/")
+			if want := "claude mcp add --transport http " + testCase.want + " " + cfg.PublicURL + "/mcp"; !strings.Contains(string(home.body), want) {
+				t.Errorf("got home page\n%s\nwant it to contain %q", home.body, want)
+			}
+		})
+	}
+}

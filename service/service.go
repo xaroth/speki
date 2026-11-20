@@ -149,7 +149,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 		oauth.Config{
 			Issuer:              cfg.PublicURL,
 			Title:               cfg.Instance.Title,
-			ServerName:          cfg.Instance.serverName(),
+			ServerName:          cfg.Instance.identity().ServerName(),
 			Description:         cfg.Instance.Description,
 			ClientMetadataHosts: cfg.Auth.ClientMetadataHosts,
 			GitHub: gh.OAuthConfig{

@@ -73,7 +73,7 @@ func TestHome(t *testing.T) {
 		{
 			name:       "instance",
 			target:     "/",
-			opts:       []option{withTitle("Home <notes>"), withInstance("speki-home", "Notes on the house & garden.")},
+			opts:       []option{withTitle("Home <notes>"), withInstance("home", "Notes on the house & garden.")},
 			wantStatus: 200,
 			wantGolden: "home_instance.html",
 		},

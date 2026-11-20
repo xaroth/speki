@@ -275,6 +275,7 @@ func newEnv(tb testing.TB, opts ...option) *env {
 	tb.Helper()
 	s := setup{cfg: oauth.Config{
 		Issuer:              issuer,
+		ServerName:          "speki",
 		ClientMetadataHosts: []string{"claude.ai"},
 		GitHub:              gh.OAuthConfig{ClientID: "Iv1", URL: "https://github.example"},
 	}}

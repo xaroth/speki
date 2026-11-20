@@ -189,17 +189,18 @@ Key rotation is in [running.md](running.md#keys).
 People often use more than one speki, say one their employer runs and a personal one. Each instance signs
 users in on its own, and tokens from one don't work on the other. Operators should set the `instance` block
 ([running.md](running.md#configuration)), so agents can tell the instances apart: it names the server
-`speki-<name>` and opens the agent's instructions with what belongs there.
+`<name>` and opens the agent's instructions with what belongs there.
 
 Name each server in the client after its advertised name. Claude Code builds tool names from that key, so
-permission rules stay readable:
+permission rules stay readable. A name another MCP server already uses, such as `github`, would clash with it
+in the client, so operators pick names that are clearly speki's:
 
 ```sh
-claude mcp add --transport http speki-work https://speki.example.com/mcp
-claude mcp add --transport http speki-home https://speki.home.example/mcp
+claude mcp add --transport http work https://speki.example.com/mcp
+claude mcp add --transport http home https://speki.home.example/mcp
 ```
 
-A rule like `"deny": ["mcp__speki-home"]` in work repositories then keeps the personal instance out of them.
+A rule like `"deny": ["mcp__home"]` in work repositories then keeps the personal instance out of them.
 
 ## What speki keeps
 
