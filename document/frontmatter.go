@@ -207,6 +207,8 @@ func (f *frontmatter) readMeta(m *Meta) []string {
 			case "":
 			case StatusDraft, StatusActive, StatusDeprecated:
 				m.Status = Status(s)
+			case okfStable:
+				m.Status = StatusActive
 			default:
 				warn("status: want draft, active or deprecated, got %q", s)
 			}
@@ -232,7 +234,38 @@ func (f *frontmatter) readMeta(m *Meta) []string {
 			m.Extra[key] = v
 		}
 	}
+	// An OKF tool may bump generated.at after speki set updated, so the later one is the last change.
+	if okf := okfUpdated(pairs); okf.After(m.Updated) {
+		m.Updated = okf
+	}
 	return warnings
+}
+
+// okfStable is OKF's name for an active document.
+const okfStable = "stable"
+
+// okfUpdated returns the last change an OKF document records, in generated.at or else in the timestamp
+// of OKF v0.1, or zero. A generated.at that isn't a date falls back to timestamp. Both stay in Extra as written; a value that isn't a date is passed over without
+// a warning, since speki doesn't own these keys.
+func okfUpdated(pairs []*yaml.Node) time.Time {
+	var generated, timestamp time.Time
+	for i := 0; i+1 < len(pairs); i += 2 {
+		key, value := pairs[i].Value, pairs[i+1]
+		switch {
+		case key == "timestamp":
+			timestamp = parseTime(value)
+		case key == "generated" && value.Kind == yaml.MappingNode:
+			for j := 0; j+1 < len(value.Content); j += 2 {
+				if value.Content[j].Value == "at" {
+					generated = parseTime(value.Content[j+1])
+				}
+			}
+		}
+	}
+	if !generated.IsZero() {
+		return generated
+	}
+	return timestamp
 }
 
 func isNull(n *yaml.Node) bool {
@@ -308,14 +341,30 @@ func timeField(key string, n *yaml.Node, warn func(string, ...any)) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
+	t, ok := parseTimeText(s)
+	if !ok {
+		warn("%s: want a date and time, got %q", key, s)
+	}
+	return t
+}
+
+// parseTime reads a date from a scalar node, or returns zero.
+func parseTime(n *yaml.Node) time.Time {
+	if n.Kind != yaml.ScalarNode || isNull(n) {
+		return time.Time{}
+	}
+	t, _ := parseTimeText(strings.TrimSpace(n.Value))
+	return t
+}
+
+func parseTimeText(s string) (time.Time, bool) {
 	for _, layout := range timeLayouts {
 		t, err := time.Parse(layout, s)
 		if err == nil {
-			return t.UTC()
+			return t.UTC(), true
 		}
 	}
-	warn("%s: want a date and time, got %q", key, s)
-	return time.Time{}
+	return time.Time{}, false
 }
 
 // jsonSafe converts decoded YAML into values encoding/json accepts. YAML allows maps with non-text keys,
