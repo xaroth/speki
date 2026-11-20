@@ -37,11 +37,10 @@ type Config struct {
 	ReadRole    gh.Role `yaml:"read_role"` // the lowest repository role that sees the vault; unset means read
 	// Readers and Writers narrow who may read and write the vault, on top of GitHub's permissions. Nil
 	// means no narrowing.
-	Readers []Principal `yaml:"readers"`
-	Writers []Principal `yaml:"writers"`
-	// ReadOnly makes speki refuse every change: people maintain the vault in git.
-	ReadOnly    bool        `yaml:"read_only"`
+	Readers     []Principal `yaml:"readers"`
+	Writers     []Principal `yaml:"writers"`
 	Frontmatter Frontmatter `yaml:"frontmatter"`
+	ReadOnly    bool        `yaml:"read_only"` // speki refuses every change: people maintain the vault in git
 	// Format is the convention the vault's documents follow. Empty means speki's.
 	Format document.Format `yaml:"format"`
 	// Repositories are the code repositories the vault's knowledge is about.
@@ -221,7 +220,7 @@ func checkLength(field, s string, limit int) error {
 }
 
 // checkPrincipals rejects an empty list, which would otherwise read as "nobody" to some and "everybody" to
-// others (read_only says "nobody may write"), and teams of other organisations: speki can only ask GitHub about the vault's own.
+// others, and teams of other organisations: speki can only ask GitHub about the vault's own.
 func checkPrincipals(field string, ps []Principal, owner string) error {
 	if ps == nil {
 		return nil

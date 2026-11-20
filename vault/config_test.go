@@ -66,6 +66,7 @@ func TestParseConfig(t *testing.T) {
 		{name: "empty readers", raw: "title: T\ndescription: D\nreaders: []\n", wantErr: []string{"readers is empty"}},
 		{name: "read only", raw: "title: T\ndescription: D\nread_only: true\n", want: vault.Config{Title: "T", Description: "D", ReadOnly: true}},
 		{name: "read only with writers", raw: "title: T\ndescription: D\nread_only: true\nwriters: [alice]\n", wantErr: []string{"writers can't be set on a read_only vault"}},
+		{name: "read only not a bool", raw: "title: T\ndescription: D\nread_only: yes-please\n", wantErr: []string{"speki.yaml"}},
 		{name: "empty writers", raw: "title: T\ndescription: D\nwriters: []\n", wantErr: []string{"writers is empty"}},
 		{name: "writers with a dangling dash", raw: "title: T\ndescription: D\nwriters:\n  -\n", wantErr: []string{"writers is empty"}},
 		{name: "team elsewhere", raw: "title: T\ndescription: D\nwriters: [theirs/leads]\n", wantErr: []string{"team theirs/leads isn't in Ours"}},
