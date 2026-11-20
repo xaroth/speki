@@ -108,6 +108,49 @@ func TestStatusAndDates(t *testing.T) {
 			raw:  "---\ntitle: A\ncreated: 2026-10-09T16:30:00+02:00\n---\n",
 			want: document.Meta{Title: "A", Status: document.StatusActive, Created: time.Date(2026, 10, 9, 14, 30, 0, 0, time.UTC)},
 		},
+		{
+			name: "OKF stable is active",
+			raw:  "---\ntitle: A\nstatus: stable\n---\n",
+			want: document.Meta{Title: "A", Status: document.StatusActive},
+		},
+		{
+			name: "OKF generated.at is the last update",
+			raw:  "---\ntitle: A\ngenerated: { by: human:a, at: 2026-06-20T22:53:05+02:00 }\ntimestamp: 2026-01-01T00:00:00Z\n---\n",
+			want: document.Meta{
+				Title:   "A",
+				Status:  document.StatusActive,
+				Updated: time.Date(2026, 6, 20, 20, 53, 5, 0, time.UTC),
+				Extra: map[string]any{
+					"generated": map[string]any{"by": "human:a", "at": time.Date(2026, 6, 20, 20, 53, 5, 0, time.UTC)},
+					"timestamp": time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+		{
+			name: "OKF v0.1 timestamp is the last update",
+			raw:  "---\ntitle: A\ntimestamp: '2026-05-28T22:53:05+00:00'\n---\n",
+			want: document.Meta{
+				Title:   "A",
+				Status:  document.StatusActive,
+				Updated: time.Date(2026, 5, 28, 22, 53, 5, 0, time.UTC),
+				Extra:   map[string]any{"timestamp": "2026-05-28T22:53:05+00:00"},
+			},
+		},
+		{
+			name: "updated wins over OKF dates",
+			raw:  "---\ntitle: A\nupdated: 2026-10-09T10:30:00Z\ntimestamp: 2026-01-01T00:00:00Z\n---\n",
+			want: document.Meta{
+				Title:   "A",
+				Status:  document.StatusActive,
+				Updated: time.Date(2026, 10, 9, 10, 30, 0, 0, time.UTC),
+				Extra:   map[string]any{"timestamp": time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+			},
+		},
+		{
+			name: "an OKF date that isn't a date is passed over",
+			raw:  "---\ntitle: A\ntimestamp: soon\n---\n",
+			want: document.Meta{Title: "A", Status: document.StatusActive, Extra: map[string]any{"timestamp": "soon"}},
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -119,6 +162,9 @@ func TestStatusAndDates(t *testing.T) {
 			}
 			if loc := d.Meta.Created.Location(); loc != time.UTC {
 				t.Errorf("got created in %v, want UTC", loc)
+			}
+			if loc := d.Meta.Updated.Location(); loc != time.UTC {
+				t.Errorf("got updated in %v, want UTC", loc)
 			}
 			if len(d.Warnings) != 0 {
 				t.Errorf("got warnings %q, want none", d.Warnings)

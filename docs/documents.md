@@ -46,10 +46,14 @@ as a table above the document.
 | `description` | text | writer | One or two sentences about what the document covers. Shown in search results and listings |
 | `tags` | list of text | writer | Topics. A leading `#` is dropped and tags are lowercased. At most 20 |
 | `aliases` | list of text | writer | Other names for the subject. Searched like the title. At most 10 |
-| `status` | `draft`, `active`, `deprecated` | writer | Missing means `active`. Search ranks `deprecated` documents lower |
+| `status` | `draft`, `active`, `deprecated` | writer | Missing means `active`, and OKF's `stable` reads as `active`. Search ranks `deprecated` documents lower |
 | `related` | list of paths | writer | Other documents in the same vault worth reading alongside this one |
 | `created` | UTC datetime | speki | Set when speki creates the document |
 | `updated` | UTC datetime | speki | Set every time speki changes the document |
+
+When `updated` is missing, speki takes the last update from the fields the
+[Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) uses:
+`generated.at`, then the older `timestamp`. Those stay as written, and a value that isn't a date is passed over.
 
 `created` and `updated` duplicate what git knows. They're kept because they make queries cheap
 (`WHERE updated < ...`) and Obsidian shows them. Git history stays the record of who changed what. Dates are
