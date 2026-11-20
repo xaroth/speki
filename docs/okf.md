@@ -33,11 +33,14 @@ On top of the rules in [documents.md](documents.md#what-a-change-may-do):
   keys (`runtime`, `parameters`, `computation`, `executor`, `attester`).
 - A concept needs a non-empty `type`. A document that had none, written before the vault used speki, may
   keep going without one.
-- `index.md` and `log.md` aren't concepts: they need no `type`. A nested `index.md` can't gain frontmatter,
-  and the root `index.md` may only add `okf_version`. Frontmatter they already have is left alone.
-
-`verified` isn't checked against who makes the change: an agent can write `by: human:<id>`. OKF treats
-trust tiers as advisory, and git history shows who made each change.
+- `created` is locked like other keys, since speki doesn't set it in an OKF vault.
+- `index.md` and `log.md` aren't concepts: they need no `type` or title. A nested `index.md` can't gain
+  frontmatter, and the root `index.md` may only add `okf_version`. Frontmatter they already have is left
+  alone. Neither can be moved, nor can a document be moved onto one, because a move copies the file
+  without these checks.
+- A change may only add a `human:` entry to `verified` for the signed-in user, as `human:<login>`, so an
+  agent can't claim someone else reviewed a document. Entries already there, and entries by agents
+  (`<producer>/<version>`) or processes (`process:<id>`), aren't checked.
 
 ## Dates
 
