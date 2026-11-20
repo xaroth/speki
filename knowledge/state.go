@@ -18,6 +18,7 @@ type state struct {
 	copy  Copy
 	head  string
 	actor string // who makes the change, as OKF's generated.by names them
+	login string // the GitHub login of the user making the change
 }
 
 func (st state) document(ctx context.Context, path string) (index.Document, bool, error) {
@@ -142,8 +143,7 @@ func (st state) prepareDocument(ctx context.Context, path string, current, next 
 // keys, concepts need a type, and the last change goes where OKF records it instead of created and
 // updated.
 func (st state) prepareOKF(ctx context.Context, cur, d *document.Document, unresolved error, now time.Time) ([]byte, error) {
-	allow := document.OKFAllow(st.vault.Config.Frontmatter.Allow)
-	err := errors.Join(document.Check(cur, d, allow), document.CheckOKF(cur, d), unresolved)
+	err := errors.Join(document.CheckOKF(cur, d, st.vault.Config.Frontmatter.Allow, st.login), unresolved)
 	if err != nil {
 		return nil, documentError(err)
 	}

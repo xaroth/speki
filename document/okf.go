@@ -35,27 +35,40 @@ var okfKeys = []string{keyType, "resource", "sources", "usage_window", "verified
 // OKFKeys returns the frontmatter keys agents may set in an OKF vault on top of the writer fields.
 func OKFKeys() []string { return slices.Clone(okfKeys) }
 
-// OKFAllow returns what Check needs as allowed in an OKF vault whose configuration allows allow: OKF's
-// keys, and generated and timestamp, which speki overwrites like updated.
-func OKFAllow(allow []string) []string {
-	return slices.Concat(okfKeys, []string{keyGenerated, keyTimestamp}, allow)
-}
-
-// The OKF files with a fixed meaning. They aren't concepts: they need no type and speki doesn't date them.
+// The OKF files with a fixed meaning. They aren't concepts: they need no type or title, and speki doesn't
+// date them.
 const (
 	okfIndex = "index.md"
 	okfLog   = "log.md"
 )
 
-// CheckOKF returns the problems a change brings in under OKF's rules: a concept needs a type, and an
-// index.md has no frontmatter, except okf_version in the vault's root one. Like Check, it leaves alone
-// problems the current document (nil for a new one) already had.
-func CheckOKF(current, next *Document) error {
+func okfReserved(docPath string) bool {
+	b := path.Base(docPath)
+	return b == okfIndex || b == okfLog
+}
+
+// IsOKFReserved reports whether docPath names an index.md or log.md, which OKF gives a fixed meaning.
+func IsOKFReserved(docPath string) bool { return okfReserved(docPath) }
+
+// CheckOKF is Check for a vault in the Open Knowledge Format. Agents may also set OKF's keys, and
+// generated and timestamp, which speki overwrites; created stays as it is. A concept needs a type, an
+// index.md has no frontmatter except okf_version in the vault's root one, and only login may be added as
+// a human verifier. Like Check, it leaves alone problems the current document (nil for a new one) already
+// had.
+func CheckOKF(current, next *Document, allowed []string, login string) error {
+	allowed = slices.Concat(okfKeys, []string{keyGenerated, keyTimestamp}, allowed)
+	if next.path == okfIndex {
+		allowed = append(allowed, keyOKFVersion)
+	}
+	return errors.Join(check(current, next, allowed, true), okfRules(current, next), humanVerifiers(current, next, login))
+}
+
+func okfRules(current, next *Document) error {
 	switch path.Base(next.path) {
 	case okfLog:
 		return nil
 	case okfIndex:
-		if !strings.Contains(next.path, "/") {
+		if next.path == okfIndex {
 			var problems []error
 			for _, k := range keysOf(next) {
 				if k != keyOKFVersion && !slices.Contains(keysOf(current), k) {
@@ -75,6 +88,45 @@ func CheckOKF(current, next *Document) error {
 	return nil
 }
 
+// humanVerifiers refuses verified entries by a person other than login that current doesn't have: an
+// agent can't claim someone else reviewed a document.
+func humanVerifiers(current, next *Document, login string) error {
+	var cur []string
+	if current != nil {
+		cur = verifiers(current)
+	}
+	var problems []error
+	for _, v := range verifiers(next) {
+		by, _, _ := strings.Cut(v, "\x00")
+		person, ok := strings.CutPrefix(by, "human:")
+		if !ok || strings.EqualFold(person, login) || slices.Contains(cur, v) {
+			continue
+		}
+		problems = append(problems, fmt.Errorf("verified: %q can't be added; only the signed-in user, human:%s, can be added as a person who verified it", by, login))
+	}
+	return errors.Join(problems...)
+}
+
+// verifiers returns the verified events as "by\x00at". A single mapping counts as a list of one.
+func verifiers(d *Document) []string {
+	var events []any
+	switch v := d.Meta.Extra["verified"].(type) {
+	case map[string]any:
+		events = []any{v}
+	case []any:
+		events = v
+	}
+	var out []string
+	for _, e := range events {
+		m, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, fmt.Sprint(m["by"])+"\x00"+fmt.Sprint(m["at"]))
+	}
+	return out
+}
+
 func hasType(d *Document) bool {
 	t, ok := d.Meta.Extra[keyType].(string)
 	return ok && strings.TrimSpace(t) != ""
@@ -85,7 +137,7 @@ func hasType(d *Document) bool {
 // neither gets generated, or timestamp when v01 is set. updated is set too when the document has it.
 // index.md and log.md are returned unchanged.
 func (d *Document) TouchOKF(now time.Time, by string, v01 bool) ([]byte, error) {
-	if b := path.Base(d.path); b == okfIndex || b == okfLog {
+	if okfReserved(d.path) {
 		return bytes.Clone(d.raw), nil
 	}
 	at := now.UTC().Format(time.RFC3339)

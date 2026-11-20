@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/document"
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/library/index"
 	"github.com/xaroth/speki/vault"
@@ -199,6 +200,9 @@ func (b *Base) Move(ctx context.Context, g *access.Grant, req MoveRequest) (Resu
 		}
 		if cur.Version != req.Version {
 			return plan{}, stale(cur)
+		}
+		if st.vault.Config.Format == document.FormatOKF && (document.IsOKFReserved(from) || document.IsOKFReserved(to)) {
+			return plan{}, errorf(CodeInvalid, "index.md and log.md have a fixed meaning in an OKF vault, so they can't be moved, and nothing can be moved onto one. Write the new file and delete the old one instead")
 		}
 		target, exists, err := st.document(ctx, to)
 		if err != nil {

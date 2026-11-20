@@ -17,6 +17,12 @@ import (
 // so an agent fixing a typo isn't blocked by a person's messy frontmatter. Frontmatter keys other than
 // the writer fields and allowed must keep the value they have in current.
 func Check(current, next *Document, allowed []string) error {
+	return check(current, next, allowed, false)
+}
+
+// check is Check. In an OKF vault speki doesn't set created, so it's locked like other keys, and
+// index.md and log.md need no title.
+func check(current, next *Document, allowed []string, okf bool) error {
 	var problems []error
 	if len(next.raw) > MaxSize {
 		problems = append(problems, fmt.Errorf("%w: the document is larger than %d bytes", ErrTooLarge, MaxSize))
@@ -37,8 +43,8 @@ func Check(current, next *Document, allowed []string) error {
 				grown(keyAliases, len(current.Meta.Aliases), len(next.Meta.Aliases), MaxAliases))
 		}
 	}
-	problems = append(problems, lockedChanges(current, next, allowed)...)
-	if current == nil && next.titleFromPath {
+	problems = append(problems, lockedChanges(current, next, allowed, !okf)...)
+	if current == nil && next.titleFromPath && (!okf || !okfReserved(next.path)) {
 		problems = append(problems, errors.New("title: missing; add a title to the frontmatter or start with a # heading"))
 	}
 	return errors.Join(problems...)
@@ -74,12 +80,13 @@ func WriterKeys() []string { return slices.Clone(writerKeys) }
 func SetBySpeki(key string) bool { return key == keyCreated || key == keyUpdated }
 
 // lockedChanges returns an error for each frontmatter key outside the writer fields and allowed that next
-// adds, removes or changes. The text doesn't vary with the value, like the warnings'.
-func lockedChanges(current, next *Document, allowed []string) []error {
+// adds, removes or changes. The text doesn't vary with the value, like the warnings'. spekiCreated says
+// Touch sets created, so the agent's value doesn't count.
+func lockedChanges(current, next *Document, allowed []string, spekiCreated bool) []error {
 	free := func(key string) bool {
 		return slices.Contains(writerKeys, key) || slices.Contains(allowed, key) || key == keyUpdated // updated is always overwritten
 	}
-	createdSet := current == nil || !current.Meta.Created.IsZero() // Touch sets it to now, or to the current value
+	createdSet := spekiCreated && (current == nil || !current.Meta.Created.IsZero()) // Touch sets it to now, or to the current value
 	if current != nil && current.front != nil && current.front.broken != "" {
 		// Its keys can't be compared, so a repair may only drop keys agents can set anyway.
 		keys, ok := topLevelKeys(current.front.content)
@@ -88,14 +95,14 @@ func lockedChanges(current, next *Document, allowed []string) []error {
 		}
 		var problems []error
 		for _, k := range keys {
-			if !free(k) && k != keyCreated {
+			if !free(k) && (k != keyCreated || !spekiCreated) {
 				problems = append(problems, fmt.Errorf("frontmatter: the current frontmatter is broken and holds %q, which agents can't set; a person has to fix it", k))
 			}
 		}
 		if problems != nil {
 			return problems
 		}
-		createdSet = createdSet || slices.Contains(keys, keyCreated)
+		createdSet = createdSet || spekiCreated && slices.Contains(keys, keyCreated)
 	}
 
 	cur, nxt := properties(current), properties(next)

@@ -69,6 +69,7 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 	actor := actorOf(g.User().Client)
 	withActor := func(ctx context.Context, st state) (plan, error) {
 		st.actor = actor
+		st.login = g.User().Login
 		return prepare(ctx, st)
 	}
 	synced, moved := false, 0

@@ -24,6 +24,7 @@ func TestOKFChanges(t *testing.T) {
 		"ops/sub/concept.md": "---\ntype: Note\n---\n# Concept\n",
 	}
 	v01 := map[string]string{"index.md": "---\nokf_version: \"0.1\"\n---\n# KB\n"}
+	bare := map[string]string{"index.md": "# KB\n", "a.md": "---\ntype: Note\nverified: {by: human:alice, at: 2026-01-01T00:00:00Z}\n---\n# A\n"}
 	write := func(path, content string) knowledge.WriteRequest {
 		return knowledge.WriteRequest{Vault: "ours/kb", Path: path, Content: content}
 	}
@@ -40,8 +41,8 @@ func TestOKFChanges(t *testing.T) {
 		{
 			name:  "a new concept gets generated",
 			files: v02,
-			req:   write("runbooks/restart.md", "---\ntype: Playbook\ntitle: Restart\nverified: {by: human:alice, at: 2026-10-01T00:00:00Z}\n---\n# Restart\n"),
-			want:  "---\ntype: Playbook\ntitle: Restart\nverified: {by: 'human:alice', at: '2026-10-01T00:00:00Z'}\n" + generated + "---\n# Restart\n",
+			req:   write("runbooks/restart.md", "---\ntype: Playbook\ntitle: Restart\nverified: {by: human:octocat, at: 2026-10-01T00:00:00Z}\n---\n# Restart\n"),
+			want:  "---\ntype: Playbook\ntitle: Restart\nverified: {by: 'human:octocat', at: '2026-10-01T00:00:00Z'}\n" + generated + "---\n# Restart\n",
 		},
 		{
 			name:  "a new concept in a v0.1 vault gets timestamp",
@@ -98,6 +99,36 @@ func TestOKFChanges(t *testing.T) {
 			want:  "# Log\n\n## 2026-10-09\n* **Update**: more.\n",
 		},
 		{
+			name:  "the root index.md may gain okf_version",
+			files: bare,
+			req:   replace(bare, "index.md", "---\nokf_version: \"0.2\"\n---\n# KB\n"),
+			want:  "---\nokf_version: \"0.2\"\n---\n# KB\n",
+		},
+		{
+			name:  "a new log.md needs no title",
+			files: v02,
+			req:   write("ops/sub/log.md", "## 2026-10-09\n* **Creation**: sub.\n"),
+			want:  "## 2026-10-09\n* **Creation**: sub.\n",
+		},
+		{
+			name:  "a person's verification already there stays",
+			files: bare,
+			req:   replace(bare, "a.md", strings.Replace(bare["a.md"], "# A\n", "# A\n\nNew.\n", 1)),
+			want:  "---\ntype: Note\nverified: {by: 'human:alice', at: '2026-01-01T00:00:00Z'}\n" + generated + "---\n# A\n\nNew.\n",
+		},
+		{
+			name:    "an agent can't add another person's verification",
+			files:   v02,
+			req:     write("x.md", "---\ntype: Note\nverified:\n  - {by: process:nightly, at: 2026-10-01T00:00:00Z}\n  - {by: human:boss, at: 2026-10-01T00:00:00Z}\n---\n# X\n"),
+			wantErr: `"human:boss" can't be added`,
+		},
+		{
+			name:    "created can't be set",
+			files:   v02,
+			req:     write("x.md", "---\ntype: Note\ncreated: 1999-01-01T00:00:00Z\n---\n# X\n"),
+			wantErr: `"created" can't be added`,
+		},
+		{
 			name:    "a new concept needs a type",
 			files:   v02,
 			req:     write("restart.md", "---\ntitle: Restart\n---\n"),
@@ -150,6 +181,26 @@ func TestOKFChanges(t *testing.T) {
 			if got := string(changes[0].Content); got != testCase.want {
 				t.Errorf("got file\n%s\nwant\n%s", got, testCase.want)
 			}
+		})
+	}
+}
+
+func TestOKFMoveRejectsIndexFiles(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{"index.md": "# KB\n", "a.md": "---\ntype: Note\n---\n# A\n", "ops/log.md": "# Log\n"}
+	testCases := []struct {
+		name     string
+		from, to string
+	}{
+		{name: "onto an index.md", from: "a.md", to: "ops/index.md"},
+		{name: "a log.md", from: "ops/log.md", to: "ops/history.md"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, withKB(files), withFormat(document.FormatOKF))
+			_, err := f.base.Move(t.Context(), f.grant, knowledge.MoveRequest{Vault: "ours/kb", From: testCase.from, To: testCase.to, Version: blobID(files[testCase.from])})
+			wantCode(t, err, knowledge.CodeInvalid)
 		})
 	}
 }

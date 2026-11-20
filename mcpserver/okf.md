@@ -8,12 +8,13 @@ above:
   `Playbook`. Reuse the types the vault already has.
 - You may also set `resource` (the URI of the thing described), `sources` (a list of `{ id, resource,
   title }` it derives from, cited in the body with footnotes like `[^id]`), `usage_window`, `verified`
-  (a list of `{ by, at }`) and `stale_after`.
+  (a list of `{ by, at }`) and `stale_after`. Add a `human:` verifier only for the user you work for, as
+  `human:<their GitHub login>`, and only when they reviewed the document.
 - `status` is `draft`, `stable` (the default) or `deprecated`.
 - Speki sets `generated` (`by` and `at`), or `timestamp` where the document or vault uses it, instead
   of `created` and `updated`.
 - `index.md` lists its folder's documents, each as `* [Title](./path.md) - description`, under `#`
   headings. Add a line when you create a document and fix it when you move or delete one. It has no
   frontmatter, except `okf_version` in the vault's root `index.md`. `log.md` holds `## YYYY-MM-DD`
-  headings, newest first.
+  headings, newest first. Neither can be moved.
 - Prefer links from the vault root, like `[orders](/tables/orders.md)`.
