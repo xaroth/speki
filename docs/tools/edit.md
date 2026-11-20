@@ -63,5 +63,6 @@ When the index hadn't caught up in time ([changes.md](../changes.md#after-the-co
 | `conflict` | The document changed since `version`, or kept changing while speki tried to commit |
 | `broken` | The file can't be parsed. Only `delete` works on it |
 | `too_large` | The result is over 1 MiB, or its frontmatter over 64 KiB once the dates are set |
-| `vault_read_only`, `secret_detected`, `rate_limited` | GitHub refused the commit |
+| `vault_read_only` | The vault is read-only, or GitHub refused the commit |
+| `secret_detected`, `rate_limited` | GitHub refused the commit |
 | `unavailable`, `timeout` | See [overview.md](overview.md#errors). After `timeout`, read the document before retrying |

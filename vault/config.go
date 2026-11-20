@@ -36,7 +36,7 @@ type Config struct {
 	Guidelines  string  `yaml:"guidelines"`
 	ReadRole    gh.Role `yaml:"read_role"` // the lowest repository role that sees the vault; unset means read
 	// Readers and Writers narrow who may read and write the vault, on top of GitHub's permissions. Nil
-	// means no narrowing.
+	// means no narrowing. Empty Writers makes the vault read-only.
 	Readers     []Principal `yaml:"readers"`
 	Writers     []Principal `yaml:"writers"`
 	Frontmatter Frontmatter `yaml:"frontmatter"`
@@ -45,6 +45,9 @@ type Config struct {
 	// Repositories are the code repositories the vault's knowledge is about.
 	Repositories Repositories `yaml:"repositories"`
 }
+
+// ReadOnly reports whether the vault takes no changes through speki: people maintain it in git.
+func (c Config) ReadOnly() bool { return c.Writers != nil && len(c.Writers) == 0 }
 
 // Repositories lists the repositories a vault covers.
 type Repositories []Repository
@@ -150,8 +153,8 @@ func ParseConfig(raw []byte, owner string) (Config, error) {
 		checkLength("title", c.Title, maxTitle),
 		checkLength("description", c.Description, maxDescription),
 		checkLength("guidelines", c.Guidelines, maxGuidelines),
-		checkPrincipals("readers", c.Readers, owner),
-		checkPrincipals("writers", c.Writers, owner),
+		checkPrincipals("readers", c.Readers, owner, false),
+		checkPrincipals("writers", c.Writers, owner, true),
 		checkAllow(c.Frontmatter.Allow),
 		checkFormat(c.Format),
 		checkRepositories(c.Repositories),
@@ -211,11 +214,11 @@ func checkLength(field, s string, limit int) error {
 
 // checkPrincipals rejects an empty list, which would otherwise read as "nobody" to some and "everybody" to
 // others, and teams of other organisations: speki can only ask GitHub about the vault's own.
-func checkPrincipals(field string, ps []Principal, owner string) error {
+func checkPrincipals(field string, ps []Principal, owner string, emptyOK bool) error {
 	if ps == nil {
 		return nil
 	}
-	if len(ps) == 0 {
+	if len(ps) == 0 && !emptyOK {
 		return fmt.Errorf("%s is empty: list at least one user or team, or leave it out", field)
 	}
 	for _, p := range ps {

@@ -198,7 +198,7 @@ conflict: services/edge-proxy.md changed since you read it. Current version:
 | `broken` | The file can't be parsed, so speki can't read or change it. Includes the reason and the current version. Only `delete` with that version works |
 | `no_write_access` | The user can read the vault but not write to it |
 | `read_only_session` | The user signed in read-only. Ask them to reconnect with write access |
-| `vault_read_only` | GitHub refused the commit because the branch requires pull requests or checks |
+| `vault_read_only` | The vault sets `writers: []`, or GitHub refused the commit because the branch requires pull requests or checks |
 | `secret_detected` | GitHub's push protection found a secret in the content. Remove it and tell the user |
 | `too_large` | Over a size limit, or a query needed more memory than queries may use. Says how to stay under it |
 | `timeout` | A query ran past 3 seconds, a search past 5, or the call ran out of its 50. After a change, read the document before retrying: it may have landed |

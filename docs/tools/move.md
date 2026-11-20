@@ -57,5 +57,6 @@ for a little while." follows the version when the index hadn't caught up in time
 | `already_exists` | `to` is taken by a document (with its version), a file speki doesn't index, a folder, or the same path in another Unicode normalization |
 | `conflict` | `from` changed since `version`, or the vault kept changing while speki tried to commit |
 | `broken` | `from` can't be parsed. Only `delete` works on it |
-| `vault_read_only`, `secret_detected`, `rate_limited` | GitHub refused the commit |
+| `vault_read_only` | The vault is read-only, or GitHub refused the commit |
+| `secret_detected`, `rate_limited` | GitHub refused the commit |
 | `unavailable`, `timeout` | See [overview.md](overview.md#errors) |

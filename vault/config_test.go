@@ -64,6 +64,7 @@ func TestParseConfig(t *testing.T) {
 		{name: "unknown format", raw: "title: T\ndescription: D\nformat: OKF\n", wantErr: []string{`format is "OKF"; want speki or okf`}},
 		{name: "unknown read role", raw: "title: T\ndescription: D\nread_role: owner\n", wantErr: []string{`unknown role "owner"`}},
 		{name: "empty readers", raw: "title: T\ndescription: D\nreaders: []\n", wantErr: []string{"readers is empty"}},
+		{name: "empty writers", raw: "title: T\ndescription: D\nwriters: []\n", want: vault.Config{Title: "T", Description: "D", Writers: []vault.Principal{}}},
 		{name: "team elsewhere", raw: "title: T\ndescription: D\nwriters: [theirs/leads]\n", wantErr: []string{"team theirs/leads isn't in Ours"}},
 		{name: "bad principal", raw: "title: T\ndescription: D\nreaders: [a/b/c]\n", wantErr: []string{`"a/b/c" is neither`}},
 		{name: "missing fields", raw: "guidelines: x\n", wantErr: []string{"title is required", "description is required"}},

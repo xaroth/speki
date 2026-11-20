@@ -46,5 +46,6 @@ line when the index hadn't caught up in time.
 | `invalid` | No `version` |
 | `not_found` | No such vault or document |
 | `conflict` | The document changed since `version`, or the vault kept changing while speki tried to commit |
-| `vault_read_only`, `rate_limited` | GitHub refused the commit |
+| `vault_read_only` | The vault is read-only, or GitHub refused the commit |
+| `rate_limited` | GitHub refused the commit |
 | `unavailable`, `timeout` | See [overview.md](overview.md#errors) |

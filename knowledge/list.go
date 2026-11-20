@@ -26,6 +26,7 @@ type VaultInfo struct {
 	OKF          bool     // the vault's documents follow the Open Knowledge Format
 	Repositories []string // the repositories the vault covers, normalised
 	CanWrite     bool
+	ReadOnly     bool // the vault takes no changes through speki, whoever asks
 	Documents    int
 	State        access.State // why speki doesn't serve the vault right now; empty when it does
 }
@@ -71,6 +72,7 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 			OKF:          okf,
 			Repositories: v.Config.Repositories.Strings(),
 			CanWrite:     g.CanWrite(v.RepoID),
+			ReadOnly:     v.Config.ReadOnly(),
 			Documents:    stats.Documents,
 		})
 	}

@@ -283,6 +283,8 @@ func writable(g *access.Grant, name string) (vault.Vault, error) {
 	switch {
 	case !ok:
 		return vault.Vault{}, missingVault(g, name)
+	case v.Config.ReadOnly():
+		return vault.Vault{}, errorf(CodeVaultReadOnly, "%s is maintained by people in git and takes no changes through speki. Suggest the change to the user instead", v.Name)
 	case g.ReadOnlySession():
 		return vault.Vault{}, errorf(CodeReadOnlySession, "the user connected speki read-only. Ask them to reconnect it with write access")
 	case !g.CanWrite(v.RepoID):

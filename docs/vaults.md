@@ -49,7 +49,7 @@ repositories:
 | `guidelines` | no | Writing rules for agents, returned by `guide` and when listing the vault's root. At most 2,000 characters |
 | `read_role` | no | The lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`, `maintain` or `admin` |
 | `readers` | no | Users and teams that may read the vault. Left out, everyone with read access may |
-| `writers` | no | Users and teams that may write to the vault. Left out, every reader with push access may |
+| `writers` | no | Users and teams that may write to the vault. Left out, every reader with push access may. `[]` makes the vault read-only ([Read-only vaults](#read-only-vaults)) |
 | `format` | no | `okf` for a vault in the Open Knowledge Format, with the write rules in [okf.md](okf.md). Missing or `speki` means speki's own |
 | `frontmatter.allow` | no | Frontmatter keys agents may set on top of the core fields. At most 50; `created` and `updated` can't be listed. Returned by `guide` |
 | `repositories` | no | The code repositories the vault's knowledge is about. At most 50. See [Repositories](#repositories) |
@@ -119,8 +119,14 @@ of its parent. Users are matched by login, so a renamed account needs its new lo
 the new login when the user's client next refreshes its access, within an hour of the rename. Until then the
 old login still matches.
 
-A key that's left out doesn't narrow anything. An empty list is rejected, so a typo can't silently open or
+A key that's left out doesn't narrow anything. An empty `readers` list is rejected, so a typo can't silently
 close a vault.
+
+## Read-only vaults
+
+`writers: []` makes a vault read-only: speki takes no changes to it from anyone, and agents get
+`vault_read_only`. Use it for documentation people write for agents. People keep editing it in git as
+usual. `guide` marks the vault as maintained by people, so agents suggest changes to the user instead.
 
 Anyone who can push to the default branch can change these keys. When that matters, protect `speki.yaml`
 with a push ruleset that restricts its path. Speki only writes `.md` files, so the ruleset doesn't block it.
