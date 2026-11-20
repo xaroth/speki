@@ -52,7 +52,8 @@ Each vault has a heading, sorted by name, then the lines that apply:
 | `Repositories` | The code repositories the vault covers, as `host/owner/repo` |
 | `Access` | "read only" or "read and write" for this user in this session, and how many documents the vault has |
 | `Not available` | Instead of `Access`, for a vault speki can't serve right now: building, failed or gone, and what to do |
-| `Frontmatter keys you may also set` | Extra keys agents may set in this vault, from `frontmatter.allow` |
+| `Format` | Only for a vault with `format: okf`. The guide then ends with a section on OKF's rules ([okf.md](../okf.md)) |
+| `Frontmatter keys you may also set` | Extra keys agents may set in this vault: OKF's keys in an OKF vault, then `frontmatter.allow` |
 | `guidelines` fence | The vault's writing rules for agents. Fenced, because anyone who can push to the vault can write them ([overview.md](overview.md#results)) |
 
 An unserved vault has no frontmatter keys and no guidelines: its configuration may be out of date, and it

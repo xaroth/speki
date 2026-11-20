@@ -40,7 +40,8 @@ entry the change adds must point to a document in the vault. Agents may only set
 `tags`, `aliases`, `status`, `related` and the vault's `frontmatter.allow` keys; other keys must keep their
 value ([documents.md](../documents.md#what-a-change-may-do)).
 
-Speki then sets `created` (new documents) and `updated`, and commits.
+Speki then sets `created` (new documents) and `updated`, and commits. In an OKF vault, `type` is required too,
+`index.md` files keep no frontmatter, and speki sets `generated` or `timestamp` instead ([okf.md](../okf.md)).
 
 ## Output
 

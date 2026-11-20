@@ -1,5 +1,8 @@
 # Documents
 
+This page describes speki's own format. A vault in the Open Knowledge Format follows it with the changes in
+[okf.md](okf.md).
+
 A document is one markdown file in a vault, with a YAML frontmatter block at the top. People clone vaults,
 open them in Obsidian and browse them on github.com, so a document has to look normal to all three. Speki
 reads documents leniently and writes them strictly: whatever a person wrote is indexed, and a change made

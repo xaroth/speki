@@ -50,6 +50,7 @@ repositories:
 | `read_role` | no | The lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`, `maintain` or `admin` |
 | `readers` | no | Users and teams that may read the vault. Left out, everyone with read access may |
 | `writers` | no | Users and teams that may write to the vault. Left out, every reader with push access may |
+| `format` | no | `okf` for a vault in the Open Knowledge Format, with the write rules in [okf.md](okf.md). Missing or `speki` means speki's own |
 | `frontmatter.allow` | no | Frontmatter keys agents may set on top of the core fields. At most 50; `created` and `updated` can't be listed. Returned by `guide` |
 | `repositories` | no | The code repositories the vault's knowledge is about. At most 50. See [Repositories](#repositories) |
 
