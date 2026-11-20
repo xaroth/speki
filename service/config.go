@@ -110,20 +110,12 @@ type Redis struct {
 
 // Instance says what this speki is, for people and agents using more than one. All optional.
 type Instance struct {
-	// Name is a short identifier: the advertised implementation name becomes speki-<name>.
+	// Name is a short identifier, advertised as the implementation name.
 	Name string `yaml:"name"`
 	// Title is shown to people and agents, on one line.
 	Title string `yaml:"title"`
 	// Description says what belongs here, so agents search and write in the right place.
 	Description string `yaml:"description"`
-}
-
-// serverName is the name the MCP server advertises.
-func (i Instance) serverName() string {
-	if i.Name == "" {
-		return "speki"
-	}
-	return "speki-" + i.Name
 }
 
 func (i Instance) identity() mcpserver.Identity {

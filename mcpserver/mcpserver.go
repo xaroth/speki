@@ -83,7 +83,7 @@ type userLimiter struct {
 // Identity says which speki this is, for clients connected to more than one. The zero value is a plain
 // "speki".
 type Identity struct {
-	Name        string // speki-<Name> is the advertised name
+	Name        string // the advertised name; empty means "speki"
 	Title       string
 	Description string // what belongs in this speki
 }
@@ -118,11 +118,12 @@ func (id Identity) Validate() error {
 	return errors.Join(errs...)
 }
 
-func (id Identity) name() string {
+// ServerName is the name the MCP server advertises.
+func (id Identity) ServerName() string {
 	if id.Name == "" {
 		return "speki"
 	}
-	return "speki-" + id.Name
+	return id.Name
 }
 
 func (id Identity) title() string {
@@ -153,7 +154,7 @@ func (id Identity) instructions() string {
 // New returns the MCP endpoint, with its tools.
 func New(auth authenticator, grants resolver, kb knowledgeBase, id Identity, version string, logger *slog.Logger) *Server {
 	srv := mcp.NewServer(&mcp.Implementation{
-		Name:    id.name(),
+		Name:    id.ServerName(),
 		Title:   id.title(),
 		Version: version,
 	}, &mcp.ServerOptions{Instructions: id.instructions()})

@@ -348,7 +348,7 @@ func TestHandshake(t *testing.T) {
 		{
 			name:       "instance with title and long description",
 			id:         mcpserver.Identity{Name: "work", Title: "Acme work knowledge", Description: strings.Repeat("Runbooks and decisions. ", 13)[:300]},
-			wantName:   "speki-work",
+			wantName:   "work",
 			wantTitle:  "Acme work knowledge",
 			wantPrefix: `Speki "Acme work knowledge": Runbooks and decisions. Runbooks`,
 		},

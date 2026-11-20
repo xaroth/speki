@@ -231,7 +231,7 @@ Claude Code:
 claude mcp add --transport http speki https://speki.example.com/mcp
 ```
 
-With `instance.name` set, use `speki-<name>` as the name, so permission rules can tell instances apart
+With `instance.name` set, use that name, so permission rules can tell instances apart
 ([access.md](access.md#using-more-than-one-speki)).
 
 claude.ai and the Claude apps: add a custom connector with the URL `https://speki.example.com/mcp`, and no
@@ -285,7 +285,7 @@ read, so a config file baked into an image can be overridden at deploy time.
 | `redis.url` | none | `redis://` or `rediss://`, password included. Needed for more than one instance. Usually `url_file` |
 | `telemetry.log_level` | `info` | `debug`, `info`, `warn` or `error` |
 | `telemetry.tracing` | false | Send OpenTelemetry traces where the `OTEL_EXPORTER_OTLP_*` variables say |
-| `instance.name` | none | Lowercase letters, digits and dashes, starting with a letter or digit, at most 32. The server is called `speki-<name>` |
+| `instance.name` | none | Lowercase letters, digits and dashes, starting with a letter or digit, at most 32. The server is called `<name>` |
 | `instance.title` | none | One line, at most 100 characters. Shown on the sign-in page and in `guide` |
 | `instance.description` | none | What belongs in this speki, at most 300 characters. Opens the agents' instructions |
 | `sqlite.memory_limit_mib` | `1024` | SQLite's memory limit for the whole process. 128 to 1048576 |

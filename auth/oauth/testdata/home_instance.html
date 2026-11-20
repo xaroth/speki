@@ -105,23 +105,23 @@ paste the address above and leave the client ID and secret empty. Your browser o
 </div>
 <input type="radio" name="client" id="tab-claude-code"><label for="tab-claude-code">Claude Code</label>
 <div class="panel">
-<pre><code>claude mcp add --transport http speki-home https://speki.example.com/mcp</code></pre>
-<p>Then run <code>/mcp</code>, pick <code>speki-home</code> and sign in.</p>
+<pre><code>claude mcp add --transport http home https://speki.example.com/mcp</code></pre>
+<p>Then run <code>/mcp</code>, pick <code>home</code> and sign in.</p>
 </div>
 <input type="radio" name="client" id="tab-codex"><label for="tab-codex">Codex</label>
 <div class="panel">
-<pre><code>codex mcp add speki-home --url https://speki.example.com/mcp
-codex mcp login speki-home</code></pre>
+<pre><code>codex mcp add home --url https://speki.example.com/mcp
+codex mcp login home</code></pre>
 </div>
 <input type="radio" name="client" id="tab-gemini"><label for="tab-gemini">Gemini CLI</label>
 <div class="panel">
 <p>In <code>~/.gemini/settings.json</code>:</p>
 <pre><code>{
   "mcpServers": {
-    "speki-home": { "httpUrl": "https://speki.example.com/mcp" }
+    "home": { "httpUrl": "https://speki.example.com/mcp" }
   }
 }</code></pre>
-<p>Then run <code>/mcp auth speki-home</code> to sign in.</p>
+<p>Then run <code>/mcp auth home</code> to sign in.</p>
 </div>
 </div>
 <p class="note">Other programs on your computer work too, if they speak MCP over HTTP and sign in with OAuth
