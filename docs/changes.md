@@ -10,7 +10,7 @@ up.
 Before anything else, every change checks, in order:
 
 1. The vault exists and the user can read it (otherwise `not_found`, or `unavailable` when it isn't served).
-2. The vault takes changes through speki: its `writers` isn't `[]` (otherwise `vault_read_only`).
+2. The vault takes changes through speki: it doesn't set `read_only` (otherwise `maintained_by_people`).
 3. The user signed in with read and write access (otherwise `read_only_session`).
 4. The user can push to the repository on GitHub and is in the vault's `writers` (otherwise
    `no_write_access`).
@@ -88,7 +88,7 @@ or moves it, because the mutation has no file modes.
 |---|---|
 | The branch moved | retried, then `conflict` |
 | Push protection found a secret | `secret_detected`, with GitHub's description |
-| A ruleset or branch protection forbids direct commits, or the vault sets `writers: []` | `vault_read_only` |
+| A ruleset or branch protection forbids direct commits | `vault_read_only` |
 | The user can't push | `no_write_access` |
 | Slow down (secondary rate limit) | `rate_limited`, with the wait |
 | The user's sign-in is no longer valid | `unavailable`: ask the user to reconnect |

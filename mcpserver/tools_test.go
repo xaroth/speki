@@ -285,6 +285,12 @@ func TestTools(t *testing.T) {
 			wantText: "ours/kb\nTitle: KB\nDescription: Our knowledge.\nRepositories: github.com/ours/api, github.com/ours/api-*\nAccess: read and write. Documents: 3\n\nours/new\nRepositories: github.com/ours/new\nNot available: still building its index; try again shortly\n\n",
 		},
 		{
+			name:     "list a read-only vault",
+			kb:       &fakeKB{vaults: []knowledge.VaultInfo{{Name: "ours/docs", ReadOnly: true, Documents: 2}}},
+			tool:     "list",
+			wantText: "ours/docs\nAccess: read only, maintained by people; suggest changes to the user. Documents: 2\n\n",
+		},
+		{
 			name:     "list vaults, none ready",
 			kb:       &fakeKB{},
 			tool:     "list",

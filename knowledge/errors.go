@@ -16,19 +16,20 @@ type Code string
 
 // The codes tools return. docs/tools/overview.md says what each means.
 const (
-	CodeNotFound        Code = "not_found"
-	CodeConflict        Code = "conflict"
-	CodeAlreadyExists   Code = "already_exists"
-	CodeInvalid         Code = "invalid"
-	CodeBroken          Code = "broken"
-	CodeNoWriteAccess   Code = "no_write_access"
-	CodeReadOnlySession Code = "read_only_session"
-	CodeVaultReadOnly   Code = "vault_read_only"
-	CodeSecretDetected  Code = "secret_detected"
-	CodeTooLarge        Code = "too_large"
-	CodeTimeout         Code = "timeout"
-	CodeRateLimited     Code = "rate_limited"
-	CodeUnavailable     Code = "unavailable"
+	CodeNotFound           Code = "not_found"
+	CodeConflict           Code = "conflict"
+	CodeAlreadyExists      Code = "already_exists"
+	CodeInvalid            Code = "invalid"
+	CodeBroken             Code = "broken"
+	CodeNoWriteAccess      Code = "no_write_access"
+	CodeReadOnlySession    Code = "read_only_session"
+	CodeVaultReadOnly      Code = "vault_read_only"
+	CodeMaintainedByPeople Code = "maintained_by_people"
+	CodeSecretDetected     Code = "secret_detected"
+	CodeTooLarge           Code = "too_large"
+	CodeTimeout            Code = "timeout"
+	CodeRateLimited        Code = "rate_limited"
+	CodeUnavailable        Code = "unavailable"
 )
 
 // Error is a failure the agent can do something about. Its message says what happened and what to do

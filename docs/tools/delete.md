@@ -42,10 +42,10 @@ line when the index hadn't caught up in time.
 
 | Code | When |
 |---|---|
+| `maintained_by_people` | The vault is read-only; people maintain it in git |
 | `read_only_session`, `no_write_access` | The user can't write here |
 | `invalid` | No `version` |
 | `not_found` | No such vault or document |
 | `conflict` | The document changed since `version`, or the vault kept changing while speki tried to commit |
-| `vault_read_only` | The vault is read-only, or GitHub refused the commit |
-| `rate_limited` | GitHub refused the commit |
+| `vault_read_only`, `rate_limited` | GitHub refused the commit |
 | `unavailable`, `timeout` | See [overview.md](overview.md#errors) |

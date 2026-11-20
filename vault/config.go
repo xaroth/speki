@@ -36,18 +36,17 @@ type Config struct {
 	Guidelines  string  `yaml:"guidelines"`
 	ReadRole    gh.Role `yaml:"read_role"` // the lowest repository role that sees the vault; unset means read
 	// Readers and Writers narrow who may read and write the vault, on top of GitHub's permissions. Nil
-	// means no narrowing. Empty Writers makes the vault read-only.
-	Readers     []Principal `yaml:"readers"`
-	Writers     []Principal `yaml:"writers"`
+	// means no narrowing.
+	Readers []Principal `yaml:"readers"`
+	Writers []Principal `yaml:"writers"`
+	// ReadOnly makes speki refuse every change: people maintain the vault in git.
+	ReadOnly    bool        `yaml:"read_only"`
 	Frontmatter Frontmatter `yaml:"frontmatter"`
 	// Format is the convention the vault's documents follow. Empty means speki's.
 	Format document.Format `yaml:"format"`
 	// Repositories are the code repositories the vault's knowledge is about.
 	Repositories Repositories `yaml:"repositories"`
 }
-
-// ReadOnly reports whether the vault takes no changes through speki: people maintain it in git.
-func (c Config) ReadOnly() bool { return c.Writers != nil && len(c.Writers) == 0 }
 
 // Repositories lists the repositories a vault covers.
 type Repositories []Repository
@@ -153,8 +152,9 @@ func ParseConfig(raw []byte, owner string) (Config, error) {
 		checkLength("title", c.Title, maxTitle),
 		checkLength("description", c.Description, maxDescription),
 		checkLength("guidelines", c.Guidelines, maxGuidelines),
-		checkPrincipals("readers", c.Readers, owner, false),
-		checkPrincipals("writers", c.Writers, owner, true),
+		checkPrincipals("readers", c.Readers, owner),
+		checkPrincipals("writers", c.Writers, owner),
+		checkReadOnly(c),
 		checkAllow(c.Frontmatter.Allow),
 		checkFormat(c.Format),
 		checkRepositories(c.Repositories),
@@ -205,6 +205,14 @@ func checkRepositories(rs Repositories) error {
 	return nil
 }
 
+// checkReadOnly rejects writers on a read-only vault, which would read as someone still being able to write.
+func checkReadOnly(c Config) error {
+	if c.ReadOnly && c.Writers != nil {
+		return errors.New("writers can't be set on a read_only vault")
+	}
+	return nil
+}
+
 func checkLength(field, s string, limit int) error {
 	if n := utf8.RuneCountInString(s); n > limit {
 		return fmt.Errorf("%s is %d characters, at most %d allowed", field, n, limit)
@@ -213,12 +221,12 @@ func checkLength(field, s string, limit int) error {
 }
 
 // checkPrincipals rejects an empty list, which would otherwise read as "nobody" to some and "everybody" to
-// others, and teams of other organisations: speki can only ask GitHub about the vault's own.
-func checkPrincipals(field string, ps []Principal, owner string, emptyOK bool) error {
+// others (read_only says "nobody may write"), and teams of other organisations: speki can only ask GitHub about the vault's own.
+func checkPrincipals(field string, ps []Principal, owner string) error {
 	if ps == nil {
 		return nil
 	}
-	if len(ps) == 0 && !emptyOK {
+	if len(ps) == 0 {
 		return fmt.Errorf("%s is empty: list at least one user or team, or leave it out", field)
 	}
 	for _, p := range ps {

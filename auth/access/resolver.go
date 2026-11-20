@@ -157,7 +157,7 @@ func (res *resolution) grant(ctx context.Context) (*Grant, error) {
 	}
 	var writable []int64
 	for _, v := range readable {
-		if res.repos[v.RepoID].Role < gh.RoleWrite || !res.u.Write {
+		if v.Config.ReadOnly || res.repos[v.RepoID].Role < gh.RoleWrite || !res.u.Write {
 			continue
 		}
 		writer, err := res.r.listed(ctx, res.u, v.Config.Writers)

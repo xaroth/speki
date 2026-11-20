@@ -58,6 +58,7 @@ When the index hadn't caught up in time ([changes.md](../changes.md#after-the-co
 
 | Code | When |
 |---|---|
+| `maintained_by_people` | The vault is read-only; people maintain it in git |
 | `read_only_session`, `no_write_access` | The user can't write here |
 | `already_exists` | Creating where something already is: a document (with its version), a file speki doesn't index, a folder, a file in the way of a folder in the path, or the same path in another Unicode normalization |
 | `invalid` | A path speki won't write; a letter-case collision; bad frontmatter; a `related` entry that points nowhere; a locked key changed; no title |
@@ -65,6 +66,5 @@ When the index hadn't caught up in time ([changes.md](../changes.md#after-the-co
 | `conflict` | The document changed since `version`, or kept changing while speki tried to commit |
 | `broken` | A file that can't be parsed is at the path. Only `delete` works on it |
 | `too_large` | Over 1 MiB, or frontmatter over 64 KiB once the dates are set |
-| `vault_read_only` | The vault is read-only, or GitHub refused the commit |
-| `secret_detected`, `rate_limited` | GitHub refused the commit |
+| `vault_read_only`, `secret_detected`, `rate_limited` | GitHub refused the commit |
 | `unavailable`, `timeout` | See [overview.md](overview.md#errors) |

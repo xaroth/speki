@@ -233,5 +233,5 @@ GitHub sign-in callback carries its code there. Speki doesn't send its trace con
 | Users get 403 | Not in a required organization, or no readable vault. The message says which |
 | Users are signed out often | `speki_refreshes_total` by result. `lost_to_timeout` means GitHub timeouts; several instances on the memory store cause sign-outs too |
 | Agents get `unavailable` | Find the request ID from the error in the logs |
-| Agents get `vault_read_only` | The vault sets `writers: []`, or the default branch requires pull requests or checks |
+| Agents get `vault_read_only` | The default branch requires pull requests or checks |
 | Speki starts but never serves vaults | `sync.data_dir` not writable; check the logs at startup |

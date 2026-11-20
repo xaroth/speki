@@ -72,7 +72,7 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 			OKF:          okf,
 			Repositories: v.Config.Repositories.Strings(),
 			CanWrite:     g.CanWrite(v.RepoID),
-			ReadOnly:     v.Config.ReadOnly(),
+			ReadOnly:     v.Config.ReadOnly,
 			Documents:    stats.Documents,
 		})
 	}

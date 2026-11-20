@@ -245,7 +245,7 @@ func TestChangeRejects(t *testing.T) {
 	f.copy(ours.RepoID).setFile("c1", "huge.md", []byte("too large to index"))
 	readOnly := access.NewGrant(access.User{Login: "octocat", Token: "ghu_x"}, []vault.Vault{ours, shared}, []int64{ours.RepoID})
 	byPeople := ours
-	byPeople.Config.Writers = []vault.Principal{}
+	byPeople.Config.ReadOnly = true
 	peopleOnly := access.NewGrant(access.User{Login: "octocat", Token: "ghu_x", Write: true}, []vault.Vault{byPeople}, []int64{ours.RepoID})
 	peopleOnlyReadSession := access.NewGrant(access.User{Login: "octocat", Token: "ghu_x"}, []vault.Vault{byPeople}, []int64{ours.RepoID})
 	write := func(path, content string) knowledge.WriteRequest {
@@ -267,10 +267,12 @@ func TestChangeRejects(t *testing.T) {
 		{name: "read-only session, bad edit", grant: readOnly, req: knowledge.EditRequest{Vault: "ours/kb", Path: "a.md"}, code: knowledge.CodeReadOnlySession},
 		{name: "read-only session, bad move", grant: readOnly, req: knowledge.MoveRequest{Vault: "ours/kb", From: "a.md", To: "a.md"}, code: knowledge.CodeReadOnlySession},
 		{name: "read-only session, bad delete", grant: readOnly, req: knowledge.DeleteRequest{Vault: "ours/kb", Path: "a.md"}, code: knowledge.CodeReadOnlySession},
-		{name: "vault maintained by people", grant: peopleOnly, req: write("new.md", "# New\n"), code: knowledge.CodeVaultReadOnly, wantMessage: "maintained by people"},
-		{name: "vault maintained by people, delete", grant: peopleOnly, req: knowledge.DeleteRequest{Vault: "ours/kb", Path: "README.md"}, code: knowledge.CodeVaultReadOnly},
+		{name: "vault maintained by people", grant: peopleOnly, req: write("new.md", "# New\n"), code: knowledge.CodeMaintainedByPeople, wantMessage: "maintained by people"},
+		{name: "vault maintained by people, edit", grant: peopleOnly, req: edit("Edge proxy", "Proxy"), code: knowledge.CodeMaintainedByPeople},
+		{name: "vault maintained by people, move", grant: peopleOnly, req: knowledge.MoveRequest{Vault: "ours/kb", From: "café.md", To: "z.md", Version: blobID("# Café\n")}, code: knowledge.CodeMaintainedByPeople},
+		{name: "vault maintained by people, delete", grant: peopleOnly, req: knowledge.DeleteRequest{Vault: "ours/kb", Path: "README.md"}, code: knowledge.CodeMaintainedByPeople},
 		// A read-only session can't fix this by reconnecting, so the vault's answer comes first.
-		{name: "vault maintained by people, read-only session", grant: peopleOnlyReadSession, req: write("new.md", "# New\n"), code: knowledge.CodeVaultReadOnly},
+		{name: "vault maintained by people, read-only session", grant: peopleOnlyReadSession, req: write("new.md", "# New\n"), code: knowledge.CodeMaintainedByPeople},
 		{name: "no write access", req: knowledge.WriteRequest{Vault: "ours/shared", Path: "new.md", Content: "# New\n"}, code: knowledge.CodeNoWriteAccess},
 		{name: "write to a vault the user can't read", req: knowledge.WriteRequest{Vault: "ours/secret", Path: "x.md", Content: "# X\n"}, code: knowledge.CodeNotFound},
 		{name: "delete in a vault the user can't read", req: knowledge.DeleteRequest{Vault: "ours/secret", Path: "services/edge-proxy.md", Version: "v"}, code: knowledge.CodeNotFound},

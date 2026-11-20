@@ -11,6 +11,7 @@ import (
 	"github.com/xaroth/speki/document"
 	"github.com/xaroth/speki/knowledge"
 	"github.com/xaroth/speki/library/index"
+	"github.com/xaroth/speki/vault"
 )
 
 var sharedInfo = knowledge.VaultInfo{Name: "ours/shared", Repositories: []string{"github.com/ours/zeppelin"}, Documents: 1}
@@ -26,6 +27,30 @@ func TestVaults(t *testing.T) {
 		{
 			name: "served",
 			want: []knowledge.VaultInfo{kb, sharedInfo},
+		},
+		{
+			name: "read only",
+			setup: func(_ testing.TB, f *fixture) {
+				ro := shared
+				ro.Config.ReadOnly = true
+				f.grant = access.NewGrant(f.grant.User(), []vault.Vault{ours, ro}, []int64{ours.RepoID})
+			},
+			want: []knowledge.VaultInfo{kb, {Name: "ours/shared", Repositories: sharedInfo.Repositories, ReadOnly: true, Documents: 1}},
+		},
+		{
+			// An unserved vault says why it's unavailable, not whether it takes changes.
+			name: "read only and building",
+			setup: func(tb testing.TB, f *fixture) {
+				ro := building
+				ro.Config.ReadOnly = true
+				f.setCopy(building.RepoID, newCopy(tb, building, map[string]string{"zeppelin.md": "# Zeppelin\n"}))
+				f.grant = access.NewGrant(f.grant.User(), []vault.Vault{ours}, []int64{ours.RepoID},
+					access.Unavailable{Vault: ro, State: access.StateBuilding})
+			},
+			want: []knowledge.VaultInfo{
+				kb,
+				{Name: "ours/new", Title: "New", Repositories: []string{"github.com/ours/zeppelin"}, State: access.StateBuilding},
+			},
 		},
 		{
 			name: "unavailable, and gone since the grant",

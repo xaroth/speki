@@ -51,12 +51,12 @@ for a little while." follows the version when the index hadn't caught up in time
 
 | Code | When |
 |---|---|
+| `maintained_by_people` | The vault is read-only; people maintain it in git |
 | `read_only_session`, `no_write_access` | The user can't write here |
 | `invalid` | No `version`; `from` and `to` are the same path, also when they differ only in Unicode normalization; `to` isn't a path speki will write; `to` differs from an existing path only in letter case |
 | `not_found` | No such vault or document at `from` |
 | `already_exists` | `to` is taken by a document (with its version), a file speki doesn't index, a folder, or the same path in another Unicode normalization |
 | `conflict` | `from` changed since `version`, or the vault kept changing while speki tried to commit |
 | `broken` | `from` can't be parsed. Only `delete` works on it |
-| `vault_read_only` | The vault is read-only, or GitHub refused the commit |
-| `secret_detected`, `rate_limited` | GitHub refused the commit |
+| `vault_read_only`, `secret_detected`, `rate_limited` | GitHub refused the commit |
 | `unavailable`, `timeout` | See [overview.md](overview.md#errors) |

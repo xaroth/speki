@@ -345,9 +345,9 @@ func TestReadersAndWriters(t *testing.T) {
 	}
 }
 
-func TestEmptyWritersNeverWrite(t *testing.T) {
+func TestReadOnlyVaultNeverWrites(t *testing.T) {
 	t.Parallel()
-	docs := vault.Vault{RepoID: 100, Name: "ours/docs", Config: vault.Config{Writers: []vault.Principal{}}}
+	docs := vault.Vault{RepoID: 100, Name: "ours/docs", Config: vault.Config{ReadOnly: true}}
 	f := &fakeGitHub{repos: map[string][]gh.RepoAccess{"admin": {{RepoID: 100, Role: gh.RoleAdmin}}}}
 	r := access.NewResolver(f, newLibrary([]vault.Vault{docs}, nil, nil), nil, store.NewMemory(), discard())
 	g, err := r.Resolve(t.Context(), access.User{Login: "admin", Token: "admin", Write: true})
