@@ -29,7 +29,8 @@ no longer appears, the edit fails instead of landing in the wrong place.
    count when there are several. With `replace_all`, every non-overlapping occurrence is replaced.
 4. The result must still be a valid document, and must not add problems the document didn't have
    ([documents.md](../documents.md#what-a-change-may-do)). Frontmatter that isn't valid YAML is always
-   refused, because speki rewrites the block to set `updated`. Speki sets `updated` and commits.
+   refused, because speki rewrites the block to set `updated`. Speki sets `updated` and commits; in an OKF vault
+it sets `generated` or `timestamp` instead, and checks OKF's rules ([okf.md](../okf.md)).
 
 Because `edit` works on raw bytes, an agent can change frontmatter with it too, and speki still checks the
 outcome.

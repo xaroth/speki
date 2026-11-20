@@ -2,8 +2,9 @@
 
 A vault whose `speki.yaml` sets `format: okf` holds documents in the
 [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
-(OKF), v0.2 or v0.1. Speki reads it like any vault, and writes it so that it stays conformant: every concept
-has a `type`, and `index.md` files keep no frontmatter.
+(OKF), v0.2 or v0.1. Speki reads it like any vault. Its changes don't make a document less conformant: a
+new concept needs a `type`, `index.md` files don't gain frontmatter, and speki dates documents where OKF
+does. What a document already breaks is left alone.
 
 ```yaml
 title: Data catalog
@@ -22,17 +23,19 @@ Reading doesn't depend on the format, so the index is the same for every vault:
   that's missing or not a date. Listings, search results and `query` show it.
 - `type`, `resource`, `sources`, `generated`, `verified` and the other OKF keys are kept as written, and
   `query` shows them in the `extra` column, so `json_extract(extra, '$.type')` filters by type.
-- Links from the vault root (`/tables/orders.md`) resolve, as in every vault.
+- Links from the vault root, like `/tables/orders.md`, resolve in every vault.
 
 ## What a change may do
 
 On top of the rules in [documents.md](documents.md#what-a-change-may-do):
 
-- Agents may also set `type`, `resource`, `sources`, `usage_window`, `verified` and `stale_after`. Other keys
-  stay locked unless the vault lists them under `frontmatter.allow`, which covers OKF's Attested Computation
-  keys (`runtime`, `parameters`, `computation`, `executor`, `attester`).
-- A concept needs a non-empty `type`. A document that had none, written before the vault used speki, may
-  keep going without one.
+- Agents may also set `type`, `resource`, `sources`, `usage_window`, `verified` and `stale_after`, and
+  `generated` and `timestamp`, which speki overwrites (only `by` and `at` inside `generated`). Other keys stay
+  locked unless the vault lists them under `frontmatter.allow`. OKF's Attested Computation keys (`runtime`,
+  `parameters`, `computation`, `executor`, `attester`) need that.
+- `status` accepts `active` as well as OKF's `stable`, and keeps what was written.
+- A concept needs a non-empty text `type`. A document whose current version has none may keep going without
+  one.
 - `created` is locked like other keys, since speki doesn't set it in an OKF vault.
 - `index.md` and `log.md` aren't concepts: they need no `type` or title. A nested `index.md` can't gain
   frontmatter, and the root `index.md` may only add `okf_version`. Frontmatter they already have is left
@@ -44,12 +47,14 @@ On top of the rules in [documents.md](documents.md#what-a-change-may-do):
 
 ## Dates
 
-Speki doesn't set `created` or `updated` in an OKF vault. It records the last change where OKF does:
+Speki doesn't add `created` or `updated` in an OKF vault. It records the last change where OKF does:
 
-- A document with `generated` gets `generated.by` and `generated.at`. Other keys in `generated` are kept.
-- A document with `timestamp` gets `timestamp`.
-- A new document gets `generated`, or `timestamp` when the root `index.md` declares `okf_version: "0.1"`.
-- A document that has `updated` gets it too, so the date speki reads stays current.
+- A document with `generated` gets `generated.by` and `generated.at`. Other keys in `generated` are kept; a
+  `generated` that isn't a mapping is replaced.
+- A document with `timestamp` gets `timestamp`. One with both gets both.
+- A new document gets `generated`, or `timestamp` when the root `index.md` declares `okf_version: "0.1"`. An
+  existing document with neither gets `generated`, whatever the vault declares.
+- A document that already has `updated` gets it too, so the date speki reads stays current.
 - `index.md` and `log.md` are committed as written.
 
 `generated.by` names the MCP client the user signed in with, in lower case with dashes, such as

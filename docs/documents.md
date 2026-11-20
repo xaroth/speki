@@ -77,7 +77,8 @@ Speki never renders markdown to HTML. It parses the body only to find headings a
 
 ## Links
 
-Write links to other documents as relative markdown links:
+Write links to other documents as relative markdown links. Links from the vault root, starting with `/`,
+resolve too:
 
 ```markdown
 See [fleet roles](../ops/fleet-roles.md) for who does what.
