@@ -234,8 +234,9 @@ func (f *frontmatter) readMeta(m *Meta) []string {
 			m.Extra[key] = v
 		}
 	}
-	if m.Updated.IsZero() {
-		m.Updated = okfUpdated(pairs)
+	// An OKF tool may bump generated.at after speki set updated, so the later one is the last change.
+	if okf := okfUpdated(pairs); okf.After(m.Updated) {
+		m.Updated = okf
 	}
 	return warnings
 }
@@ -244,7 +245,7 @@ func (f *frontmatter) readMeta(m *Meta) []string {
 const okfStable = "stable"
 
 // okfUpdated returns the last change an OKF document records, in generated.at or else in the timestamp
-// of OKF v0.1, or zero. Both stay in Extra as written; a value that isn't a date is passed over without
+// of OKF v0.1, or zero. A generated.at that isn't a date falls back to timestamp. Both stay in Extra as written; a value that isn't a date is passed over without
 // a warning, since speki doesn't own these keys.
 func okfUpdated(pairs []*yaml.Node) time.Time {
 	var generated, timestamp time.Time

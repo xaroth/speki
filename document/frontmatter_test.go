@@ -137,7 +137,7 @@ func TestStatusAndDates(t *testing.T) {
 			},
 		},
 		{
-			name: "updated wins over OKF dates",
+			name: "a later updated wins over OKF dates",
 			raw:  "---\ntitle: A\nupdated: 2026-10-09T10:30:00Z\ntimestamp: 2026-01-01T00:00:00Z\n---\n",
 			want: document.Meta{
 				Title:   "A",
@@ -145,6 +145,34 @@ func TestStatusAndDates(t *testing.T) {
 				Updated: time.Date(2026, 10, 9, 10, 30, 0, 0, time.UTC),
 				Extra:   map[string]any{"timestamp": time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 			},
+		},
+		{
+			name: "a later generated.at wins over updated",
+			raw:  "---\ntitle: A\nupdated: 2026-01-01T00:00:00Z\ngenerated: {by: x, at: '2026-10-09T10:30:00Z'}\n---\n",
+			want: document.Meta{
+				Title:   "A",
+				Status:  document.StatusActive,
+				Updated: time.Date(2026, 10, 9, 10, 30, 0, 0, time.UTC),
+				Extra:   map[string]any{"generated": map[string]any{"by": "x", "at": "2026-10-09T10:30:00Z"}},
+			},
+		},
+		{
+			name: "a generated.at that isn't a date falls back to timestamp",
+			raw:  "---\ntitle: A\ngenerated: {by: x, at: soon}\ntimestamp: '2026-05-28T00:00:00Z'\n---\n",
+			want: document.Meta{
+				Title:   "A",
+				Status:  document.StatusActive,
+				Updated: time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC),
+				Extra: map[string]any{
+					"generated": map[string]any{"by": "x", "at": "soon"},
+					"timestamp": "2026-05-28T00:00:00Z",
+				},
+			},
+		},
+		{
+			name: "a generated that isn't a mapping is passed over",
+			raw:  "---\ntitle: A\ngenerated: yesterday\n---\n",
+			want: document.Meta{Title: "A", Status: document.StatusActive, Extra: map[string]any{"generated": "yesterday"}},
 		},
 		{
 			name: "an OKF date that isn't a date is passed over",

@@ -51,9 +51,11 @@ as a table above the document.
 | `created` | UTC datetime | speki | Set when speki creates the document |
 | `updated` | UTC datetime | speki | Set every time speki changes the document |
 
-When `updated` is missing, speki takes the last update from the fields the
-[Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) uses:
-`generated.at`, then the older `timestamp`. Those stay as written, and a value that isn't a date is passed over.
+Documents in the
+[Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) record
+their last change in `generated.at`, or the older `timestamp`. Speki reads the later of that and `updated`, so a
+tool that bumps `generated.at` after speki set `updated` still shows. Those keys stay as written, and a value
+that isn't a date is passed over.
 
 `created` and `updated` duplicate what git knows. They're kept because they make queries cheap
 (`WHERE updated < ...`) and Obsidian shows them. Git history stays the record of who changed what. Dates are
