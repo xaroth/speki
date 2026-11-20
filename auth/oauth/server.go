@@ -39,8 +39,7 @@ type Config struct {
 	Issuer string
 	// Title names this speki on the sign-in pages. Empty means "speki".
 	Title string
-	// ServerName is the name the MCP server advertises, which the home page suggests for clients. Empty
-	// means "speki".
+	// ServerName is the name the MCP server advertises, which the home page suggests for clients.
 	ServerName string
 	// Description says what belongs in this speki, on the home page.
 	Description string

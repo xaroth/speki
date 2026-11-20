@@ -192,7 +192,8 @@ users in on its own, and tokens from one don't work on the other. Operators shou
 `<name>` and opens the agent's instructions with what belongs there.
 
 Name each server in the client after its advertised name. Claude Code builds tool names from that key, so
-permission rules stay readable:
+permission rules stay readable. A name another MCP server already uses, such as `github`, would clash with it
+in the client, so operators pick names that are clearly speki's:
 
 ```sh
 claude mcp add --transport http work https://speki.example.com/mcp

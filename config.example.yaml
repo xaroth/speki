@@ -54,6 +54,6 @@ telemetry:
 
 # Optional: what this speki is, for people who connect to more than one.
 # instance:
-#   name: work                       # the server is called work
+#   name: work                       # the server is called work; pick a name no other MCP server uses
 #   title: Acme work knowledge
 #   description: Documentation for Acme projects and services: architecture, runbooks and decisions.

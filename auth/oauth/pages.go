@@ -65,13 +65,9 @@ func font(w http.ResponseWriter, r *http.Request) {
 
 // home tells people how to connect their agent.
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	server := s.cfg.ServerName
-	if server == "" {
-		server = "speki"
-	}
 	s.page(w, r, http.StatusOK, "home.html", map[string]any{
 		"Name":        s.title(),
-		"Server":      server,
+		"Server":      s.cfg.ServerName,
 		"Description": s.cfg.Description,
 		"Address":     s.resource(),
 	})

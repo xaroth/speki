@@ -25,7 +25,7 @@ The MCP tools agents use:
 
 Running it:
 
-- [running.md](running.md): GitHub App, secrets, configuration, Docker Compose, connecting clients, keys,
+- [running.md](running.md): GitHub App, secrets, configuration, Docker Compose, connecting clients, keys, upgrading,
   building
 - [operating.md](operating.md): ports, startup and shutdown, disk and memory, several instances, status,
   logs, metrics, traces

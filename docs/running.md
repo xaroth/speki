@@ -285,7 +285,7 @@ read, so a config file baked into an image can be overridden at deploy time.
 | `redis.url` | none | `redis://` or `rediss://`, password included. Needed for more than one instance. Usually `url_file` |
 | `telemetry.log_level` | `info` | `debug`, `info`, `warn` or `error` |
 | `telemetry.tracing` | false | Send OpenTelemetry traces where the `OTEL_EXPORTER_OTLP_*` variables say |
-| `instance.name` | none | Lowercase letters, digits and dashes, starting with a letter or digit, at most 32. The server is called `<name>` |
+| `instance.name` | none | Lowercase letters, digits and dashes, starting with a letter or digit, at most 32. The server is called `<name>`, so pick one no other MCP server your users have is called, such as `work-kb` rather than `github` |
 | `instance.title` | none | One line, at most 100 characters. Shown on the sign-in page and in `guide` |
 | `instance.description` | none | What belongs in this speki, at most 300 characters. Opens the agents' instructions |
 | `sqlite.memory_limit_mib` | `1024` | SQLite's memory limit for the whole process. 128 to 1048576 |
@@ -344,6 +344,15 @@ keys:
 
 Replace `auth.key` with `auth.keys` on every instance and restart. Then rotate as above. Listing the old key
 under any other ID signs everyone out.
+
+## Upgrading
+
+Changes that need an operator's attention:
+
+- **Server names without a prefix.** A named instance used to be advertised as `speki-<name>`, and is now
+  advertised as `<name>`. Clients added earlier keep the key they were added under, but the home page and
+  new setups use `<name>`, so permission rules written for `mcp__speki-<name>` don't cover them. To keep the
+  old name, set `instance.name: speki-<name>`.
 
 ## Building
 
