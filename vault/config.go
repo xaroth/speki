@@ -40,6 +40,8 @@ type Config struct {
 	Readers     []Principal `yaml:"readers"`
 	Writers     []Principal `yaml:"writers"`
 	Frontmatter Frontmatter `yaml:"frontmatter"`
+	// Format is the convention the vault's documents follow. Empty means speki's.
+	Format document.Format `yaml:"format"`
 	// Repositories are the code repositories the vault's knowledge is about.
 	Repositories Repositories `yaml:"repositories"`
 }
@@ -151,6 +153,7 @@ func ParseConfig(raw []byte, owner string) (Config, error) {
 		checkPrincipals("readers", c.Readers, owner),
 		checkPrincipals("writers", c.Writers, owner),
 		checkAllow(c.Frontmatter.Allow),
+		checkFormat(c.Format),
 		checkRepositories(c.Repositories),
 	)
 	err = errors.Join(errs...)
@@ -176,6 +179,13 @@ func checkAllow(keys []string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func checkFormat(f document.Format) error {
+	if f != "" && f != document.FormatSpeki && f != document.FormatOKF {
+		return fmt.Errorf("format is %q; want %s or %s", f, document.FormatSpeki, document.FormatOKF)
+	}
+	return nil
 }
 
 func checkRepositories(rs Repositories) error {

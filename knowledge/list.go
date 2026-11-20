@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/document"
 	"github.com/xaroth/speki/library/index"
 	"github.com/xaroth/speki/vault"
 )
@@ -22,6 +23,7 @@ type VaultInfo struct {
 	Description  string
 	Guidelines   string
 	Frontmatter  []string // keys agents may set on top of speki's writer fields
+	OKF          bool     // the vault's documents follow the Open Knowledge Format
 	Repositories []string // the repositories the vault covers, normalised
 	CanWrite     bool
 	Documents    int
@@ -55,12 +57,18 @@ func (b *Base) Vaults(ctx context.Context, g *access.Grant) ([]VaultInfo, error)
 			b.logger.WarnContext(ctx, "vault stats failed", "vault", v.Name, "err", err)
 			continue
 		}
+		okf := v.Config.Format == document.FormatOKF
+		frontmatter := v.Config.Frontmatter.Allow
+		if okf {
+			frontmatter = slices.Concat(document.OKFKeys(), frontmatter)
+		}
 		out = append(out, VaultInfo{
 			Name:         v.Name,
 			Title:        v.Config.Title,
 			Description:  v.Config.Description,
 			Guidelines:   v.Config.Guidelines,
-			Frontmatter:  v.Config.Frontmatter.Allow,
+			Frontmatter:  frontmatter,
+			OKF:          okf,
 			Repositories: v.Config.Repositories.Strings(),
 			CanWrite:     g.CanWrite(v.RepoID),
 			Documents:    stats.Documents,

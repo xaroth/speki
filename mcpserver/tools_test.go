@@ -230,7 +230,7 @@ var (
 
 func TestTools(t *testing.T) {
 	t.Parallel()
-	guide, schema := readFile(t, "guide.md"), readFile(t, "schema.md")
+	guide, schema, okf := readFile(t, "guide.md"), readFile(t, "schema.md"), readFile(t, "okf.md")
 	big := strings.Repeat(">", 100_000) // 600,000 bytes encoded, as \u003e
 	testCases := []struct {
 		name     string
@@ -258,6 +258,16 @@ func TestTools(t *testing.T) {
 				"\n### ours/new\n\nRepositories: github.com/ours/new\nNot available: still building its index; try again shortly\n" +
 				"\n### ours/old\n\nNot available: failed to open; tell the user\n" +
 				"\n### ours/was\n\nNot available: just removed or reopening; try again shortly\n",
+		},
+		{
+			name: "guide explains OKF",
+			kb: &fakeKB{vaults: []knowledge.VaultInfo{
+				{Name: "ours/okf", OKF: true, Frontmatter: []string{"type", "owner"}, CanWrite: true},
+			}},
+			tool: "guide",
+			wantText: guide + "\n## Your vaults\n" +
+				"\n### ours/okf\n\nAccess: read and write. Documents: 0\nFormat: Open Knowledge Format (OKF), see below\nFrontmatter keys you may also set: type, owner\n" +
+				"\n" + okf,
 		},
 		{
 			name:     "guide names the instance, with no vault ready",

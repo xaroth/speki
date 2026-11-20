@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/xaroth/speki/auth/access"
+	"github.com/xaroth/speki/document"
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/knowledge"
 	"github.com/xaroth/speki/library/index"
@@ -474,6 +475,7 @@ func (f *fixture) setCopy(id int64, c *fakeCopy) {
 // fixtureOptions change what newFixture sets up.
 type fixtureOptions struct {
 	kb     map[string]string // the documents of ours/kb
+	format document.Format   // of ours/kb
 	logger *slog.Logger
 }
 
@@ -482,6 +484,11 @@ type fixtureOption func(*fixtureOptions)
 // withKB replaces the documents of ours/kb.
 func withKB(files map[string]string) fixtureOption {
 	return func(o *fixtureOptions) { o.kb = files }
+}
+
+// withFormat sets the format of ours/kb.
+func withFormat(format document.Format) fixtureOption {
+	return func(o *fixtureOptions) { o.format = format }
 }
 
 func withLogger(l *slog.Logger) fixtureOption {
@@ -498,9 +505,11 @@ func newFixture(tb testing.TB, opts ...fixtureOption) *fixture {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	kb := ours
+	kb.Config.Format = o.format
 	f := &fixture{
 		copies: map[int64]*fakeCopy{
-			ours.RepoID:   newCopy(tb, ours, o.kb),
+			ours.RepoID:   newCopy(tb, kb, o.kb),
 			shared.RepoID: newCopy(tb, shared, map[string]string{"zeppelin.md": "# Zeppelin\n\nShared zeppelin facts.\n"}),
 			secret.RepoID: newCopy(tb, secret, map[string]string{"services/edge-proxy.md": "# Hidden\n\nThe secret zeppelin plan.\n"}),
 		},

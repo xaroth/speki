@@ -14,6 +14,7 @@ type VaultSummary struct {
 	Title        string   `json:"title,omitempty"`
 	Description  string   `json:"description,omitempty"`
 	Frontmatter  []string `json:"frontmatter,omitempty" jsonschema:"frontmatter keys you may set on top of title, description, tags, aliases, status and related"`
+	Format       string   `json:"format,omitempty" jsonschema:"okf when the vault's documents follow the Open Knowledge Format, which the guide describes"`
 	Repositories []string `json:"repositories,omitempty" jsonschema:"the code repositories the vault's knowledge is about, as host/owner/repo. A * in the name covers every repository of that owner whose name matches"`
 	CanWrite     bool     `json:"can_write"`
 	Documents    int      `json:"documents"`
@@ -31,6 +32,9 @@ func vaultSummaries(vaults []knowledge.VaultInfo, frontmatter bool) []VaultSumma
 			CanWrite:     v.CanWrite,
 			Documents:    v.Documents,
 			State:        string(v.State),
+		}
+		if v.OKF {
+			s.Format = "okf"
 		}
 		if frontmatter && v.State == "" { // an unserved vault's config may be stale, and it can't be written yet
 			s.Frontmatter = v.Frontmatter

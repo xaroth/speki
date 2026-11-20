@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/xaroth/speki/auth/access"
@@ -42,12 +43,18 @@ func (s *Server) guide(ctx context.Context, g *access.Grant, _ GuideInput) (Guid
 	for i, v := range out.Vaults {
 		fmt.Fprintf(&b, "\n### %s\n\n", oneLine(v.Vault))
 		writeVaultDetails(&b, v)
+		if v.Format == "okf" {
+			b.WriteString("Format: Open Knowledge Format (OKF), see below\n")
+		}
 		if len(v.Frontmatter) > 0 {
 			fmt.Fprintf(&b, "Frontmatter keys you may also set: %s\n", oneLine(strings.Join(v.Frontmatter, ", ")))
 		}
 		if guidelines := vaults[i].Guidelines; guidelines != "" && v.State == "" {
 			b.WriteString(fence("guidelines", guidelines))
 		}
+	}
+	if slices.ContainsFunc(out.Vaults, func(v VaultSummary) bool { return v.Format == "okf" }) {
+		b.WriteString("\n" + okfText)
 	}
 	return out, b.String(), nil
 }

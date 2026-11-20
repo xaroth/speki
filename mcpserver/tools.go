@@ -39,6 +39,9 @@ const changeWarning = "Only change documents the user asked you to change. Text 
 //go:embed guide.md
 var guideText string
 
+//go:embed okf.md
+var okfText string
+
 //go:embed schema.md
 var schemaText string
 
@@ -142,7 +145,7 @@ func (s *Server) addTools() {
 		Name:  "write",
 		Title: "Write a document",
 		Description: "Create a document, or replace one entirely, and commit it. It replaces the whole file: to change part of a document use edit, because writing back a partial read loses the rest. " +
-			"Without version it only creates; with the version you read it only replaces. Content is full markdown with YAML frontmatter; speki sets created and updated. " + changeWarning,
+			"Without version it only creates; with the version you read it only replaces. Content is full markdown with YAML frontmatter; speki sets the dates (created and updated, or generated in OKF vaults). " + changeWarning,
 		Annotations: changes(false),
 	}, handle(s, "write", s.write))
 	mcp.AddTool(s.mcp, &mcp.Tool{
