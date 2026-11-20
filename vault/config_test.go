@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/xaroth/speki/document"
 	"github.com/xaroth/speki/gh"
 	"github.com/xaroth/speki/vault"
 )
@@ -49,6 +50,8 @@ func TestParseConfig(t *testing.T) {
 				{Host: "github.com", Owner: "acme", Name: "web-*"},
 			}},
 		},
+		{name: "okf", raw: "title: T\ndescription: D\nformat: okf\n", want: vault.Config{Title: "T", Description: "D", Format: document.FormatOKF}},
+		{name: "speki", raw: "title: T\ndescription: D\nformat: speki\n", want: vault.Config{Title: "T", Description: "D", Format: document.FormatSpeki}},
 		{name: "repositories null", raw: "title: T\ndescription: D\nrepositories:\n", want: vault.Config{Title: "T", Description: "D"}},
 		{name: "repositories empty", raw: "title: T\ndescription: D\nrepositories: []\n", want: vault.Config{Title: "T", Description: "D", Repositories: vault.Repositories{}}},
 		{name: "bad repository", raw: "title: T\ndescription: D\nrepositories:\n  - acme/speki\n  - https://user:ghp_secret@github.com/acme\n", wantErr: []string{"repositories, line 5: not a repository"}},
@@ -58,6 +61,7 @@ func TestParseConfig(t *testing.T) {
 		{name: "repository twice", raw: "title: T\ndescription: D\nrepositories: [acme/speki, \"https://github.com/Acme/speki.git\"]\n", wantErr: []string{"repositories lists github.com/acme/speki twice"}},
 		{name: "too many repositories", raw: "title: T\ndescription: D\nrepositories: [" + manyRepositories(51) + "]\n", wantErr: []string{"repositories has 51 entries, at most 50"}},
 		{name: "frontmatter set by speki", raw: "title: T\ndescription: D\nfrontmatter:\n  allow: [updated, \"\"]\n", wantErr: []string{"updated is set by speki", "empty key"}},
+		{name: "unknown format", raw: "title: T\ndescription: D\nformat: OKF\n", wantErr: []string{`format is "OKF"; want speki or okf`}},
 		{name: "unknown read role", raw: "title: T\ndescription: D\nread_role: owner\n", wantErr: []string{`unknown role "owner"`}},
 		{name: "empty readers", raw: "title: T\ndescription: D\nreaders: []\n", wantErr: []string{"readers is empty"}},
 		{name: "team elsewhere", raw: "title: T\ndescription: D\nwriters: [theirs/leads]\n", wantErr: []string{"team theirs/leads isn't in Ours"}},

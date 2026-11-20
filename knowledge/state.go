@@ -17,6 +17,7 @@ type state struct {
 	vault vault.Vault
 	copy  Copy
 	head  string
+	actor string // who makes the change, as OKF's generated.by names them
 }
 
 func (st state) document(ctx context.Context, path string) (index.Document, bool, error) {
@@ -123,6 +124,9 @@ func (st state) prepareDocument(ctx context.Context, path string, current, next 
 	if err != nil {
 		return nil, err
 	}
+	if st.vault.Config.Format == document.FormatOKF {
+		return st.prepareOKF(ctx, cur, d, unresolved, now)
+	}
 	err = errors.Join(document.Check(cur, d, st.vault.Config.Frontmatter.Allow), unresolved)
 	if err != nil {
 		return nil, documentError(err)
@@ -132,6 +136,58 @@ func (st state) prepareDocument(ctx context.Context, path string, current, next 
 		return nil, documentError(err)
 	}
 	return out, nil
+}
+
+// prepareOKF is prepareDocument for a vault in the Open Knowledge Format: agents may also set OKF's
+// keys, concepts need a type, and the last change goes where OKF records it instead of created and
+// updated.
+func (st state) prepareOKF(ctx context.Context, cur, d *document.Document, unresolved error, now time.Time) ([]byte, error) {
+	allow := document.OKFAllow(st.vault.Config.Frontmatter.Allow)
+	err := errors.Join(document.Check(cur, d, allow), document.CheckOKF(cur, d), unresolved)
+	if err != nil {
+		return nil, documentError(err)
+	}
+	v01 := false
+	if cur == nil {
+		v01, err = st.okfV01(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	out, err := d.TouchOKF(now, st.actor, v01)
+	if err != nil {
+		return nil, documentError(err)
+	}
+	return out, nil
+}
+
+// okfV01 reports whether the vault's root index.md declares OKF v0.1, which dates documents with
+// timestamp instead of generated.
+func (st state) okfV01(ctx context.Context) (bool, error) {
+	root, ok, err := st.document(ctx, "index.md")
+	if err != nil || !ok || root.Status == index.StatusBroken {
+		return false, err
+	}
+	v := root.Extra["okf_version"]
+	return fmt.Sprint(v) == "0.1", nil
+}
+
+// actorOf names an MCP client the way OKF names agents: lower case, with dashes for spaces. A client
+// that gave no name is speki.
+func actorOf(client string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(client)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		case r == ' ' || r == '/':
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "speki"
+	}
+	return b.String()
 }
 
 // checkRelated returns a problem for each related entry next adds that doesn't point to a document in

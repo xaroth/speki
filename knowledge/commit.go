@@ -66,9 +66,14 @@ func (b *Base) change(ctx context.Context, g *access.Grant, name, message string
 	}
 	defer unlock()
 
+	actor := actorOf(g.User().Client)
+	withActor := func(ctx context.Context, st state) (plan, error) {
+		st.actor = actor
+		return prepare(ctx, st)
+	}
 	synced, moved := false, 0
 	for {
-		st, p, err := b.prepareWithSync(ctx, v, prepare, &synced)
+		st, p, err := b.prepareWithSync(ctx, v, withActor, &synced)
 		if err != nil {
 			return Result{}, err
 		}
