@@ -18,8 +18,8 @@ Everything in [documents.md](documents.md) applies, except where this page says 
 Reading doesn't depend on the format, so the index is the same for every vault:
 
 - `status: stable` reads as `active`. `draft` and `deprecated` mean the same in both.
-- When a document has no `updated`, its last change comes from `generated.at`, then `timestamp`. Listings,
-  search results and `query` show that date.
+- A document's last change is the later of `updated` and its OKF date: `generated.at`, or `timestamp` when
+  that's missing or not a date. Listings, search results and `query` show it.
 - `type`, `resource`, `sources`, `generated`, `verified` and the other OKF keys are kept as written, and
   `query` shows them in the `extra` column, so `json_extract(extra, '$.type')` filters by type.
 - Links from the vault root (`/tables/orders.md`) resolve, as in every vault.
