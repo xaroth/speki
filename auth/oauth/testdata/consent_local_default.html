@@ -9,7 +9,10 @@
 @font-face { font-family: "Alegreya Sans"; font-weight: 400; font-display: swap; src: url(/oauth/fonts/alegreya-sans.woff2) format("woff2"); }
 @font-face { font-family: "Alegreya Sans"; font-weight: 400; font-style: italic; font-display: swap; src: url(/oauth/fonts/alegreya-sans-italic.woff2) format("woff2"); }
 @font-face { font-family: "Alegreya Sans"; font-weight: 700; font-display: swap; src: url(/oauth/fonts/alegreya-sans-bold.woff2) format("woff2"); }
-:root { --paper: #fffefa; --ink: #22252e; --muted: #61646f; --indigo: #34407a; --red: #9b3b2e; --line: #e3e1da; }
+:root { color-scheme: light dark; --paper: #fffefa; --ink: #22252e; --muted: #61646f; --indigo: #34407a; --red: #9b3b2e; --line: #e3e1da; --on-indigo: #fff; --code: #f1efe7; --pre: #f7f5ee; }
+@media (prefers-color-scheme: dark) {
+  :root { --paper: #1b1d23; --ink: #e6e3da; --muted: #9a9ca6; --indigo: #a3aee6; --red: #e3907f; --line: #34363f; --on-indigo: #1b1d23; --code: #2a2c34; --pre: #23252c; }
+}
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.55 "Alegreya Sans", system-ui, sans-serif; }
 .page { display: grid; grid-template-columns: 9rem minmax(0, 34rem); max-width: 45rem; min-height: 100vh; margin: 0 auto; }
@@ -36,7 +39,7 @@ label strong { display: block; color: var(--ink); font-size: 1.075em; }
 input[type=radio] { width: 1.05rem; height: 1.05rem; margin: .25rem 0 0; flex: none; accent-color: var(--indigo); }
 .actions { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: center; margin-top: 1.6rem; }
 button { font: inherit; cursor: pointer; }
-.continue { padding: .6rem 1.15rem; border: 0; border-radius: 3px; background: var(--indigo); color: #fff; font-weight: 700; }
+.continue { padding: .6rem 1.15rem; border: 0; border-radius: 3px; background: var(--indigo); color: var(--on-indigo); font-weight: 700; }
 .cancel { padding: 0; border: 0; background: none; color: var(--indigo); text-decoration: underline; text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--indigo); outline-offset: 3px; }
 @media (max-width: 40rem) {
