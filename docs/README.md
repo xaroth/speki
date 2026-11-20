@@ -9,6 +9,7 @@ How speki works:
 - [vaults.md](vaults.md): turning a repository into a vault, `speki.yaml`, who may read and write, how speki
   keeps its copy current
 - [documents.md](documents.md): the document format, frontmatter, links, paths, and what a change may do
+- [okf.md](okf.md): vaults in the Open Knowledge Format, and how speki reads, checks and dates them
 - [changes.md](changes.md): how a change becomes a commit: versions, conflicts, lost answers, catching up
 - [search.md](search.md): how search matches, corrects and ranks, and why it's SQLite FTS5
 - [query.md](query.md): the views agents can query with SQL, and the sandbox that keeps them in their vaults

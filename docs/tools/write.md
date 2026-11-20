@@ -37,10 +37,12 @@ frontmatter problems at all; a replacement may not add problems the document did
 isn't valid YAML is always refused, even when the current document has it, because speki rewrites the block to
 set `updated`. Tags or aliases already over their limit may not grow. Each `related`
 entry the change adds must point to a document in the vault. Agents may only set `title`, `description`,
-`tags`, `aliases`, `status`, `related` and the vault's `frontmatter.allow` keys; other keys must keep their
-value ([documents.md](../documents.md#what-a-change-may-do)).
+`tags`, `aliases`, `status`, `related`, OKF's keys in an OKF vault, and the vault's `frontmatter.allow`
+keys; other keys must keep their value ([documents.md](../documents.md#what-a-change-may-do)).
 
-Speki then sets `created` (new documents) and `updated`, and commits.
+Speki then sets `created` (new documents) and `updated`, and commits. In an OKF vault, a new concept needs a `type`,
+an `index.md` can't gain frontmatter (except `okf_version` in the root one), and speki sets `generated` or
+`timestamp` instead ([okf.md](../okf.md)).
 
 ## Output
 
