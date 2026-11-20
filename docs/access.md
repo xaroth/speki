@@ -107,7 +107,8 @@ user token can only do what the user can do, limited to what the app may do, lim
 installed.
 
 Being able to push isn't always enough. When the default branch requires pull requests or checks, GitHub
-rejects the commit and the agent gets `vault_read_only`.
+rejects the commit and the agent gets `vault_read_only`. A vault with `read_only: true` refuses every change
+before any commit, with `maintained_by_people` ([vaults.md](vaults.md#read-only-vaults)).
 
 ## Read-only sign-in
 

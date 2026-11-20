@@ -40,6 +40,7 @@ type Config struct {
 	Readers     []Principal `yaml:"readers"`
 	Writers     []Principal `yaml:"writers"`
 	Frontmatter Frontmatter `yaml:"frontmatter"`
+	ReadOnly    bool        `yaml:"read_only"` // speki refuses every change: people maintain the vault in git
 	// Format is the convention the vault's documents follow. Empty means speki's.
 	Format document.Format `yaml:"format"`
 	// Repositories are the code repositories the vault's knowledge is about.
@@ -152,6 +153,7 @@ func ParseConfig(raw []byte, owner string) (Config, error) {
 		checkLength("guidelines", c.Guidelines, maxGuidelines),
 		checkPrincipals("readers", c.Readers, owner),
 		checkPrincipals("writers", c.Writers, owner),
+		checkReadOnly(c),
 		checkAllow(c.Frontmatter.Allow),
 		checkFormat(c.Format),
 		checkRepositories(c.Repositories),
@@ -198,6 +200,14 @@ func checkRepositories(rs Repositories) error {
 			return fmt.Errorf("repositories lists %s twice", r)
 		}
 		seen[r] = true
+	}
+	return nil
+}
+
+// checkReadOnly rejects writers on a read-only vault, which would read as someone still being able to write.
+func checkReadOnly(c Config) error {
+	if c.ReadOnly && c.Writers != nil {
+		return errors.New("writers can't be set on a read_only vault")
 	}
 	return nil
 }

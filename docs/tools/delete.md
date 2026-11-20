@@ -42,6 +42,7 @@ line when the index hadn't caught up in time.
 
 | Code | When |
 |---|---|
+| `maintained_by_people` | The vault is read-only; people maintain it in git |
 | `read_only_session`, `no_write_access` | The user can't write here |
 | `invalid` | No `version` |
 | `not_found` | No such vault or document |

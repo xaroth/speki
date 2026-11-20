@@ -50,6 +50,7 @@ repositories:
 | `read_role` | no | The lowest GitHub role that sees the vault: `read` (the default), `triage`, `write`, `maintain` or `admin` |
 | `readers` | no | Users and teams that may read the vault. Left out, everyone with read access may |
 | `writers` | no | Users and teams that may write to the vault. Left out, every reader with push access may |
+| `read_only` | no | `true` makes speki refuse every change to the vault ([Read-only vaults](#read-only-vaults)) |
 | `format` | no | `okf` for a vault in the Open Knowledge Format, with the write rules in [okf.md](okf.md). Missing or `speki` means speki's own |
 | `frontmatter.allow` | no | Frontmatter keys agents may set on top of the core fields. At most 50; `created` and `updated` can't be listed. Returned by `guide` |
 | `repositories` | no | The code repositories the vault's knowledge is about. At most 50. See [Repositories](#repositories) |
@@ -124,6 +125,13 @@ close a vault.
 
 Anyone who can push to the default branch can change these keys. When that matters, protect `speki.yaml`
 with a push ruleset that restricts its path. Speki only writes `.md` files, so the ruleset doesn't block it.
+
+## Read-only vaults
+
+`read_only: true` makes speki refuse every change to a vault, from anyone, with `maintained_by_people`. Use
+it for documentation people write for agents. People keep editing it in git as usual. `guide` and `list`
+mark the vault as maintained by people, so agents suggest changes to the user instead. A read-only vault
+can't also set `writers`.
 
 ## What speki reads from a vault
 

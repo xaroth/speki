@@ -57,6 +57,7 @@ When the index hadn't caught up in time ([changes.md](../changes.md#after-the-co
 
 | Code | When |
 |---|---|
+| `maintained_by_people` | The vault is read-only; people maintain it in git |
 | `read_only_session`, `no_write_access` | The user can't write here ([changes.md](../changes.md#who-may-change-what)) |
 | `invalid` | Empty `old_text`; `old_text` not found or not unique; the result isn't a valid document or adds a problem |
 | `not_found` | No such vault or document |

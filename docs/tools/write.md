@@ -58,6 +58,7 @@ When the index hadn't caught up in time ([changes.md](../changes.md#after-the-co
 
 | Code | When |
 |---|---|
+| `maintained_by_people` | The vault is read-only; people maintain it in git |
 | `read_only_session`, `no_write_access` | The user can't write here |
 | `already_exists` | Creating where something already is: a document (with its version), a file speki doesn't index, a folder, a file in the way of a folder in the path, or the same path in another Unicode normalization |
 | `invalid` | A path speki won't write; a letter-case collision; bad frontmatter; a `related` entry that points nowhere; a locked key changed; no title |

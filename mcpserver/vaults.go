@@ -17,6 +17,7 @@ type VaultSummary struct {
 	Format       string   `json:"format,omitempty" jsonschema:"okf when the vault's documents follow the Open Knowledge Format, which the guide describes"`
 	Repositories []string `json:"repositories,omitempty" jsonschema:"the code repositories the vault's knowledge is about, as host/owner/repo. A * in the name covers every repository of that owner whose name matches"`
 	CanWrite     bool     `json:"can_write"`
+	ReadOnly     bool     `json:"read_only,omitempty" jsonschema:"people maintain the vault in git and speki takes no changes to it; suggest changes to the user instead"`
 	Documents    int      `json:"documents"`
 	State        string   `json:"state,omitempty" jsonschema:"set when speki can't serve the vault right now, so it can't be searched or read: building (indexing it for the first time; try again shortly), failed (it couldn't be opened; tell the user) or gone (just removed or reopening; try again shortly)"`
 }
@@ -30,6 +31,7 @@ func vaultSummaries(vaults []knowledge.VaultInfo, frontmatter bool) []VaultSumma
 			Description:  v.Description,
 			Repositories: v.Repositories,
 			CanWrite:     v.CanWrite,
+			ReadOnly:     v.ReadOnly,
 			Documents:    v.Documents,
 			State:        string(v.State),
 		}
@@ -112,7 +114,10 @@ func writeVaultDetails(b *strings.Builder, v VaultSummary) {
 		return
 	}
 	access := "read only"
-	if v.CanWrite {
+	switch {
+	case v.ReadOnly:
+		access = "read only, maintained by people; suggest changes to the user"
+	case v.CanWrite:
 		access = "read and write"
 	}
 	fmt.Fprintf(b, "Access: %s. Documents: %d\n", access, v.Documents)

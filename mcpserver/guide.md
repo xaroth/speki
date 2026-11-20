@@ -35,7 +35,8 @@ it back and tell the user. Mark outdated documents `status: deprecated` instead 
 Every change is a commit made as the user, with a one-line message saying why. Pass the `version` you
 read; if the document changed since, the change fails with `conflict`: read it again and redo it. Use
 `edit` to change part of a document and `write` to create or replace one whole. `move` and `delete` list
-the documents linking to the old path, for you to fix with `edit`.
+the documents linking to the old path, for you to fix with `edit`. Vaults marked maintained by people take
+no changes; suggest them to the user instead.
 
 ## Documents
 
