@@ -70,6 +70,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		"Server":      s.cfg.ServerName,
 		"Description": s.cfg.Description,
 		"Address":     s.resource(),
+		"SignInDays":  s.cfg.SignInDays,
 	})
 }
 

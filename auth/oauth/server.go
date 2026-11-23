@@ -29,8 +29,7 @@ const (
 	consentLifetime = 10 * time.Minute
 	codeLifetime    = time.Minute
 	accessLifetime  = time.Hour
-	signInLifetime  = 90 * 24 * time.Hour // refresh chains end this long after the user signed in
-	usedCodeMemory  = 5 * time.Minute     // longer than a code lives, clock skew included
+	usedCodeMemory  = 5 * time.Minute // longer than a code lives, clock skew included
 )
 
 // Config configures the authorization server.
@@ -45,7 +44,10 @@ type Config struct {
 	Description string
 	// ClientMetadataHosts are the hosts whose client metadata documents are accepted.
 	ClientMetadataHosts []string
-	GitHub              gh.OAuthConfig
+	// SignInDays ends refresh chains this many days after the user signed in. Zero means no limit beyond
+	// the GitHub refresh token's own expiry.
+	SignInDays int
+	GitHub     gh.OAuthConfig
 	// CheckUser runs at sign-in with the user's GitHub token, to turn away users who won't get in. Nil
 	// lets everyone through.
 	CheckUser func(ctx context.Context, githubToken string) error

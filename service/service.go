@@ -152,6 +152,7 @@ func New(cfg Config, logger *slog.Logger) (*Service, error) {
 			ServerName:          cfg.Instance.identity().ServerName(),
 			Description:         cfg.Instance.Description,
 			ClientMetadataHosts: cfg.Auth.ClientMetadataHosts,
+			SignInDays:          int(cfg.Auth.SignInDays),
 			GitHub: gh.OAuthConfig{
 				ClientID:     cfg.GitHub.ClientID,
 				ClientSecret: cfg.GitHub.ClientSecret,

@@ -177,7 +177,7 @@ func (s *Server) issue(
 		Client:   client,
 		Audience: s.resource(),
 		SignedIn: signedIn,
-	}, minTime(signedIn.Add(signInLifetime), tokens.RefreshExpires))
+	}, s.refreshExpires(signedIn, tokens.RefreshExpires))
 	if err != nil {
 		return tokenResponse{}, err
 	}
@@ -212,6 +212,14 @@ func narrow(granted []string, requested string) ([]string, bool) {
 		}
 	}
 	return out, true
+}
+
+// refreshExpires is when a refresh token for a sign-in at signedIn expires.
+func (s *Server) refreshExpires(signedIn, github time.Time) time.Time {
+	if s.cfg.SignInDays <= 0 {
+		return github
+	}
+	return minTime(signedIn.AddDate(0, 0, s.cfg.SignInDays), github)
 }
 
 func minTime(a, b time.Time) time.Time {

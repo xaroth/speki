@@ -24,8 +24,9 @@ The consent page shows on every sign-in, even for clients the user approved befo
 remembers the user's approval of the speki app, so without speki's own page another program could quietly
 get a token for the user by sending them a link.
 
-Clients refresh their access on their own. A user signs in again 90 days after signing in, or sooner if they
-revoke the speki app in their GitHub settings.
+Clients refresh their access on their own. With `auth.sign_in_days` set, a user signs in again that many days
+after signing in. Without it, a sign-in lasts while the client keeps refreshing within GitHub's refresh token
+lifetime. Either way it ends sooner if the user revokes the speki app in their GitHub settings.
 
 ### Why speki runs its own sign-in
 
@@ -139,7 +140,7 @@ with.
 | Token | Holds | Lives |
 |---|---|---|
 | access | GitHub user ID and login, GitHub access token, scopes, client name, audience | 1 hour, or until the GitHub token expires if sooner |
-| refresh | GitHub user ID and login (as of the last refresh), GitHub refresh token, scopes, client ID and name, audience, sign-in time | until 90 days after sign-in, or until the GitHub refresh token expires if sooner |
+| refresh | GitHub user ID and login (as of the last refresh), GitHub refresh token, scopes, client ID and name, audience, sign-in time | until `auth.sign_in_days` after sign-in, or until the GitHub refresh token expires if sooner |
 
 Checking an access token needs no GitHub call: speki opens it and checks its audience and expiry. GitHub is
 asked when the user's access is resolved, at most every 5 minutes. A GitHub token GitHub no longer accepts

@@ -43,7 +43,8 @@ noticing. The MCP spec calls this the confused-deputy problem.
 - The state sent to GitHub is created after consent and bound to a `__Host-` cookie. Otherwise an attacker
   could make a victim finish a sign-in as the attacker's GitHub account, and the victim's agent would write
   into the attacker's vaults.
-- Refresh chains end 90 days after sign-in, so a stolen refresh token can't be kept alive.
+- With `auth.sign_in_days` set, refresh chains end that many days after sign-in, so a stolen refresh token
+  can't be kept alive. Without it, a stolen refresh token stays usable until the user revokes the app.
 
 See [access.md](access.md#signing-in).
 

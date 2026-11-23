@@ -178,6 +178,7 @@ func TestTokenRefreshGrant(t *testing.T) {
 	testCases := []struct {
 		name   string
 		access string // chosen at sign-in; empty is write
+		opts   []option
 		github func(f *fakeGitHub)
 		store  func(s *fakeStore)
 		wait   time.Duration
@@ -203,7 +204,9 @@ func TestTokenRefreshGrant(t *testing.T) {
 		{name: "token of another user", github: func(f *fakeGitHub) { f.me = gh.User{ID: 8, Login: "mallory"} }, wantStatus: http.StatusOK, want: bothScopes},
 
 		{name: "not a refresh token", form: set("refresh_token", "v1.k1.xyz"), wantStatus: http.StatusBadRequest, wantErr: invalidGrant("the refresh token is invalid or expired")},
-		{name: "expired", wait: 90*24*time.Hour + skew + time.Second, wantStatus: http.StatusBadRequest, wantErr: invalidGrant("the refresh token is invalid or expired")},
+		{name: "no sign-in limit", wait: 90 * 24 * time.Hour, wantStatus: http.StatusOK, want: bothScopes},
+		{name: "GitHub's refresh token expired", wait: 180*24*time.Hour + skew + time.Second, wantStatus: http.StatusBadRequest, wantErr: invalidGrant("the refresh token is invalid or expired")},
+		{name: "sign-in limit reached", opts: []option{withSignInDays(30)}, wait: 30*24*time.Hour + skew + time.Second, wantStatus: http.StatusBadRequest, wantErr: invalidGrant("the refresh token is invalid or expired")},
 		{
 			name: "token from another speki with the same keys",
 			form: func(t *testing.T, e *env, _ url.Values) url.Values {
@@ -263,7 +266,7 @@ func TestTokenRefreshGrant(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				e := newEnv(t)
+				e := newEnv(t, testCase.opts...)
 				clientID := e.register(t, loopback)
 				access := testCase.access
 				if access == "" {
@@ -330,4 +333,21 @@ func BenchmarkCodeGrant(b *testing.B) {
 			b.Fatalf("got status %d, want 200", rec.Code)
 		}
 	}
+}
+
+// Refreshing doesn't move the sign-in limit: the chain ends that many days after the user signed in.
+func TestRefreshChainEnds(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		e := newEnv(t, withSignInDays(30))
+		clientID, first := e.signedIn(t)
+		time.Sleep(20 * 24 * time.Hour)
+		second, rec := e.token(t, refreshForm(clientID, first.RefreshToken))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("first refresh: got %d %s, want 200", rec.Code, rec.Body)
+		}
+		time.Sleep(10*24*time.Hour + skew + time.Second)
+		rec = e.do(t, "/oauth/token", refreshForm(clientID, second.RefreshToken))
+		checkTokenAnswer(t, rec, http.StatusBadRequest, tokenResponse{}, oauthError{Error: "invalid_grant", Description: "the refresh token is invalid or expired"}, "")
+	})
 }
