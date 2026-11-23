@@ -253,6 +253,7 @@ func withKeys(k *seal.Keyring) option { return func(s *setup) { s.keys = k } }
 func withInstance(server, description string) option {
 	return func(s *setup) { s.cfg.ServerName, s.cfg.Description = server, description }
 }
+func withSignInDays(days int) option       { return func(s *setup) { s.cfg.SignInDays = days } }
 func withMetadataHosts(h ...string) option { return func(s *setup) { s.cfg.ClientMetadataHosts = h } }
 func withRealMetadataTransport() option    { return func(s *setup) { s.transport = true } }
 func withCheckUser(f func(context.Context, string) error) option {

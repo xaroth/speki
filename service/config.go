@@ -54,6 +54,8 @@ type Auth struct {
 	Keys string `yaml:"keys"`
 	// ClientMetadataHosts are the hosts whose client metadata documents are accepted. Default claude.ai.
 	ClientMetadataHosts []string `yaml:"client_metadata_hosts"`
+	// SignInDays makes users sign in again this many days after signing in. Zero means no limit.
+	SignInDays int64 `yaml:"sign_in_days"`
 }
 
 func (a Auth) keyring() (*seal.Keyring, error) {
@@ -212,6 +214,9 @@ func (c Config) validate() error {
 		if h == "" || strings.ContainsAny(h, ":/@ ") || h != strings.ToLower(h) || strings.HasSuffix(h, ".") {
 			errs = append(errs, fmt.Errorf("auth.client_metadata_hosts: %q isn't a host name in lower case (write claude.ai, not https://claude.ai)", h))
 		}
+	}
+	if c.Auth.SignInDays < 0 || c.Auth.SignInDays > 3650 {
+		errs = append(errs, errors.New("auth.sign_in_days must be between 0 (no limit) and 3650"))
 	}
 	if c.Sync.PollInterval < 0 {
 		errs = append(errs, errors.New("sync.poll_interval must be positive"))

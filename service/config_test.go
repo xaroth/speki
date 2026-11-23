@@ -73,6 +73,11 @@ func TestNew(t *testing.T) {
 			want: []string{"client_metadata_hosts"},
 		},
 		{
+			name: "negative sign-in days",
+			cfg:  with(func(c *service.Config) { c.Auth.SignInDays = -1 }),
+			want: []string{"auth.sign_in_days"},
+		},
+		{
 			name: "account ID that isn't one",
 			cfg:  with(func(c *service.Config) { c.GitHub.AllowedAccounts = []int64{0} }),
 			want: []string{"allowed_accounts"},

@@ -278,6 +278,7 @@ read, so a config file baked into an image can be overridden at deploy time.
 | `access.required_orgs` | none | Users must be an active member of at least one of these organizations |
 | `auth.key` | | A single key, standard base64 of at least 32 random bytes |
 | `auth.keys` | | The contents of a key file, usually given as `keys_file`. Exactly one of `key` and `keys` |
+| `auth.sign_in_days` | none | Users sign in again this many days after signing in, at most 3650. Unset or `0`: only GitHub's refresh token expiry, which renews on use, ends a sign-in |
 | `auth.client_metadata_hosts` | `claude.ai` | Hosts whose client metadata documents are accepted, as bare lowercase host names (`claude.ai`, not `https://claude.ai`). Empty means the default |
 | `sync.data_dir` | `data` | Git copies and search indexes. Local disk |
 | `sync.poll_interval` | `1m` | How often to check vaults for new commits |
@@ -322,7 +323,8 @@ To rotate:
 
 1. Add a new key, not primary, on every instance. Restart.
 2. Make it primary. Restart.
-3. Remove the old key after 90 days, when the last refresh token sealed with it has expired.
+3. Remove the old key once the last refresh token sealed with it has expired: after `auth.sign_in_days`, or
+   after GitHub's refresh token lifetime (6 months) when it's unset.
 
 Removing a key early signs out everyone who still holds tokens sealed with it. Removing a key at any time
 invalidates the client IDs of local programs that registered themselves while it was primary, because those

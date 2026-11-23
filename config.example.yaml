@@ -29,6 +29,8 @@ auth:
   # key_file: /run/secrets/speki-key
   # Hosts whose client metadata documents are accepted (web clients like claude.ai).
   # client_metadata_hosts: [claude.ai]
+  # Make users sign in again this many days after signing in. Unset or 0: no limit.
+  # sign_in_days: 90
 
 sync:
   # Shallow git copies and search indexes. Can be wiped, but keeping it makes restarts fast.
